@@ -63,6 +63,22 @@ const translations = {
     navExams: "Exams",
     navParent: "Parent",
     navAccount: "Account",
+    navHome: "Home",
+
+    greetingMorning: "Good morning",
+    greetingAfternoon: "Good afternoon",
+    greetingEvening: "Good evening",
+    streakLabel: "{n} day streak",
+    quickStartStudying: "Start Studying",
+    quickMockExam: "Mock Exam",
+    quickMyProgress: "My Progress",
+    continueWhereLeftOff: "Continue where you left off",
+    btnResume: "Resume",
+    noTopicsYetPrompt: "No topics yet — start studying!",
+    freePlanLabel: "FREE PLAN",
+    planWord: "PLAN",
+    upgradeUnlockMore: "Upgrade to unlock more",
+    managePlan: "Manage your plan",
 
     learnHeading: "Learn",
     gradeLabel: "Grade",
@@ -72,6 +88,7 @@ const translations = {
     addTopicPlaceholder: "Add a topic you want to study...",
     btnAdd: "Add",
     yourTopics: "Your Topics",
+    topicsLabel: "Topics",
     noTopics: "No topics yet. Add one above to get started!",
     studiedTimes: "Studied {n}x",
     limitReachedTitle: "Daily limit reached",
@@ -190,6 +207,22 @@ const translations = {
     navExams: "Eksamens",
     navParent: "Ouer",
     navAccount: "Rekening",
+    navHome: "Tuis",
+
+    greetingMorning: "Goeie môre",
+    greetingAfternoon: "Goeie middag",
+    greetingEvening: "Goeie naand",
+    streakLabel: "{n} dae aanmekaar",
+    quickStartStudying: "Begin Studeer",
+    quickMockExam: "Toetseksamen",
+    quickMyProgress: "My Vordering",
+    continueWhereLeftOff: "Gaan voort waar jy opgehou het",
+    btnResume: "Hervat",
+    noTopicsYetPrompt: "Nog geen onderwerpe nie — begin studeer!",
+    freePlanLabel: "GRATIS PLAN",
+    planWord: "PLAN",
+    upgradeUnlockMore: "Gradeer op vir meer",
+    managePlan: "Bestuur jou plan",
 
     learnHeading: "Leer",
     gradeLabel: "Graad",
@@ -199,6 +232,7 @@ const translations = {
     addTopicPlaceholder: "Voeg 'n onderwerp by om te bestudeer...",
     btnAdd: "Voeg by",
     yourTopics: "Jou Onderwerpe",
+    topicsLabel: "Onderwerpe",
     noTopics: "Nog geen onderwerpe nie. Voeg een hierbo by om te begin!",
     studiedTimes: "{n}x bestudeer",
     limitReachedTitle: "Daaglikse limiet bereik",
@@ -302,10 +336,11 @@ const state = {
   topics: [],
   exams: [],
   sessionsToday: 0,
-  currentTab: "learn",
+  currentTab: "home",
   lang: "en",
   loading: true,
   showDiagnostic: false,
+  showProgressSummary: false,
   diagnostic: null,
   activeSession: null,
   activeExam: null,
@@ -317,6 +352,13 @@ const state = {
 function capitalize(str) {
   if (!str) return "";
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function getInitials(fullName) {
+  const parts = (fullName || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
 }
 
 function difficultyLabel(difficulty) {
@@ -523,11 +565,11 @@ async function loadUserData() {
       .single();
     if (learnerErr) throw learnerErr;
     state.learner = learner;
-    if (state.currentTab === "parent") state.currentTab = "learn";
+    if (!["home", "learn", "exams", "account"].includes(state.currentTab)) state.currentTab = "home";
 
     await Promise.all([loadSubjects(), loadTopics(), loadExams(), loadSessionsToday()]);
   } else if (profile.role === "parent") {
-    if (state.currentTab === "learn" || state.currentTab === "exams") state.currentTab = "parent";
+    if (!["parent", "account"].includes(state.currentTab)) state.currentTab = "parent";
     await loadParentData();
   }
 }
@@ -946,7 +988,7 @@ async function handleLogout() {
   state.topics = [];
   state.exams = [];
   state.linkedLearners = [];
-  state.currentTab = "learn";
+  state.currentTab = "home";
   render();
 }
 
@@ -978,6 +1020,9 @@ function renderMainScreen() {
   let tabContent = "";
   if (state.profile.role === "learner") {
     switch (state.currentTab) {
+      case "learn":
+        tabContent = renderLearnTab();
+        break;
       case "exams":
         tabContent = renderExamsTab();
         break;
@@ -985,7 +1030,7 @@ function renderMainScreen() {
         tabContent = renderAccountTab();
         break;
       default:
-        tabContent = renderLearnTab();
+        tabContent = renderHomeTab();
     }
   } else {
     switch (state.currentTab) {
@@ -1009,10 +1054,12 @@ function renderMainScreen() {
 }
 
 function renderTopbar() {
+  const showAvatar = state.profile.role === "learner" && state.currentTab === "home";
   return `
     <div class="topbar">
       <div class="topbar-logo">${t("appName")}<span class="tm">™</span></div>
       <div class="topbar-actions">
+        ${showAvatar ? `<span class="avatar-circle">${escapeHtml(getInitials(state.profile.full_name))}</span>` : ""}
         <button class="lang-toggle" data-action="toggle-lang">${state.lang === "en" ? "AF" : "EN"}</button>
       </div>
     </div>
@@ -1023,8 +1070,9 @@ function renderBottomNav() {
   const tabs =
     state.profile.role === "learner"
       ? [
+          { id: "home", icon: "🏠", label: t("navHome") },
           { id: "learn", icon: "📘", label: t("navLearn") },
-          { id: "exams", icon: "📝", label: t("navExams") },
+          { id: "exams", icon: "📋", label: t("navExams") },
           { id: "account", icon: "👤", label: t("navAccount") },
         ]
       : [
@@ -1253,6 +1301,96 @@ function retakeDiagnostic() {
   state.showDiagnostic = true;
   state.diagnostic = null;
   render();
+}
+
+// ---------------------------------------------------------------------
+// HOME / DASHBOARD TAB
+// ---------------------------------------------------------------------
+function renderHomeTab() {
+  const profile = state.profile;
+  const learner = state.learner;
+  const tier = profile.subscription_tier;
+  const firstName = (profile.full_name || "").trim().split(/\s+/)[0] || "";
+
+  const hour = new Date().getHours();
+  const greetingKey = hour < 12 ? "greetingMorning" : hour < 18 ? "greetingAfternoon" : "greetingEvening";
+
+  const streakDays = learner.streak_days || 0;
+  const sessionsToday = state.sessionsToday || 0;
+  const sessionsPct = Math.min(100, Math.round((sessionsToday / 3) * 100));
+
+  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
+  const studiedTopics = state.topics.filter((tp) => tp.last_studied);
+  const continueTopic = studiedTopics.length
+    ? studiedTopics.reduce((a, b) => (new Date(a.last_studied) > new Date(b.last_studied) ? a : b))
+    : null;
+
+  const planLabel = tier === "free" ? t("freePlanLabel") : `${tier.toUpperCase()} ${t("planWord")}`;
+  const planAction = tier === "free" ? t("upgradeUnlockMore") : t("managePlan");
+
+  return `
+    <div class="card home-greeting-card">
+      <div class="home-greeting">${t(greetingKey)}, ${escapeHtml(firstName)} 👋</div>
+    </div>
+
+    <div class="card streak-card">
+      <span class="streak-flame">🔥</span>
+      <span class="streak-text">${t("streakLabel").replace("{n}", streakDays)}</span>
+    </div>
+
+    <div class="card">
+      <div class="sessions-today-row">
+        <span>${t("sessionsToday")}</span>
+        <span class="sessions-today-count">${sessionsToday}/3</span>
+      </div>
+      <div class="progress-bar"><div class="progress-bar-fill progress-bar-fill-purple" style="width:${sessionsPct}%"></div></div>
+    </div>
+
+    <div class="quick-actions">
+      <button class="quick-action-card" data-action="switch-tab" data-tab="learn">
+        <span class="quick-action-icon">📚</span>
+        <span class="quick-action-label">${t("quickStartStudying")}</span>
+      </button>
+      <button class="quick-action-card" data-action="switch-tab" data-tab="exams">
+        <span class="quick-action-icon">📝</span>
+        <span class="quick-action-label">${t("quickMockExam")}</span>
+      </button>
+      <button class="quick-action-card" data-action="toggle-progress-summary">
+        <span class="quick-action-icon">📊</span>
+        <span class="quick-action-label">${t("quickMyProgress")}</span>
+      </button>
+    </div>
+
+    ${state.showProgressSummary ? renderProgressSummary() : ""}
+
+    <div class="section-title">${t("continueWhereLeftOff")}</div>
+    ${
+      continueTopic
+        ? `<div class="topic-item" data-action="open-topic" data-topic-id="${continueTopic.id}">
+             <div class="topic-info">
+               <div class="topic-title">${escapeHtml(continueTopic.title)}</div>
+               <div class="topic-subject">${escapeHtml(subjectMap[continueTopic.subject_id] || "")}</div>
+             </div>
+             <button class="btn btn-gold btn-sm" data-action="open-topic" data-topic-id="${continueTopic.id}">${t("btnResume")}</button>
+           </div>`
+        : `<div class="empty-state"><div class="empty-icon">📚</div><p>${t("noTopicsYetPrompt")}</p></div>`
+    }
+
+    <button class="plan-banner" data-action="switch-tab" data-tab="account">${escapeHtml(planLabel)} · ${escapeHtml(planAction)} →</button>
+  `;
+}
+
+function renderProgressSummary() {
+  const learner = state.learner;
+  return `
+    <div class="card">
+      <div class="progress-summary-grid">
+        <div class="stat-box"><div class="num">${learner.sessions_completed || 0}</div><div class="lbl">${t("sessionsCompletedLabel")}</div></div>
+        <div class="stat-box"><div class="num">${state.topics.length}</div><div class="lbl">${t("topicsLabel")}</div></div>
+        <div class="stat-box"><div class="num">${learner.diagnostic_level}/5</div><div class="lbl">${t("levelLabel")}</div></div>
+      </div>
+    </div>
+  `;
 }
 
 // ---------------------------------------------------------------------
@@ -2181,6 +2319,10 @@ function attachGlobalListeners() {
         break;
       case "switch-tab":
         state.currentTab = target.dataset.tab;
+        render();
+        break;
+      case "toggle-progress-summary":
+        state.showProgressSummary = !state.showProgressSummary;
         render();
         break;
       case "toggle-lang":

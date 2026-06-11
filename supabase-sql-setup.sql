@@ -121,6 +121,9 @@ alter table public.mock_exam_questions add column if not exists options jsonb;
 alter table public.mock_exam_questions add column if not exists blooms_level text;
 alter table public.mock_exam_questions add column if not exists correct_answer text;
 
+-- Migration: daily study streak counter shown on the dashboard Home tab.
+alter table public.learners add column if not exists streak_days int default 0;
+
 create table if not exists public.mock_exam_responses (
   id uuid primary key default gen_random_uuid(),
   question_id uuid not null references public.mock_exam_questions(id) on delete cascade,

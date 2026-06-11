@@ -543,6 +543,104 @@ h1, h2, h3, h4 {
 .empty-state .empty-icon { font-size: 36px; margin-bottom: var(--spacing-8); }
 
 /* ---------------------------------------------------------------------
+   Home / Dashboard tab
+   --------------------------------------------------------------------- */
+
+.avatar-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--primary-dark);
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.home-greeting-card { padding: var(--spacing-20) var(--spacing-24); }
+.home-greeting {
+  font-style: italic;
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: var(--letter-spacing-tight);
+  color: var(--primary);
+}
+
+.streak-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-12);
+  padding: var(--spacing-16) var(--spacing-24);
+}
+.streak-flame { font-size: 28px; line-height: 1; }
+.streak-text { font-weight: 800; font-size: 18px; color: var(--accent-dark); }
+
+.sessions-today-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  margin-bottom: var(--spacing-12);
+}
+.sessions-today-count { color: var(--primary); font-weight: 800; }
+
+.progress-bar-fill-purple { background: var(--primary); }
+
+.quick-actions {
+  display: flex;
+  gap: var(--spacing-12);
+  margin-bottom: var(--spacing-16);
+}
+
+.quick-action-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-8);
+  background: var(--white);
+  border: none;
+  border-radius: var(--radius-card);
+  padding: var(--spacing-16) var(--spacing-8);
+  box-shadow: var(--shadow-soft);
+  cursor: pointer;
+  font-family: var(--font-inter);
+  text-align: center;
+}
+.quick-action-card:active { transform: scale(0.98); }
+.quick-action-icon { font-size: 26px; line-height: 1; }
+.quick-action-label {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.progress-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--spacing-12);
+}
+
+.plan-banner {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 13px;
+  text-align: center;
+  padding: var(--spacing-12);
+  cursor: pointer;
+  font-family: var(--font-inter);
+}
+
+/* ---------------------------------------------------------------------
    Session / Modal overlay
    --------------------------------------------------------------------- */
 
