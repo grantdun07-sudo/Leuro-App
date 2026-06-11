@@ -1,0 +1,304 @@
+// Supabase Edge Function: generate-study-guide
+// POST { topicId, phase, learnerInput?, context? }
+//   phase: 'explain' | 'example' | 'attempt' | 'feedback'
+//   context: { explainText?, exampleText?, attemptQuestion? }
+//
+// Returns: { response: string, tokens_used: number }
+//
+// Auth: caller must be the learner who owns the topic (enforced via RLS
+// using the caller's JWT for all reads/writes).
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { containsCrisisLanguage, SADAG_CRISIS_MESSAGE } from "../_shared/safety.ts";
+
+const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+const MODEL = "claude-haiku-4-5-20251001";
+
+const SYSTEM_PROMPT = `You are Leuro, a warm, encouraging South African study tutor for school
+learners following the CAPS curriculum (Grades 4-12). You help with one
+study topic at a time, working through four steps: explanation, worked
+example, practice attempt, and feedback.
+
+General rules:
+- Keep language simple, age-appropriate, and encouraging.
+- Use South African context and examples where helpful.
+- Never use markdown headers (#). Plain text or simple numbered/bulleted
+  lists only. Keep responses concise (under ~180 words) unless a worked
+  example genuinely needs more steps.
+- If asked to respond in Afrikaans, respond entirely in Afrikaans.
+- Adjust difficulty to the learner's diagnostic level (1 = needs lots of
+  support and basics, 5 = ready for advanced, exam-style challenge).`;
+
+type Phase = "explain" | "example" | "attempt" | "feedback";
+
+interface RequestBody {
+  topicId: string;
+  phase: Phase;
+  learnerInput?: string;
+  context?: {
+    explainText?: string;
+    exampleText?: string;
+    attemptQuestion?: string;
+  };
+}
+
+function buildUserPrompt(
+  body: RequestBody,
+  topicTitle: string,
+  subjectName: string,
+  grade: number,
+  level: number,
+  lang: string,
+): string {
+  const langLine =
+    lang === "af" ? "Respond in Afrikaans." : "Respond in English.";
+  const levelText = level > 0 ? `${level}/5` : "1/5 (not yet diagnosed, assume a beginner)";
+  const header = `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | Learner level: ${levelText}\n${langLine}\n\n`;
+
+  switch (body.phase) {
+    case "explain":
+      return (
+        header +
+        `Explain this topic to the learner in a friendly, clear way. ` +
+        `Cover the key idea(s) they need to understand before trying an example.`
+      );
+    case "example":
+      return (
+        header +
+        (body.context?.explainText
+          ? `You previously explained: """${body.context.explainText}"""\n\n`
+          : "") +
+        `Now give ONE fully worked example for this topic, showing each step ` +
+        `of the solution clearly so the learner can follow the method.`
+      );
+    case "attempt":
+      return (
+        header +
+        (body.context?.exampleText
+          ? `You previously gave this worked example: """${body.context.exampleText}"""\n\n`
+          : "") +
+        `Now write ONE new practice question on this topic for the learner to ` +
+        `attempt themselves. It should be similar in style/difficulty to the ` +
+        `worked example but with different numbers/details. Output ONLY the ` +
+        `question text - do not include the answer or any hints.`
+      );
+    case "feedback": {
+      const question = body.context?.attemptQuestion ?? "(question not available)";
+      const answer = body.learnerInput ?? "(no answer provided)";
+      return (
+        header +
+        `The practice question was: """${question}"""\n` +
+        `The learner's answer was: """${answer}"""\n\n` +
+        `Evaluate the learner's answer. Tell them clearly whether they got it ` +
+        `right, partially right, or incorrect. Explain why, show the correct ` +
+        `approach/answer if needed, and end with one encouraging sentence.`
+      );
+    }
+  }
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  try {
+    if (req.method !== "POST") {
+      return jsonResponse({ error: "Method not allowed" }, 405);
+    }
+
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return jsonResponse({ error: "Missing authorization header" }, 401);
+    }
+
+    const body: RequestBody = await req.json();
+    if (!body.topicId || !body.phase) {
+      return jsonResponse({ error: "topicId and phase are required" }, 400);
+    }
+    if (!["explain", "example", "attempt", "feedback"].includes(body.phase)) {
+      return jsonResponse({ error: "invalid phase" }, 400);
+    }
+
+    // User-scoped client - all reads/writes respect RLS for this learner.
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: userData, error: userErr } = await supabase.auth.getUser();
+    if (userErr || !userData?.user) {
+      return jsonResponse({ error: "Invalid or expired session" }, 401);
+    }
+
+    const [{ data: learner, error: learnerErr }, { data: profile }] = await Promise.all([
+      supabase.from("learners").select("id, grade, diagnostic_level").eq("user_id", userData.user.id).single(),
+      supabase.from("profiles").select("subscription_tier, lang").eq("id", userData.user.id).single(),
+    ]);
+
+    if (learnerErr || !learner) {
+      return jsonResponse({ error: "Learner profile not found" }, 404);
+    }
+
+    const { data: topic, error: topicErr } = await supabase
+      .from("topics")
+      .select("id, title, subject_id, learner_id")
+      .eq("id", body.topicId)
+      .eq("learner_id", learner.id)
+      .single();
+
+    if (topicErr || !topic) {
+      return jsonResponse({ error: "Topic not found" }, 404);
+    }
+
+    const { data: subject } = await supabase
+      .from("subjects")
+      .select("name")
+      .eq("id", topic.subject_id)
+      .single();
+
+    const tier = profile?.subscription_tier ?? "free";
+    const lang = profile?.lang ?? "en";
+
+    // Free tier: max 3 study sessions per day. A "session" starts at the
+    // explain phase, so gate new sessions there.
+    if (body.phase === "explain" && tier === "free") {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+
+      const { count } = await supabase
+        .from("study_sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("learner_id", learner.id)
+        .eq("phase", "explain")
+        .gte("created_at", startOfDay.toISOString());
+
+      if ((count ?? 0) >= 3) {
+        return jsonResponse(
+          {
+            error: "daily_limit_reached",
+            message:
+              lang === "af"
+                ? "Jy het jou 3 gratis sessies vir vandag gebruik. Gradeer op vir onbeperkte toegang."
+                : "You've used your 3 free sessions for today. Upgrade for unlimited access.",
+          },
+          403,
+        );
+      }
+    }
+
+    // Child-safety screen on learner-submitted text (attempt answers / feedback phase)
+    if ((body.phase === "feedback" || body.phase === "attempt") && containsCrisisLanguage(body.learnerInput)) {
+      const safeResponse = SADAG_CRISIS_MESSAGE[lang as "en" | "af"] ?? SADAG_CRISIS_MESSAGE.en;
+
+      await supabase.from("study_sessions").insert({
+        learner_id: learner.id,
+        topic_id: topic.id,
+        phase: body.phase,
+        learner_input: body.learnerInput ?? null,
+        ai_response: safeResponse,
+        completed_at: new Date().toISOString(),
+      });
+
+      await supabase.rpc("create_parent_alert", {
+        p_learner_id: learner.id,
+        p_alert_type: "safety_flag",
+        p_message:
+          "Leuro detected language in a study session that may indicate your child is " +
+          "struggling emotionally. Please check in with them.",
+      });
+
+      return jsonResponse({ response: safeResponse, tokens_used: 0, safety_flag: true });
+    }
+
+    const userPrompt = buildUserPrompt(
+      body,
+      topic.title,
+      subject?.name ?? "General",
+      learner.grade,
+      learner.diagnostic_level ?? 0,
+      lang,
+    );
+
+    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 1024,
+        system: [
+          {
+            type: "text",
+            text: SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+    });
+
+    if (!anthropicRes.ok) {
+      const errText = await anthropicRes.text();
+      console.error("Anthropic API error:", errText);
+      return jsonResponse({ error: "Failed to generate study content" }, 502);
+    }
+
+    const data = await anthropicRes.json();
+    const responseText = (data.content ?? [])
+      .filter((b: { type: string }) => b.type === "text")
+      .map((b: { text: string }) => b.text)
+      .join("\n")
+      .trim();
+
+    const tokensUsed = (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
+
+    await supabase.from("study_sessions").insert({
+      learner_id: learner.id,
+      topic_id: topic.id,
+      phase: body.phase,
+      learner_input: body.learnerInput ?? null,
+      ai_response: responseText,
+      completed_at: new Date().toISOString(),
+    });
+
+    if (body.phase === "feedback") {
+      const { data: topicRow } = await supabase
+        .from("topics")
+        .select("times_studied")
+        .eq("id", topic.id)
+        .single();
+      await supabase
+        .from("topics")
+        .update({
+          times_studied: (topicRow?.times_studied ?? 0) + 1,
+          last_studied: new Date().toISOString(),
+        })
+        .eq("id", topic.id);
+
+      const { data: learnerRow } = await supabase
+        .from("learners")
+        .select("sessions_completed")
+        .eq("id", learner.id)
+        .single();
+      await supabase
+        .from("learners")
+        .update({
+          sessions_completed: (learnerRow?.sessions_completed ?? 0) + 1,
+          last_session: new Date().toISOString(),
+        })
+        .eq("id", learner.id);
+    }
+
+    return jsonResponse({ response: responseText, tokens_used: tokensUsed });
+  } catch (err) {
+    console.error("generate-study-guide error:", err);
+    return jsonResponse({ error: "Internal server error" }, 500);
+  }
+});
