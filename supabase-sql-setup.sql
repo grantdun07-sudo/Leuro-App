@@ -124,6 +124,11 @@ alter table public.mock_exam_questions add column if not exists correct_answer t
 -- Migration: daily study streak counter shown on the dashboard Home tab.
 alter table public.learners add column if not exists streak_days int default 0;
 
+-- Migration: allow free-form follow-up chat messages in the Learn tab.
+alter table public.study_sessions drop constraint if exists study_sessions_phase_check;
+alter table public.study_sessions add constraint study_sessions_phase_check
+  check (phase in ('explain', 'example', 'attempt', 'feedback', 'chat'));
+
 create table if not exists public.mock_exam_responses (
   id uuid primary key default gen_random_uuid(),
   question_id uuid not null references public.mock_exam_questions(id) on delete cascade,
@@ -170,6 +175,19 @@ create table if not exists public.parent_alerts (
   created_at timestamp default now()
 );
 
+-- Saved Study Guides (Exams tab > Study Guide section > "Save Guide")
+create table if not exists public.saved_guides (
+  id uuid primary key default gen_random_uuid(),
+  learner_id uuid not null references public.learners(id) on delete cascade,
+  subject_id uuid references public.subjects(id),
+  topic_title text not null,
+  key_concepts jsonb,
+  example text,
+  self_check_question text,
+  self_check_answer text,
+  created_at timestamp default now()
+);
+
 -- ---------------------------------------------------------------------
 -- INDEXES
 -- ---------------------------------------------------------------------
@@ -178,6 +196,7 @@ create index if not exists idx_parents_user_id on public.parents(user_id);
 create index if not exists idx_topics_learner_id on public.topics(learner_id);
 create index if not exists idx_study_sessions_learner_id on public.study_sessions(learner_id);
 create index if not exists idx_study_sessions_created_at on public.study_sessions(created_at);
+create index if not exists idx_saved_guides_learner_id on public.saved_guides(learner_id);
 create index if not exists idx_mock_exams_learner_id on public.mock_exams(learner_id);
 create index if not exists idx_mock_exam_questions_exam_id on public.mock_exam_questions(exam_id);
 create index if not exists idx_mock_exam_responses_question_id on public.mock_exam_responses(question_id);
@@ -299,6 +318,7 @@ alter table public.referral_codes enable row level security;
 alter table public.referral_redemptions enable row level security;
 alter table public.subscription_history enable row level security;
 alter table public.parent_alerts enable row level security;
+alter table public.saved_guides enable row level security;
 
 -- profiles
 drop policy if exists "Users can read own profile" on public.profiles;
@@ -388,6 +408,14 @@ create policy "Learners manage own study sessions" on public.study_sessions for 
 drop policy if exists "Parents read linked learner study sessions" on public.study_sessions;
 create policy "Parents read linked learner study sessions" on public.study_sessions for select using (
   learner_id in (select unnest(linked_learners) from public.parents where user_id = auth.uid())
+);
+
+-- saved_guides
+drop policy if exists "Learners manage own saved guides" on public.saved_guides;
+create policy "Learners manage own saved guides" on public.saved_guides for all using (
+  learner_id in (select id from public.learners where user_id = auth.uid())
+) with check (
+  learner_id in (select id from public.learners where user_id = auth.uid())
 );
 
 -- mock_exams

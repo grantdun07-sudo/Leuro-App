@@ -1,9 +1,19 @@
 // Supabase Edge Function: generate-study-guide
 // POST { topicId, phase, learnerInput?, context? }
-//   phase: 'explain' | 'example' | 'attempt' | 'feedback'
-//   context: { explainText?, exampleText?, attemptQuestion? }
+//   phase: 'explain' | 'example' | 'attempt' | 'feedback' | 'chat' | 'studyguide'
+//   context: { explainText?, exampleText?, attemptQuestion?, history? }
 //
-// Returns: { response: string, phase: string, tokensUsed: number }
+// 'chat'       - free-form follow-up question within an existing topic chat.
+//                 Requires topicId. context.history is the recent
+//                 conversation (array of { role: 'ai' | 'learner', text }).
+//                 Returns: { response: string, phase: 'chat', tokensUsed }
+//
+// 'studyguide' - standalone study guide generation for the Exams tab.
+//                 Requires subjectId + topicTitle instead of topicId.
+//                 Returns: { studyGuide: { topicTitle, keyConcepts, example,
+//                 selfCheckQuestion }, tokensUsed }
+//
+// All other phases return: { response: string, phase: string, tokensUsed: number }
 //
 // Auth: caller must be the learner who owns the topic (enforced via RLS
 // using the caller's JWT for all reads/writes). Subject, grade, diagnostic
@@ -41,10 +51,12 @@ Rules:
 - Adjust difficulty to the learner's diagnostic level (1 = needs lots of
   support and basics, 5 = ready for advanced, exam-style challenge).`;
 
-type Phase = "explain" | "example" | "attempt" | "feedback";
+type Phase = "explain" | "example" | "attempt" | "feedback" | "chat" | "studyguide";
 
 interface RequestBody {
-  topicId: string;
+  topicId?: string;
+  subjectId?: string;
+  topicTitle?: string;
   phase: Phase;
   learnerInput?: string;
   previousResponse?: string;
@@ -52,6 +64,7 @@ interface RequestBody {
     explainText?: string;
     exampleText?: string;
     attemptQuestion?: string;
+    history?: { role: "ai" | "learner"; text: string }[];
   };
 }
 
@@ -116,7 +129,43 @@ function buildUserPrompt(
         `encouraging throughout.`
       );
     }
+    case "chat": {
+      const history = body.context?.history ?? [];
+      const historyText = history
+        .map((m) => `${m.role === "learner" ? "Learner" : "Leuro"}: ${m.text}`)
+        .join("\n");
+      return (
+        header +
+        (historyText ? `Conversation so far:\n${historyText}\n\n` : "") +
+        `The learner just said: """${body.learnerInput ?? ""}"""\n\n` +
+        `Continue the conversation naturally as their tutor. Answer their ` +
+        `question or respond to their message, staying focused on this topic ` +
+        `where relevant. Keep it conversational and concise (under 150 words).`
+      );
+    }
+    default:
+      return header;
   }
+}
+
+function buildStudyGuidePrompt(
+  topicTitle: string,
+  subjectName: string,
+  grade: number,
+  level: number,
+  lang: string,
+): string {
+  const langLine = lang === "af" ? "Respond in Afrikaans." : "Respond in English.";
+  const levelText = level > 0 ? `${level}/5` : "1/5 (not yet diagnosed, assume a beginner)";
+  return (
+    `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | Learner level: ${levelText}\n${langLine}\n\n` +
+    `Create a concise study guide for this topic. Respond with ONLY a raw ` +
+    `JSON object (no markdown, no code fences, no extra text) with exactly ` +
+    `these keys:\n` +
+    `{"topicTitle": string, "keyConcepts": string[] (3-5 short bullet points), ` +
+    `"example": string (one short worked example, 100-150 words), ` +
+    `"selfCheckQuestion": string (one practice question to check understanding)}`
+  );
 }
 
 Deno.serve(async (req: Request) => {
@@ -135,11 +184,14 @@ Deno.serve(async (req: Request) => {
     }
 
     const body: RequestBody = await req.json();
-    if (!body.topicId || !body.phase) {
-      return jsonResponse({ error: "topicId and phase are required" }, 400);
+    if (!body.phase) {
+      return jsonResponse({ error: "phase is required" }, 400);
     }
-    if (!["explain", "example", "attempt", "feedback"].includes(body.phase)) {
+    if (!["explain", "example", "attempt", "feedback", "chat", "studyguide"].includes(body.phase)) {
       return jsonResponse({ error: "invalid phase" }, 400);
+    }
+    if (body.phase !== "studyguide" && !body.topicId) {
+      return jsonResponse({ error: "topicId is required" }, 400);
     }
 
     // User-scoped client - all reads/writes respect RLS for this learner.
@@ -161,6 +213,43 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "Learner profile not found" }, 404);
     }
 
+    const lang = profile?.lang ?? "en";
+
+    // Standalone study guide generation (Exams tab) - no topic record needed.
+    if (body.phase === "studyguide") {
+      if (!body.subjectId || !body.topicTitle) {
+        return jsonResponse({ error: "subjectId and topicTitle are required" }, 400);
+      }
+
+      const { data: subject } = await supabase
+        .from("subjects")
+        .select("name")
+        .eq("id", body.subjectId)
+        .single();
+
+      const userPrompt = buildStudyGuidePrompt(
+        body.topicTitle,
+        subject?.name ?? "General",
+        learner.grade,
+        learner.diagnostic_level ?? 0,
+        lang,
+      );
+
+      try {
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 1024);
+        const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+        const studyGuide = JSON.parse(cleaned);
+        return jsonResponse({ studyGuide, tokensUsed: result.tokensUsed });
+      } catch (err) {
+        if (err instanceof ClaudeTimeoutError) {
+          console.error("Anthropic request timed out:", err);
+          return jsonResponse({ error: "AI generation timed out. Please try again." }, 500);
+        }
+        console.error("generate-study-guide (studyguide) error:", err);
+        return jsonResponse({ error: "Failed to generate study guide" }, 500);
+      }
+    }
+
     const { data: topic, error: topicErr } = await supabase
       .from("topics")
       .select("id, title, subject_id, learner_id")
@@ -179,7 +268,6 @@ Deno.serve(async (req: Request) => {
       .single();
 
     const tier = profile?.subscription_tier ?? "free";
-    const lang = profile?.lang ?? "en";
 
     // Free tier: max 3 study sessions per day. A "session" starts at the
     // explain phase, so gate new sessions there.
@@ -208,8 +296,11 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Child-safety screen on learner-submitted text (attempt answers / feedback phase)
-    if ((body.phase === "feedback" || body.phase === "attempt") && containsCrisisLanguage(body.learnerInput)) {
+    // Child-safety screen on learner-submitted text (attempt answers / feedback / chat)
+    if (
+      (body.phase === "feedback" || body.phase === "attempt" || body.phase === "chat") &&
+      containsCrisisLanguage(body.learnerInput)
+    ) {
       const safeResponse = SADAG_CRISIS_MESSAGE[lang as "en" | "af"] ?? SADAG_CRISIS_MESSAGE.en;
 
       await supabase.from("study_sessions").insert({

@@ -94,19 +94,28 @@ const translations = {
     limitReachedTitle: "Daily limit reached",
     limitReachedMsg: "You've used your 3 free sessions today. Upgrade for unlimited studying.",
 
-    stepExplain: "Explain",
-    stepExample: "Example",
-    stepAttempt: "Attempt",
-    stepFeedback: "Feedback",
     generating: "Leuro is thinking...",
-    btnSeeExample: "See an Example",
-    btnTryYourself: "Try It Yourself",
     yourAnswerLabel: "Type your answer here",
     btnSubmitAnswer: "Submit Answer",
-    btnFinish: "Done",
     supportResources: "Support Resources",
     errorRetryContent: "Unable to generate content. Please try again in 30 seconds.",
     btnRetry: "Retry",
+    chatGreeting: 'Hi! Let\'s explore "{topic}" together.',
+    chatInputPlaceholder: "Ask Leuro anything...",
+    btnSend: "Send",
+
+    tabStudyGuide: "Study Guide",
+    tabMockExam: "Mock Exam",
+    topicLabel: "Topic",
+    btnGenerateStudyGuide: "Generate Study Guide",
+    keyConceptsLabel: "Key Concepts",
+    exampleLabel: "Example",
+    selfCheckLabel: "Quick Self-Check",
+    btnSaveGuide: "Save Guide",
+    btnSaved: "Saved!",
+    studyGuideSaved: "Study guide saved!",
+    errorStudyGuideGeneration: "Unable to generate study guide. Please try again.",
+    enterTopicFirst: "Please enter a topic first.",
 
     examsHeading: "Mock Exams",
     yourDiagnosticLevel: "Your diagnostic level",
@@ -238,19 +247,28 @@ const translations = {
     limitReachedTitle: "Daaglikse limiet bereik",
     limitReachedMsg: "Jy het jou 3 gratis sessies vandag gebruik. Gradeer op vir onbeperkte studie.",
 
-    stepExplain: "Verduidelik",
-    stepExample: "Voorbeeld",
-    stepAttempt: "Probeer",
-    stepFeedback: "Terugvoer",
     generating: "Leuro dink...",
-    btnSeeExample: "Wys 'n Voorbeeld",
-    btnTryYourself: "Probeer Self",
     yourAnswerLabel: "Tik jou antwoord hier",
     btnSubmitAnswer: "Dien Antwoord In",
-    btnFinish: "Klaar",
     supportResources: "Ondersteuningshulpbronne",
     errorRetryContent: "Kon nie inhoud genereer nie. Probeer asseblief weer oor 30 sekondes.",
     btnRetry: "Probeer Weer",
+    chatGreeting: 'Hallo! Kom ons verken "{topic}" saam.',
+    chatInputPlaceholder: "Vra Leuro enigiets...",
+    btnSend: "Stuur",
+
+    tabStudyGuide: "Studiegids",
+    tabMockExam: "Toetseksamen",
+    topicLabel: "Onderwerp",
+    btnGenerateStudyGuide: "Genereer Studiegids",
+    keyConceptsLabel: "Sleutelbegrippe",
+    exampleLabel: "Voorbeeld",
+    selfCheckLabel: "Vinnige Selftoets",
+    btnSaveGuide: "Stoor Gids",
+    btnSaved: "Gestoor!",
+    studyGuideSaved: "Studiegids gestoor!",
+    errorStudyGuideGeneration: "Kon nie studiegids genereer nie. Probeer asseblief weer.",
+    enterTopicFirst: "Voer asseblief eers 'n onderwerp in.",
 
     examsHeading: "Toetseksamens",
     yourDiagnosticLevel: "Jou diagnostiese vlak",
@@ -344,6 +362,17 @@ const state = {
   diagnostic: null,
   activeSession: null,
   activeExam: null,
+  examsView: "studyguide",
+  studyGuide: {
+    subjectId: null,
+    topicTitle: "",
+    loading: false,
+    error: null,
+    result: null,
+    answer: "",
+    saving: false,
+    saved: false,
+  },
 };
 
 // ---------------------------------------------------------------------
@@ -1428,14 +1457,19 @@ async function handleAddTopic(form) {
   const btn = form.querySelector("button[type=submit]");
   setButtonLoading(btn, true);
   try {
-    const { error } = await sbClient.from("topics").insert({
-      learner_id: state.learner.id,
-      subject_id: subjectSelect.value,
-      title,
-    });
+    const { data, error } = await sbClient
+      .from("topics")
+      .insert({
+        learner_id: state.learner.id,
+        subject_id: subjectSelect.value,
+        title,
+      })
+      .select()
+      .single();
     if (error) throw error;
     await loadTopics();
     render();
+    if (data) await openTopicSession(data.id);
   } catch (err) {
     console.error(err);
     showToast(t("errorGeneric"), "error");
@@ -1447,8 +1481,6 @@ async function handleAddTopic(form) {
 // ---------------------------------------------------------------------
 // STUDY SESSION (Explain -> Example -> Attempt -> Feedback)
 // ---------------------------------------------------------------------
-const SESSION_STEPS = ["explain", "example", "attempt", "feedback"];
-
 async function openTopicSession(topicId) {
   const topic = state.topics.find((tp) => tp.id === topicId);
   if (!topic) return;
@@ -1462,23 +1494,21 @@ async function openTopicSession(topicId) {
   state.activeSession = {
     topicId,
     topicTitle: topic.title,
-    phase: "explain",
+    messages: [],
     loading: true,
+    chatLoading: false,
     explainText: null,
     exampleText: null,
     attemptQuestion: null,
-    learnerAnswer: "",
-    feedbackText: null,
     safetyFlag: false,
     error: null,
-    completedPhases: [],
     retry: null,
   };
   render();
   await runSessionPhase("explain");
 }
 
-async function callStudyGuide(phase, learnerInput, context) {
+async function callStudyGuideApi(payload) {
   const res = await fetchWithTimeout(`${FN_URL}/generate-study-guide`, {
     method: "POST",
     headers: {
@@ -1486,11 +1516,22 @@ async function callStudyGuide(phase, learnerInput, context) {
       Authorization: `Bearer ${state.session.access_token}`,
       apikey: SUPABASE_ANON_KEY,
     },
-    body: JSON.stringify({ topicId: state.activeSession.topicId, phase, learnerInput, context }),
+    body: JSON.stringify(payload),
   });
   const data = await res.json();
   if (!res.ok) throw data;
   return data;
+}
+
+async function callStudyGuide(phase, learnerInput, context) {
+  return callStudyGuideApi({ topicId: state.activeSession.topicId, phase, learnerInput, context });
+}
+
+function scrollChatToBottom() {
+  requestAnimationFrame(() => {
+    const el = document.getElementById("chat-scroll");
+    if (el) el.scrollTop = el.scrollHeight;
+  });
 }
 
 async function runSessionPhase(phase, learnerInput, context) {
@@ -1499,37 +1540,44 @@ async function runSessionPhase(phase, learnerInput, context) {
   s.error = null;
   s.retry = { phase, learnerInput, context };
   render();
-
-  console.log("🎓 Study Guide API", { topicId: s.topicId, phase, status: "calling" });
+  scrollChatToBottom();
 
   try {
     const data = await callStudyGuide(phase, learnerInput, context);
     if (data.safety_flag) {
       s.safetyFlag = true;
-      s.feedbackText = data.response;
-      s.phase = "feedback";
+      s.messages.push({ role: "ai", phase: "feedback", text: data.response, safety: true });
     } else {
-      if (phase === "explain") s.explainText = data.response;
-      else if (phase === "example") s.exampleText = data.response;
-      else if (phase === "attempt") s.attemptQuestion = data.response;
-      else if (phase === "feedback") s.feedbackText = data.response;
+      let text = data.response;
+      if (phase === "explain") {
+        s.explainText = data.response;
+        text = `${t("chatGreeting").replace("{topic}", s.topicTitle)}\n\n${data.response}`;
+      } else if (phase === "example") {
+        s.exampleText = data.response;
+      } else if (phase === "attempt") {
+        s.attemptQuestion = data.response;
+      }
+      s.messages.push({ role: "ai", phase, text, answerBox: phase === "attempt" });
     }
 
     if (phase === "explain") incrementLocalSessionCount();
-
-    s.completedPhases.push(phase);
-    console.log("🎓 Study Guide API", { phase, status: "success", tokensUsed: data.tokensUsed ?? 0 });
-    console.log("💾 Session saved", { topicId: s.topicId, phases: s.completedPhases });
   } catch (err) {
-    if (err && err.name === "AbortError") {
-      s.error = t("errorRetryContent");
-    } else {
-      s.error = (err && err.message) || t("errorRetryContent");
-    }
-    console.error("🎓 Study Guide API ERROR", s.error);
+    s.error = err && err.name === "AbortError" ? t("errorRetryContent") : (err && err.message) || t("errorRetryContent");
+    console.error("Study Guide API error", s.error);
   } finally {
     s.loading = false;
     render();
+    scrollChatToBottom();
+  }
+
+  if (!s.error && !s.safetyFlag) {
+    if (phase === "explain") {
+      await runSessionPhase("example", null, { explainText: s.explainText });
+    } else if (phase === "example") {
+      await runSessionPhase("attempt", null, { exampleText: s.exampleText });
+    } else if (phase === "feedback") {
+      await finalizeStructuredSession();
+    }
   }
 }
 
@@ -1539,28 +1587,55 @@ function sessionRetry() {
   runSessionPhase(s.retry.phase, s.retry.learnerInput, s.retry.context);
 }
 
-function sessionContinue() {
+function sessionSubmitAnswer(index) {
   const s = state.activeSession;
-  if (s.phase === "explain") {
-    s.phase = "example";
-    runSessionPhase("example", null, { explainText: s.explainText });
-  } else if (s.phase === "example") {
-    s.phase = "attempt";
-    runSessionPhase("attempt", null, { exampleText: s.exampleText });
-  }
-}
-
-function sessionSubmitAnswer() {
-  const s = state.activeSession;
-  const textarea = document.getElementById("session-answer");
+  const textarea = document.getElementById(`session-answer-${index}`);
   const answer = textarea ? textarea.value.trim() : "";
   if (!answer) {
     showToast(t("yourAnswerLabel"), "error");
     return;
   }
-  s.learnerAnswer = answer;
-  s.phase = "feedback";
+  s.messages[index].answerBox = false;
+  s.messages[index].answered = true;
+  s.messages.push({ role: "learner", phase: "attempt-answer", text: answer });
   runSessionPhase("feedback", answer, { attemptQuestion: s.attemptQuestion });
+}
+
+async function sessionSendChat(form) {
+  const s = state.activeSession;
+  if (!s || s.loading || s.chatLoading || s.safetyFlag) return;
+
+  const input = form.querySelector('[name="chatMessage"]');
+  const text = input ? input.value.trim() : "";
+  if (!text) return;
+
+  input.value = "";
+  s.messages.push({ role: "learner", phase: "chat", text });
+  s.chatLoading = true;
+  render();
+  scrollChatToBottom();
+
+  const history = s.messages
+    .filter((m) => !(m.role === "ai" && m.answerBox && !m.answered))
+    .slice(-8)
+    .map((m) => ({ role: m.role === "learner" ? "learner" : "ai", text: m.text }));
+
+  try {
+    const data = await callStudyGuide("chat", text, { history });
+    if (data.safety_flag) {
+      s.safetyFlag = true;
+      s.messages.push({ role: "ai", phase: "chat", text: data.response, safety: true });
+    } else {
+      s.messages.push({ role: "ai", phase: "chat", text: data.response });
+    }
+  } catch (err) {
+    const message = err && err.name === "AbortError" ? t("errorRetryContent") : (err && err.message) || t("errorRetryContent");
+    s.messages.push({ role: "ai", phase: "chat", text: message });
+  } finally {
+    s.chatLoading = false;
+    render();
+    scrollChatToBottom();
+  }
 }
 
 async function reloadLearner() {
@@ -1568,13 +1643,7 @@ async function reloadLearner() {
   if (data) state.learner = data;
 }
 
-async function sessionClose() {
-  state.activeSession = null;
-  render();
-}
-
-async function sessionDone() {
-  state.activeSession = null;
+async function finalizeStructuredSession() {
   const previousSessionsCompleted = state.learner.sessions_completed || 0;
 
   await Promise.all([loadTopics(), loadSessionsToday(), reloadLearner()]);
@@ -1598,73 +1667,88 @@ async function sessionDone() {
   render();
 }
 
+async function sessionClose() {
+  state.activeSession = null;
+  await loadSessionsToday();
+  render();
+}
+
 function renderSessionModal() {
   const s = state.activeSession;
-  const stepIndex = SESSION_STEPS.indexOf(s.phase);
 
   return `
     <div class="modal-overlay">
-      <div class="modal-sheet">
+      <div class="modal-sheet chat-sheet">
         <div class="modal-header">
-          <h3>${escapeHtml(s.topicTitle)}</h3>
+          <div class="chat-header-info">
+            <span class="chat-avatar">L</span>
+            <h3>${escapeHtml(s.topicTitle)}</h3>
+          </div>
           <button class="modal-close" data-action="session-close">✕</button>
         </div>
-        <div class="modal-body">
-          <div class="step-track">
-            ${SESSION_STEPS.map((step, i) => `<div class="step-dot ${i < stepIndex ? "done" : i === stepIndex ? "active" : ""}"></div>`).join("")}
-          </div>
-          ${renderSessionStepContent()}
+        <div class="modal-body chat-body" id="chat-scroll">
+          ${s.messages.map((msg, i) => renderChatMessage(msg, i)).join("")}
+          ${
+            s.loading || s.chatLoading
+              ? `<div class="chat-row chat-row-ai">
+                   <span class="chat-avatar">L</span>
+                   <div class="chat-bubble chat-bubble-ai chat-typing"><span class="spinner spinner-purple"></span> ${t("generating")}</div>
+                 </div>`
+              : ""
+          }
+          ${
+            s.error
+              ? `<div class="card" style="border-left:4px solid var(--danger);">
+                   <p>${escapeHtml(s.error)}</p>
+                   <button class="btn btn-primary btn-block" style="margin-top:10px;" data-action="session-retry">${t("btnRetry")}</button>
+                 </div>`
+              : ""
+          }
         </div>
-        <div class="modal-footer">${renderSessionFooter()}</div>
+        <div class="modal-footer chat-footer">
+          ${
+            s.safetyFlag
+              ? ""
+              : `<form data-action="session-chat-form" class="chat-input-row">
+                   <input type="text" name="chatMessage" autocomplete="off" placeholder="${t("chatInputPlaceholder")}" ${s.loading || s.chatLoading ? "disabled" : ""} />
+                   <button type="submit" class="btn btn-primary chat-send-btn" ${s.loading || s.chatLoading ? "disabled" : ""}>${t("btnSend")}</button>
+                 </form>`
+          }
+        </div>
       </div>
     </div>
   `;
 }
 
-function renderSessionStepContent() {
-  const s = state.activeSession;
-
-  if (s.error) {
-    return `<div class="card" style="border-left:4px solid var(--danger);"><p>${escapeHtml(s.error)}</p></div>`;
+function renderChatMessage(msg, index) {
+  if (msg.role === "learner") {
+    return `<div class="chat-row chat-row-learner"><div class="chat-bubble chat-bubble-learner">${escapeHtml(msg.text)}</div></div>`;
   }
 
-  if (s.loading) {
-    return `<div class="loading-row"><span class="spinner spinner-purple"></span> ${t("generating")}</div>`;
+  const bubbleClass = msg.safety ? "chat-bubble-safety" : "chat-bubble-ai";
+  const safetyPrefix = msg.safety ? `<strong>${t("supportResources")}</strong><br/><br/>` : "";
+  let html = `
+    <div class="chat-row chat-row-ai">
+      <span class="chat-avatar">L</span>
+      <div class="chat-bubble ${bubbleClass}">${safetyPrefix}${escapeHtml(msg.text)}</div>
+    </div>`;
+
+  if (msg.answerBox && !msg.answered) {
+    html += `
+      <div class="chat-answer-box">
+        <textarea id="session-answer-${index}" rows="3" placeholder="${t("yourAnswerLabel")}"></textarea>
+        <button class="btn btn-primary btn-block" data-action="session-submit-answer" data-index="${index}">${t("btnSubmitAnswer")}</button>
+      </div>`;
   }
 
-  switch (s.phase) {
-    case "explain":
-      return `<div class="ai-bubble">${escapeHtml(s.explainText || "")}</div>`;
-    case "example":
-      return `
-        ${s.explainText ? `<div class="ai-bubble" style="margin-bottom:10px;">${escapeHtml(s.explainText)}</div>` : ""}
-        <div class="ai-bubble">${escapeHtml(s.exampleText || "")}</div>
-      `;
-    case "attempt":
-      return `
-        <div class="ai-bubble" style="margin-bottom:10px;">${escapeHtml(s.attemptQuestion || "")}</div>
-        <div class="field">
-          <label>${t("yourAnswerLabel")}</label>
-          <textarea id="session-answer" rows="4">${escapeHtml(s.learnerAnswer || "")}</textarea>
-        </div>
-      `;
-    case "feedback":
-      return s.safetyFlag
-        ? `<div class="safety-bubble"><strong>${t("supportResources")}</strong><br/><br/>${escapeHtml(s.feedbackText || "")}</div>`
-        : `<div class="ai-bubble">${escapeHtml(s.feedbackText || "")}</div>`;
-    default:
-      return "";
-  }
+  return html;
 }
 
 // ---------------------------------------------------------------------
 // EXAMS TAB
 // ---------------------------------------------------------------------
 function renderExamsTab() {
-  const tier = state.profile.subscription_tier;
-  const isPremium = tier === "premium";
-  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
-  const completedExams = state.exams.filter((e) => e.completed_at);
+  const view = state.examsView || "studyguide";
 
   return `
     <div class="card">
@@ -1672,6 +1756,76 @@ function renderExamsTab() {
       <span class="badge badge-gold">${t("yourDiagnosticLevel")}: ${state.learner.diagnostic_level}/5</span>
     </div>
 
+    <div class="exams-toggle">
+      <button class="exams-toggle-btn ${view === "studyguide" ? "active" : ""}" data-action="exams-switch-view" data-view="studyguide">${t("tabStudyGuide")}</button>
+      <button class="exams-toggle-btn ${view === "mockexam" ? "active" : ""}" data-action="exams-switch-view" data-view="mockexam">${t("tabMockExam")}</button>
+    </div>
+
+    ${view === "studyguide" ? renderStudyGuideSection() : renderMockExamSection()}
+  `;
+}
+
+function renderStudyGuideSection() {
+  const sg = state.studyGuide;
+
+  return `
+    <div class="card">
+      <div class="field">
+        <label>${t("selectSubjectLabel")}</label>
+        <select id="study-guide-subject">
+          ${state.subjects.map((s) => `<option value="${s.id}" ${sg.subjectId === s.id ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>${t("topicLabel")}</label>
+        <input type="text" id="study-guide-topic" placeholder="${t("addTopicPlaceholder")}" maxlength="120" value="${escapeHtml(sg.topicTitle || "")}" />
+      </div>
+      <button class="btn btn-gold btn-block" data-action="generate-study-guide" ${sg.loading ? "disabled" : ""}>
+        ${sg.loading ? `<span class="spinner"></span> ${t("generating")}` : t("btnGenerateStudyGuide")}
+      </button>
+    </div>
+
+    ${sg.error ? `<div class="card" style="border-left:4px solid var(--danger);"><p>${escapeHtml(sg.error)}</p></div>` : ""}
+    ${sg.result ? renderStudyGuideCard(sg) : ""}
+  `;
+}
+
+function renderStudyGuideCard(sg) {
+  const r = sg.result;
+  const concepts = Array.isArray(r.keyConcepts) ? r.keyConcepts : [];
+
+  return `
+    <div class="card study-guide-card">
+      <h3 class="mt-0">${escapeHtml(r.topicTitle || sg.topicTitle || "")}</h3>
+
+      <div class="section-title" style="margin-top:0;">${t("keyConceptsLabel")}</div>
+      <ul class="study-guide-list">
+        ${concepts.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}
+      </ul>
+
+      <div class="section-title">${t("exampleLabel")}</div>
+      <div class="ai-bubble">${escapeHtml(r.example || "")}</div>
+
+      <div class="section-title">${t("selfCheckLabel")}</div>
+      <div class="ai-bubble" style="margin-bottom:10px;">${escapeHtml(r.selfCheckQuestion || "")}</div>
+      <div class="field">
+        <textarea id="study-guide-answer" rows="3" placeholder="${t("yourAnswerLabel")}">${escapeHtml(sg.answer || "")}</textarea>
+      </div>
+
+      <button class="btn btn-primary btn-block" data-action="save-study-guide" ${sg.saving ? "disabled" : ""}>
+        ${sg.saving ? `<span class="spinner"></span> ${t("loading")}` : sg.saved ? t("btnSaved") : t("btnSaveGuide")}
+      </button>
+    </div>
+  `;
+}
+
+function renderMockExamSection() {
+  const tier = state.profile.subscription_tier;
+  const isPremium = tier === "premium";
+  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
+  const completedExams = state.exams.filter((e) => e.completed_at);
+
+  return `
     <div class="card">
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
@@ -1716,6 +1870,74 @@ function renderExamsTab() {
             .join("")
     }
   `;
+}
+
+function examsSwitchView(view) {
+  state.examsView = view;
+  render();
+}
+
+async function generateStudyGuide() {
+  const subjectSelect = document.getElementById("study-guide-subject");
+  const topicInput = document.getElementById("study-guide-topic");
+  if (!subjectSelect || !topicInput) return;
+
+  const topicTitle = topicInput.value.trim();
+  if (!topicTitle) {
+    showToast(t("enterTopicFirst"), "error");
+    return;
+  }
+
+  const sg = state.studyGuide;
+  sg.subjectId = subjectSelect.value;
+  sg.topicTitle = topicTitle;
+  sg.loading = true;
+  sg.error = null;
+  sg.result = null;
+  sg.answer = "";
+  sg.saved = false;
+  render();
+
+  try {
+    const data = await callStudyGuideApi({ phase: "studyguide", subjectId: sg.subjectId, topicTitle: sg.topicTitle });
+    sg.result = data.studyGuide;
+  } catch (err) {
+    sg.error = err && err.name === "AbortError" ? t("errorRetryContent") : (err && err.message) || t("errorStudyGuideGeneration");
+  } finally {
+    sg.loading = false;
+    render();
+  }
+}
+
+async function saveStudyGuide() {
+  const sg = state.studyGuide;
+  if (!sg.result) return;
+
+  const answerInput = document.getElementById("study-guide-answer");
+  sg.answer = answerInput ? answerInput.value.trim() : "";
+  sg.saving = true;
+  render();
+
+  try {
+    const { error } = await sbClient.from("saved_guides").insert({
+      learner_id: state.learner.id,
+      subject_id: sg.subjectId,
+      topic_title: sg.result.topicTitle || sg.topicTitle,
+      key_concepts: sg.result.keyConcepts || [],
+      example: sg.result.example || "",
+      self_check_question: sg.result.selfCheckQuestion || "",
+      self_check_answer: sg.answer || null,
+    });
+    if (error) throw error;
+    sg.saved = true;
+    showToast(t("studyGuideSaved"), "success");
+  } catch (err) {
+    console.error(err);
+    showToast(t("errorGeneric"), "error");
+  } finally {
+    sg.saving = false;
+    render();
+  }
 }
 
 async function startMockExam() {
@@ -1933,31 +2155,6 @@ function renderExamModal() {
       </div>
     </div>
   `;
-}
-
-function renderSessionFooter() {
-  const s = state.activeSession;
-
-  if (s.error) {
-    return `
-      <button class="btn btn-primary btn-block" data-action="session-retry">${t("btnRetry")}</button>
-      <button class="btn btn-outline btn-block" style="margin-top:8px;" data-action="session-close">${t("cancel")}</button>
-    `;
-  }
-  if (s.loading) return "";
-
-  switch (s.phase) {
-    case "explain":
-      return `<button class="btn btn-primary btn-block" data-action="session-continue">${t("btnSeeExample")}</button>`;
-    case "example":
-      return `<button class="btn btn-primary btn-block" data-action="session-continue">${t("btnTryYourself")}</button>`;
-    case "attempt":
-      return `<button class="btn btn-primary btn-block" data-action="session-submit-answer">${t("btnSubmitAnswer")}</button>`;
-    case "feedback":
-      return `<button class="btn btn-gold btn-block" data-action="session-done">${t("btnFinish")}</button>`;
-    default:
-      return "";
-  }
 }
 
 // ---------------------------------------------------------------------
@@ -2301,17 +2498,20 @@ function attachGlobalListeners() {
       case "session-close":
         sessionClose();
         break;
-      case "session-continue":
-        sessionContinue();
-        break;
       case "session-submit-answer":
-        sessionSubmitAnswer();
-        break;
-      case "session-done":
-        sessionDone();
+        sessionSubmitAnswer(parseInt(target.dataset.index, 10));
         break;
       case "session-retry":
         sessionRetry();
+        break;
+      case "exams-switch-view":
+        examsSwitchView(target.dataset.view);
+        break;
+      case "generate-study-guide":
+        generateStudyGuide();
+        break;
+      case "save-study-guide":
+        saveStudyGuide();
         break;
       case "start-exam":
         startMockExam();
@@ -2360,6 +2560,9 @@ function attachGlobalListeners() {
         break;
       case "add-topic-form":
         handleAddTopic(form);
+        break;
+      case "session-chat-form":
+        sessionSendChat(form);
         break;
       case "link-learner-form":
         handleLinkLearner(form);
