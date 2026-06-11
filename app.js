@@ -748,6 +748,11 @@ async function handleSignup(form) {
       if (referredBy) metaData.referred_by = referredBy;
     }
 
+    // Log exactly what we send to Supabase Auth (the profile row is derived
+    // from this metadata by the handle_new_user() trigger, or by the
+    // ensureUserRecords() fallback below).
+    console.log("📝 Signup payload", { email, metaData });
+
     const { data, error } = await sbClient.auth.signUp({
       email,
       password,
@@ -756,6 +761,9 @@ async function handleSignup(form) {
     if (error) throw error;
 
     if (!data.session) {
+      // Email confirmation is enabled: there is no session yet, so the client
+      // cannot insert its own rows (no auth.uid()). The handle_new_user()
+      // trigger is responsible for creating the profile in this case.
       showToast(
         state.lang === "af"
           ? "Rekening geskep! Gaan jou e-pos na om te bevestig, dan kan jy aanmeld."
@@ -769,6 +777,12 @@ async function handleSignup(form) {
 
     state.session = data.session;
     state.user = data.user;
+
+    // Make sure the profile (+ learner/parent) rows exist before we try to read
+    // them. Normally the DB trigger has already created them; this is a no-op in
+    // that case and a fallback if the trigger is missing/failed.
+    await ensureUserRecords(data.user, metaData);
+
     await loadUserData();
     render();
   } catch (err) {
@@ -776,6 +790,78 @@ async function handleSignup(form) {
     showToast(err.message || t("errorGeneric"), "error");
   } finally {
     setButtonLoading(btn, false);
+  }
+}
+
+// Generate an 8-char referral code mirroring the DB trigger's format
+// (lowercase hex from a UUID with the dashes stripped).
+function generateReferralCode() {
+  const uuid =
+    (typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID()) ||
+    `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  return uuid.replace(/-/g, "").slice(0, 8).toLowerCase();
+}
+
+// Defensive, idempotent creation of the rows a signed-up user needs. The
+// profiles/learners/parents rows are normally created by the
+// handle_new_user() trigger (SECURITY DEFINER -> bypasses RLS, sets
+// id = new.id). If that trigger is missing or failed, we create them here
+// from the client, explicitly setting id / user_id to the authenticated
+// user's UID so the RLS "with check (auth.uid() = ...)" policies pass.
+// Existence checks make this a no-op whenever the trigger already ran, and
+// prevent duplicate learner/parent rows.
+async function ensureUserRecords(user, metaData) {
+  const meta = user.user_metadata || metaData || {};
+  const role = meta.role || authRole || "learner";
+
+  const { data: existingProfile, error: readErr } = await sbClient
+    .from("profiles")
+    .select("id, role")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (readErr) throw readErr;
+
+  let profileRole = existingProfile ? existingProfile.role : role;
+
+  if (!existingProfile) {
+    const profileRow = {
+      id: user.id, // MUST equal auth.uid() for the RLS insert policy to allow this
+      email: user.email,
+      role,
+      full_name: meta.full_name || null,
+      lang: meta.lang || state.lang || "en",
+      referral_code: generateReferralCode(),
+      referred_by: meta.referred_by || null,
+    };
+    console.log("📝 Profile row missing - inserting fallback", profileRow);
+    const { error: insertErr } = await sbClient.from("profiles").insert(profileRow);
+    if (insertErr) throw insertErr;
+    profileRole = role;
+  }
+
+  if (profileRole === "learner") {
+    const { data: existingLearner } = await sbClient
+      .from("learners")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!existingLearner) {
+      const grade = parseInt(meta.grade, 10) || 8;
+      const { error } = await sbClient
+        .from("learners")
+        .insert({ user_id: user.id, grade }); // user_id = auth.uid()
+      if (error) throw error;
+    }
+  } else if (profileRole === "parent") {
+    const { data: existingParent } = await sbClient
+      .from("parents")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!existingParent) {
+      const { error } = await sbClient.from("parents").insert({ user_id: user.id }); // user_id = auth.uid()
+      if (error) throw error;
+    }
   }
 }
 

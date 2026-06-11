@@ -301,6 +301,13 @@ alter table public.parent_alerts enable row level security;
 drop policy if exists "Users can read own profile" on public.profiles;
 create policy "Users can read own profile" on public.profiles for select using (auth.uid() = id);
 
+-- The handle_new_user() trigger (SECURITY DEFINER) normally creates the profile
+-- row and bypasses RLS. This INSERT policy additionally allows the client to
+-- create its OWN profile row as a fallback (id must equal the caller's UID),
+-- in case the trigger is absent or failed.
+drop policy if exists "Users can insert own profile" on public.profiles;
+create policy "Users can insert own profile" on public.profiles for insert with check (auth.uid() = id);
+
 drop policy if exists "Users can update own profile" on public.profiles;
 create policy "Users can update own profile" on public.profiles for update using (auth.uid() = id);
 
@@ -320,6 +327,9 @@ create policy "Authenticated users can read subjects" on public.subjects for sel
 drop policy if exists "Learners can read own data" on public.learners;
 create policy "Learners can read own data" on public.learners for select using (auth.uid() = user_id);
 
+drop policy if exists "Learners can insert own data" on public.learners;
+create policy "Learners can insert own data" on public.learners for insert with check (auth.uid() = user_id);
+
 drop policy if exists "Learners can update own data" on public.learners;
 create policy "Learners can update own data" on public.learners for update using (auth.uid() = user_id);
 
@@ -331,6 +341,9 @@ create policy "Parents can read linked learners" on public.learners for select u
 -- parents
 drop policy if exists "Parents can read own data" on public.parents;
 create policy "Parents can read own data" on public.parents for select using (auth.uid() = user_id);
+
+drop policy if exists "Parents can insert own data" on public.parents;
+create policy "Parents can insert own data" on public.parents for insert with check (auth.uid() = user_id);
 
 drop policy if exists "Parents can update own data" on public.parents;
 create policy "Parents can update own data" on public.parents for update using (auth.uid() = user_id);
