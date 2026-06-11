@@ -800,9 +800,10 @@ async function handleSignup(form) {
     state.session = data.session;
     state.user = data.user;
 
-    // Make sure the profile (+ learner/parent) rows exist before we try to read
-    // them. Normally the DB trigger has already created them; this is a no-op in
-    // that case and a fallback if the trigger is missing/failed.
+    // The handle_new_user() trigger (SECURITY DEFINER) creates the
+    // profiles/learners/parents rows server-side. The client must NOT insert
+    // into public.profiles directly - RLS blocks that. Wait for the trigger's
+    // rows to land, then load them.
     await ensureUserRecords(data.user, metaData);
 
     await loadUserData();
@@ -815,51 +816,39 @@ async function handleSignup(form) {
   }
 }
 
-// Generate an 8-char referral code mirroring the DB trigger's format
-// (lowercase hex from a UUID with the dashes stripped).
-function generateReferralCode() {
-  const uuid =
-    (typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID()) ||
-    `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-  return uuid.replace(/-/g, "").slice(0, 8).toLowerCase();
-}
-
-// Defensive, idempotent creation of the rows a signed-up user needs. The
-// profiles/learners/parents rows are normally created by the
-// handle_new_user() trigger (SECURITY DEFINER -> bypasses RLS, sets
-// id = new.id). If that trigger is missing or failed, we create them here
-// from the client, explicitly setting id / user_id to the authenticated
-// user's UID so the RLS "with check (auth.uid() = ...)" policies pass.
-// Existence checks make this a no-op whenever the trigger already ran, and
-// prevent duplicate learner/parent rows.
+// Wait for the handle_new_user() trigger to create the profiles row (it runs
+// SECURITY DEFINER and bypasses RLS), then make sure the matching
+// learners/parents row exists too. We never insert into public.profiles from
+// the client - RLS's "with check (auth.uid() = id)" policy only covers rows
+// the user creates themselves, and the profile row is owned by the trigger.
 async function ensureUserRecords(user, metaData) {
   const meta = user.user_metadata || metaData || {};
-  const role = meta.role || authRole || "learner";
 
-  const { data: existingProfile, error: readErr } = await sbClient
-    .from("profiles")
-    .select("id, role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (readErr) throw readErr;
-
-  let profileRole = existingProfile ? existingProfile.role : role;
+  let existingProfile = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: profileRow, error: readErr } = await sbClient
+      .from("profiles")
+      .select("id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (readErr) throw readErr;
+    if (profileRow) {
+      existingProfile = profileRow;
+      break;
+    }
+    // Trigger may not have committed yet - brief wait, then retry.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 
   if (!existingProfile) {
-    const profileRow = {
-      id: user.id, // MUST equal auth.uid() for the RLS insert policy to allow this
-      email: user.email,
-      role,
-      full_name: meta.full_name || null,
-      lang: meta.lang || state.lang || "en",
-      referral_code: generateReferralCode(),
-      referred_by: meta.referred_by || null,
-    };
-    console.log("📝 Profile row missing - inserting fallback", profileRow);
-    const { error: insertErr } = await sbClient.from("profiles").insert(profileRow);
-    if (insertErr) throw insertErr;
-    profileRole = role;
+    throw new Error(
+      state.lang === "af"
+        ? "Jou profiel word nog geskep. Probeer asseblief weer aanmeld oor 'n oomblik."
+        : "Your profile is still being created. Please try logging in again in a moment.",
+    );
   }
+
+  const profileRole = existingProfile.role;
 
   if (profileRole === "learner") {
     const { data: existingLearner } = await sbClient
