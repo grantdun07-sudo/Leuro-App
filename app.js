@@ -800,10 +800,22 @@ async function handleSignup(form) {
     state.session = data.session;
     state.user = data.user;
 
-    // The handle_new_user() trigger (SECURITY DEFINER) creates the
-    // profiles/learners/parents rows server-side. The client must NOT insert
-    // into public.profiles directly - RLS blocks that. Wait for the trigger's
-    // rows to land, then load them.
+    // Same session race as handleLogin: signUp() resolves before the client
+    // has finished persisting the session, so auth.uid() can still be null on
+    // the next request. Explicitly install the returned session, then read it
+    // back before touching the database.
+    await sbClient.auth.setSession({
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
+    });
+    const { data: sessionData } = await sbClient.auth.getSession();
+    state.session = sessionData.session || data.session;
+    state.user = state.session ? state.session.user : data.user;
+
+    // Give the handle_new_user() trigger (SECURITY DEFINER) a moment to fire
+    // and create the profiles/learners/parents rows before we read them. The
+    // client must NOT insert into public.profiles directly - RLS blocks that.
+    await new Promise((resolve) => setTimeout(resolve, 500));
     await ensureUserRecords(data.user, metaData);
 
     await loadUserData();
