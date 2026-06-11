@@ -13,9 +13,15 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     # Required repo secrets:
-    #   SUPABASE_PROJECT_ID        - your Supabase project ref (izyrizwudvalrbqgbhgl)
-    #   SUPABASE_SERVICE_ROLE_KEY  - used here as the Supabase CLI access token
-    #                                (Supabase Dashboard > Account > Access Tokens)
+    #   SUPABASE_PROJECT_ID    - your Supabase project ref (izyrizwudvalrbqgbhgl)
+    #   SUPABASE_ACCESS_TOKEN  - a Supabase personal access token (sbp_...),
+    #                            from Supabase Dashboard > Account > Access Tokens.
+    #                            NOTE: this must be a personal access token, NOT
+    #                            the service role / sb_secret_... key - the CLI
+    #                            rejects that format.
+    #   ANTHROPIC_API_KEY      - optional. If set, it's pushed to the project's
+    #                            edge function secrets so generate-study-guide /
+    #                            generate-mock-exam / grade-mock-exam can call Claude.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,17 +34,25 @@ jobs:
       - name: Deploy generate-study-guide
         run: supabase functions deploy generate-study-guide --project-ref "$SUPABASE_PROJECT_ID"
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
 
       - name: Deploy generate-mock-exam
         run: supabase functions deploy generate-mock-exam --project-ref "$SUPABASE_PROJECT_ID"
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
 
       - name: Deploy grade-mock-exam
         run: supabase functions deploy grade-mock-exam --project-ref "$SUPABASE_PROJECT_ID"
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+
+      - name: Set ANTHROPIC_API_KEY edge function secret
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
+        run: supabase secrets set ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" --project-ref "$SUPABASE_PROJECT_ID"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
