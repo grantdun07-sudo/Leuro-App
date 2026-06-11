@@ -1,0 +1,20 @@
+{
+  "name": "Leuro - Your Learning Hero",
+  "short_name": "Leuro",
+  "description": "Leuro helps South African learners diagnose their level, study smarter with AI tutoring, and ace mock exams.",
+  "start_url": "/index.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F9F9F7",
+  "theme_color": "#5A3E76",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
