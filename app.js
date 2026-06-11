@@ -752,6 +752,24 @@ async function handleLogin(form) {
   }
 }
 
+// [DIAG] Decode a JWT payload (base64url) without verifying - for logging only.
+function decodeJwtPayload(token) {
+  if (!token || typeof token !== "string") return null;
+  try {
+    const part = token.split(".")[1];
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const json = decodeURIComponent(
+      atob(b64)
+        .split("")
+        .map((c) => `%${("00" + c.charCodeAt(0).toString(16)).slice(-2)}`)
+        .join(""),
+    );
+    return JSON.parse(json);
+  } catch (e) {
+    return { _decodeError: String(e) };
+  }
+}
+
 async function handleSignup(form) {
   const btn = form.querySelector("button[type=submit]");
   setButtonLoading(btn, true);
@@ -780,6 +798,11 @@ async function handleSignup(form) {
       password,
       options: { data: metaData },
     });
+
+    // [DIAG] Full signUp() response so we can see user.id / session presence.
+    console.log("🔎 [DIAG] signUp() response", { data, error });
+    console.log("🔎 [DIAG] anon key in use", SUPABASE_ANON_KEY);
+
     if (error) throw error;
 
     if (!data.session) {
@@ -812,6 +835,16 @@ async function handleSignup(form) {
     state.session = sessionData.session || data.session;
     state.user = state.session ? state.session.user : data.user;
 
+    // [DIAG] What does the client think the session is right after setSession?
+    // auth.uid() server-side == the JWT "sub" claim, so decode it to see the
+    // exact value RLS will compare against profiles.id.
+    console.log("🔎 [DIAG] getSession() after setSession", sessionData);
+    const diagClaims = decodeJwtPayload(state.session && state.session.access_token);
+    console.log("🔎 [DIAG] access_token claims", diagClaims);
+    console.log("🔎 [DIAG] auth.uid() will be (sub)", diagClaims && diagClaims.sub, "| role claim:", diagClaims && diagClaims.role);
+    console.log("🔎 [DIAG] state.user.id (query target)", state.user && state.user.id);
+    console.log("🔎 [DIAG] uid === user.id ?", diagClaims && state.user && diagClaims.sub === state.user.id);
+
     // Give the handle_new_user() trigger (SECURITY DEFINER) a moment to fire
     // and create the profiles/learners/parents rows before we read them. The
     // client must NOT insert into public.profiles directly - RLS blocks that.
@@ -836,13 +869,28 @@ async function handleSignup(form) {
 async function ensureUserRecords(user, metaData) {
   const meta = user.user_metadata || metaData || {};
 
+  // [DIAG] Confirm the live session right before the failing query.
+  const { data: preQuerySession } = await sbClient.auth.getSession();
+  const preQueryClaims = decodeJwtPayload(
+    preQuerySession.session && preQuerySession.session.access_token,
+  );
+  console.log("🔎 [DIAG] ensureUserRecords: session present?", !!preQuerySession.session);
+  console.log(
+    "🔎 [DIAG] ensureUserRecords: auth.uid()=",
+    preQueryClaims && preQueryClaims.sub,
+    "| querying profiles WHERE id =",
+    user.id,
+  );
+
   let existingProfile = null;
   for (let attempt = 0; attempt < 5; attempt++) {
+    console.log(`🔎 [DIAG] profiles SELECT attempt ${attempt + 1}/5 (id = ${user.id})`);
     const { data: profileRow, error: readErr } = await sbClient
       .from("profiles")
       .select("id, role")
       .eq("id", user.id)
       .maybeSingle();
+    console.log("🔎 [DIAG] profiles SELECT result", { profileRow, readErr });
     if (readErr) throw readErr;
     if (profileRow) {
       existingProfile = profileRow;
