@@ -443,6 +443,14 @@ async function init() {
     } catch (err) {
       console.error(err);
       showToast(t("errorGeneric"), "error");
+      // Profile failed to load (RLS issue, missing row, network error, etc.).
+      // Fall back to a clean signed-out state so render() shows the login
+      // screen instead of a half-loaded app with state.profile === null.
+      state.session = null;
+      state.user = null;
+      state.profile = null;
+      state.learner = null;
+      state.parent = null;
     }
   }
 
@@ -890,12 +898,12 @@ function render() {
     return;
   }
 
-  if (!state.user) {
+  if (!state.user || !state.profile) {
     app.innerHTML = renderAuthScreen();
     return;
   }
 
-  if (state.profile.role === "learner" && (state.learner.diagnostic_level === 0 || state.showDiagnostic)) {
+  if (state.profile.role === "learner" && (!state.learner || state.learner.diagnostic_level === 0 || state.showDiagnostic)) {
     app.innerHTML = renderDiagnosticScreen();
     return;
   }
