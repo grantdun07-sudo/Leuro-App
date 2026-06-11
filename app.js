@@ -726,8 +726,22 @@ async function handleLogin(form) {
     const password = form.password.value;
     const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
     if (error) throw error;
-    state.session = data.session;
-    state.user = data.user;
+
+    // signInWithPassword resolves before the client has finished persisting the
+    // session, so auth.uid() can still be null on the very next request and RLS
+    // rejects the profiles query with "permission denied". Explicitly install
+    // the returned session, then read it back so we only query profiles once the
+    // authenticated session is actually in place.
+    if (data.session) {
+      await sbClient.auth.setSession({
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+      });
+    }
+    const { data: sessionData } = await sbClient.auth.getSession();
+    state.session = sessionData.session || data.session;
+    state.user = state.session ? state.session.user : data.user;
+
     await loadUserData();
     render();
   } catch (err) {
