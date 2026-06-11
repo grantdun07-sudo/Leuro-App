@@ -2056,16 +2056,10 @@ function copyReferralCode() {
 async function toggleLanguage() {
   state.lang = state.lang === "en" ? "af" : "en";
   document.documentElement.lang = state.lang;
+  // Keep the choice in local state only. The frontend must never write to
+  // public.profiles directly - persisting language is the DB/trigger's job.
+  if (state.profile) state.profile.lang = state.lang;
   render();
-
-  if (state.user) {
-    try {
-      await sbClient.from("profiles").update({ lang: state.lang }).eq("id", state.user.id);
-      if (state.profile) state.profile.lang = state.lang;
-    } catch (err) {
-      console.warn("Could not persist language preference:", err);
-    }
-  }
 }
 
 // ---------------------------------------------------------------------
