@@ -1110,7 +1110,7 @@ function renderLearnTab() {
     <div class="card">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div>
-          <h3 class="mt-0" style="margin-bottom:6px;">${t("learnHeading")}</h3>
+          <h3 class="mt-0 screen-title" style="margin-bottom:6px;">${t("learnHeading")}</h3>
           <span class="badge badge-purple">${t("gradeLabel")} ${state.learner.grade}</span>
           <span class="badge badge-gold">${t("levelLabel")} ${state.learner.diagnostic_level}/5</span>
         </div>
@@ -1427,7 +1427,7 @@ function renderExamsTab() {
 
   return `
     <div class="card">
-      <h3 class="mt-0">${t("examsHeading")}</h3>
+      <h3 class="mt-0 screen-title">${t("examsHeading")}</h3>
       <span class="badge badge-gold">${t("yourDiagnosticLevel")}: ${state.learner.diagnostic_level}/5</span>
     </div>
 
@@ -1727,7 +1727,7 @@ const ALERT_ICONS = { safety_flag: "🚨", low_performance: "📉", study_streak
 function renderParentTab() {
   return `
     <div class="card">
-      <h3 class="mt-0">${t("parentHeading")}</h3>
+      <h3 class="mt-0 screen-title">${t("parentHeading")}</h3>
     </div>
 
     <div class="card">
@@ -1850,7 +1850,7 @@ function renderAccountTab() {
 
   return `
     <div class="card">
-      <h3 class="mt-0">${t("accountHeading")}</h3>
+      <h3 class="mt-0 screen-title">${t("accountHeading")}</h3>
       <div class="account-row">
         <span class="label">${t("labelFullName")}</span>
         <span class="value">${escapeHtml(profile.full_name || "-")}</span>
