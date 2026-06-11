@@ -720,16 +720,6 @@ h1, h2, h3, h4 {
 .step-dot.done { background: var(--accent); }
 .step-dot.active { background: var(--primary); }
 
-.step-label {
-  font-size: 12px;
-  font-weight: 700;
-  font-family: var(--font-inter);
-  text-transform: uppercase;
-  color: var(--primary);
-  letter-spacing: 0.5px;
-  margin-bottom: var(--spacing-8);
-}
-
 .ai-bubble {
   background: var(--white);
   border-radius: var(--radius-card);

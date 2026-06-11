@@ -1448,12 +1448,6 @@ async function handleAddTopic(form) {
 // STUDY SESSION (Explain -> Example -> Attempt -> Feedback)
 // ---------------------------------------------------------------------
 const SESSION_STEPS = ["explain", "example", "attempt", "feedback"];
-const SESSION_STEP_LABELS = {
-  explain: "stepExplain",
-  example: "stepExample",
-  attempt: "stepAttempt",
-  feedback: "stepFeedback",
-};
 
 async function openTopicSession(topicId) {
   const topic = state.topics.find((tp) => tp.id === topicId);
@@ -1619,7 +1613,6 @@ function renderSessionModal() {
           <div class="step-track">
             ${SESSION_STEPS.map((step, i) => `<div class="step-dot ${i < stepIndex ? "done" : i === stepIndex ? "active" : ""}"></div>`).join("")}
           </div>
-          <div class="step-label">${t(SESSION_STEP_LABELS[s.phase])}</div>
           ${renderSessionStepContent()}
         </div>
         <div class="modal-footer">${renderSessionFooter()}</div>
