@@ -88,6 +88,8 @@ const translations = {
     btnSubmitAnswer: "Submit Answer",
     btnFinish: "Done",
     supportResources: "Support Resources",
+    errorRetryContent: "Unable to generate content. Please try again in 30 seconds.",
+    btnRetry: "Retry",
 
     examsHeading: "Mock Exams",
     yourDiagnosticLevel: "Your diagnostic level",
@@ -100,9 +102,13 @@ const translations = {
     premiumOnlyTitle: "Premium Feature",
     premiumOnlyMsg: "Mock exams are part of the Premium plan.",
     btnUpgradeToPremium: "Upgrade to Premium",
+    mediumHighPremiumNote: "🔒 Medium and High difficulty exams are a Premium feature.",
     completedExams: "Completed Exams",
     noExams: "No mock exams yet.",
+    examOf: "of {n}",
+    btnNextExamQuestion: "Next Question",
     btnSubmitExam: "Submit Exam",
+    errorExamGeneration: "Unable to generate exam. Try a different difficulty.",
     examResultsHeading: "Your Results",
     yourScore: "Your Score",
     btnDone: "Done",
@@ -209,6 +215,8 @@ const translations = {
     btnSubmitAnswer: "Dien Antwoord In",
     btnFinish: "Klaar",
     supportResources: "Ondersteuningshulpbronne",
+    errorRetryContent: "Kon nie inhoud genereer nie. Probeer asseblief weer oor 30 sekondes.",
+    btnRetry: "Probeer Weer",
 
     examsHeading: "Toetseksamens",
     yourDiagnosticLevel: "Jou diagnostiese vlak",
@@ -221,9 +229,13 @@ const translations = {
     premiumOnlyTitle: "Premium-funksie",
     premiumOnlyMsg: "Toetseksamens is deel van die Premium-plan.",
     btnUpgradeToPremium: "Gradeer op na Premium",
+    mediumHighPremiumNote: "🔒 Medium- en Hoë-moeilikheidsgraad-eksamens is 'n Premium-funksie.",
     completedExams: "Voltooide Eksamens",
     noExams: "Nog geen toetseksamens nie.",
+    examOf: "van {n}",
+    btnNextExamQuestion: "Volgende Vraag",
     btnSubmitExam: "Dien Eksamen In",
+    errorExamGeneration: "Kon nie eksamen genereer nie. Probeer 'n ander moeilikheidsgraad.",
     examResultsHeading: "Jou Resultate",
     yourScore: "Jou Punt",
     btnDone: "Klaar",
@@ -309,6 +321,34 @@ function capitalize(str) {
 
 function difficultyLabel(difficulty) {
   return t(`diff${capitalize(difficulty)}`);
+}
+
+const API_TIMEOUT_MS = 15000;
+
+async function fetchWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Local-storage mirror of today's free-tier session count, so the limit can
+// be checked instantly (before the Supabase round-trip on next load).
+function sessionCountStorageKey() {
+  const learnerId = state.learner?.id || "anon";
+  const today = new Date().toISOString().slice(0, 10);
+  return `leuro_sessions_${learnerId}_${today}`;
+}
+
+function getLocalSessionCount() {
+  return parseInt(localStorage.getItem(sessionCountStorageKey()) || "0", 10);
+}
+
+function incrementLocalSessionCount() {
+  localStorage.setItem(sessionCountStorageKey(), String(getLocalSessionCount() + 1));
 }
 
 function escapeHtml(str) {
@@ -1172,7 +1212,7 @@ async function openTopicSession(topicId) {
   if (!topic) return;
 
   const tier = state.profile.subscription_tier;
-  if (tier === "free" && state.sessionsToday >= 3) {
+  if (tier === "free" && (state.sessionsToday >= 3 || getLocalSessionCount() >= 3)) {
     showToast(t("limitReachedMsg"), "error");
     return;
   }
@@ -1189,13 +1229,15 @@ async function openTopicSession(topicId) {
     feedbackText: null,
     safetyFlag: false,
     error: null,
+    completedPhases: [],
+    retry: null,
   };
   render();
   await runSessionPhase("explain");
 }
 
 async function callStudyGuide(phase, learnerInput, context) {
-  const res = await fetch(`${FN_URL}/generate-study-guide`, {
+  const res = await fetchWithTimeout(`${FN_URL}/generate-study-guide`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1213,7 +1255,10 @@ async function runSessionPhase(phase, learnerInput, context) {
   const s = state.activeSession;
   s.loading = true;
   s.error = null;
+  s.retry = { phase, learnerInput, context };
   render();
+
+  console.log("🎓 Study Guide API", { topicId: s.topicId, phase, status: "calling" });
 
   try {
     const data = await callStudyGuide(phase, learnerInput, context);
@@ -1227,12 +1272,29 @@ async function runSessionPhase(phase, learnerInput, context) {
       else if (phase === "attempt") s.attemptQuestion = data.response;
       else if (phase === "feedback") s.feedbackText = data.response;
     }
+
+    if (phase === "explain") incrementLocalSessionCount();
+
+    s.completedPhases.push(phase);
+    console.log("🎓 Study Guide API", { phase, status: "success", tokensUsed: data.tokensUsed ?? 0 });
+    console.log("💾 Session saved", { topicId: s.topicId, phases: s.completedPhases });
   } catch (err) {
-    s.error = (err && err.message) || t("errorGeneric");
+    if (err && err.name === "AbortError") {
+      s.error = t("errorRetryContent");
+    } else {
+      s.error = (err && err.message) || t("errorRetryContent");
+    }
+    console.error("🎓 Study Guide API ERROR", s.error);
   } finally {
     s.loading = false;
     render();
   }
+}
+
+function sessionRetry() {
+  const s = state.activeSession;
+  if (!s || !s.retry) return;
+  runSessionPhase(s.retry.phase, s.retry.learnerInput, s.retry.context);
 }
 
 function sessionContinue() {
@@ -1369,31 +1431,29 @@ function renderExamsTab() {
       <span class="badge badge-gold">${t("yourDiagnosticLevel")}: ${state.learner.diagnostic_level}/5</span>
     </div>
 
-    ${
-      isPremium
-        ? `<div class="card">
-            <div class="field">
-              <label>${t("selectSubjectLabel")}</label>
-              <select id="exam-subject">
-                ${state.subjects.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}
-              </select>
-            </div>
-            <div class="field">
-              <label>${t("selectDifficultyLabel")}</label>
-              <select id="exam-difficulty">
-                <option value="low">${t("diffLow")}</option>
-                <option value="medium" selected>${t("diffMedium")}</option>
-                <option value="high">${t("diffHigh")}</option>
-              </select>
-            </div>
-            <button class="btn btn-primary btn-block" data-action="start-exam">${t("btnStartExam")}</button>
-          </div>`
-        : `<div class="card" style="border-left:4px solid var(--gold);">
-            <h3 class="mt-0">${t("premiumOnlyTitle")}</h3>
-            <p>${t("premiumOnlyMsg")}</p>
-            <button class="btn btn-gold btn-block" style="margin-top:10px;" data-action="switch-tab" data-tab="account">${t("btnUpgradeToPremium")}</button>
-          </div>`
-    }
+    <div class="card">
+      <div class="field">
+        <label>${t("selectSubjectLabel")}</label>
+        <select id="exam-subject">
+          ${state.subjects.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>${t("selectDifficultyLabel")}</label>
+        <select id="exam-difficulty">
+          <option value="low" selected>${t("diffLow")} ✅</option>
+          <option value="medium" ${isPremium ? "" : "disabled"}>${t("diffMedium")}${isPremium ? "" : " 🔒"}</option>
+          <option value="high" ${isPremium ? "" : "disabled"}>${t("diffHigh")}${isPremium ? "" : " 🔒"}</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-block" data-action="start-exam">${t("btnStartExam")}</button>
+      ${
+        !isPremium
+          ? `<p class="muted" style="margin-top:10px;">${t("mediumHighPremiumNote")}</p>
+             <button class="btn btn-gold btn-block" data-action="switch-tab" data-tab="account">${t("btnUpgradeToPremium")}</button>`
+          : ""
+      }
+    </div>
 
     <div class="section-title">${t("completedExams")}</div>
     ${
@@ -1422,11 +1482,14 @@ async function startMockExam() {
   const difficultySelect = document.getElementById("exam-difficulty");
   if (!subjectSelect || !difficultySelect) return;
 
+  const difficulty = difficultySelect.value;
   const btn = document.querySelector('[data-action="start-exam"]');
   setButtonLoading(btn, true);
 
+  console.log("📋 Mock Exam API", { difficulty, status: "calling" });
+
   try {
-    const res = await fetch(`${FN_URL}/generate-mock-exam`, {
+    const res = await fetchWithTimeout(`${FN_URL}/generate-mock-exam`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1436,7 +1499,7 @@ async function startMockExam() {
       body: JSON.stringify({
         learnerId: state.learner.id,
         subjectId: subjectSelect.value,
-        difficulty: difficultySelect.value,
+        difficulty,
       }),
     });
     const data = await res.json();
@@ -1445,36 +1508,73 @@ async function startMockExam() {
     state.activeExam = {
       examId: data.examId,
       subjectId: subjectSelect.value,
-      difficulty: difficultySelect.value,
+      difficulty,
       questions: data.questions,
       answers: {},
+      currentIndex: 0,
       loading: false,
       results: null,
       error: null,
     };
+    console.log("📋 Mock Exam API", {
+      difficulty,
+      status: "success",
+      questionCount: data.questions.length,
+      totalMarks: data.totalMarks,
+    });
     render();
   } catch (err) {
-    console.error(err);
-    showToast((err && err.message) || t("errorGeneric"), "error");
+    const message = err && err.name === "AbortError" ? "Request timed out" : err && err.message;
+    console.error("📋 Mock Exam API ERROR", message || err);
+    const toastMessage = err && err.error === "premium_required" ? err.message : t("errorExamGeneration");
+    showToast(toastMessage, "error");
   } finally {
     setButtonLoading(btn, false);
   }
 }
 
+function examCurrentQuestion() {
+  const e = state.activeExam;
+  return e.questions[e.currentIndex];
+}
+
+function examSelectOption(optionText) {
+  const e = state.activeExam;
+  const q = examCurrentQuestion();
+  e.answers[q.id] = optionText;
+  render();
+}
+
+function examSaveCurrentAnswer() {
+  const e = state.activeExam;
+  const q = examCurrentQuestion();
+  if (q.question_type !== "mcq") {
+    const textarea = document.getElementById(`exam-answer-${q.id}`);
+    if (textarea) e.answers[q.id] = textarea.value.trim();
+  }
+}
+
+function examNextQuestion() {
+  const e = state.activeExam;
+  examSaveCurrentAnswer();
+  e.currentIndex++;
+  render();
+}
+
 async function submitExam() {
   const e = state.activeExam;
-  const responses = e.questions.map((q) => {
-    const textarea = document.getElementById(`exam-answer-${q.id}`);
-    const answer = textarea ? textarea.value.trim() : "";
-    e.answers[q.id] = answer;
-    return { questionId: q.id, answer };
-  });
+  examSaveCurrentAnswer();
+
+  const responses = e.questions.map((q) => ({
+    questionId: q.id,
+    answer: e.answers[q.id] || "",
+  }));
 
   e.loading = true;
   render();
 
   try {
-    const res = await fetch(`${FN_URL}/grade-mock-exam`, {
+    const res = await fetchWithTimeout(`${FN_URL}/grade-mock-exam`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1486,9 +1586,13 @@ async function submitExam() {
     const data = await res.json();
     if (!res.ok) throw data;
     e.results = data;
+
+    const percentage = data.totalMarks > 0 ? Math.round((data.totalAwarded / data.totalMarks) * 100) : 0;
+    console.log("💾 Exam submitted", { score: data.totalAwarded, total: data.totalMarks, percentage });
   } catch (err) {
-    console.error(err);
-    showToast((err && err.message) || t("errorGeneric"), "error");
+    const message = err && err.name === "AbortError" ? "Request timed out" : err && err.message;
+    console.error("📋 Mock Exam API ERROR", message || err);
+    showToast(message || t("errorGeneric"), "error");
   } finally {
     e.loading = false;
     render();
@@ -1511,6 +1615,7 @@ function renderExamModal() {
   const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
 
   if (e.results) {
+    const percentage = e.results.totalMarks > 0 ? Math.round((e.results.totalAwarded / e.results.totalMarks) * 100) : 0;
     return `
       <div class="modal-overlay">
         <div class="modal-sheet">
@@ -1520,7 +1625,7 @@ function renderExamModal() {
           </div>
           <div class="modal-body">
             <div class="result-bar">
-              <div class="result-score">${e.results.totalAwarded}/${e.results.totalMarks}</div>
+              <div class="result-score">${e.results.totalAwarded}/${e.results.totalMarks} (${percentage}%)</div>
               <div class="muted">${t("yourScore")}</div>
             </div>
             ${e.questions
@@ -1543,6 +1648,11 @@ function renderExamModal() {
     `;
   }
 
+  const q = e.questions[e.currentIndex];
+  const isLast = e.currentIndex === e.questions.length - 1;
+  const progress = ((e.currentIndex + 1) / e.questions.length) * 100;
+  const selectedAnswer = e.answers[q.id] || "";
+
   return `
     <div class="modal-overlay">
       <div class="modal-sheet">
@@ -1551,21 +1661,33 @@ function renderExamModal() {
           <button class="modal-close" data-action="exam-close">✕</button>
         </div>
         <div class="modal-body">
-          ${e.questions
-            .map(
-              (q, i) => `
-            <div class="exam-question">
-              <div class="q-head"><span>${t("questionLabel")} ${i + 1}</span><span>${q.marks} marks</span></div>
-              <div class="q-text">${escapeHtml(q.question_text)}</div>
-              <textarea id="exam-answer-${q.id}" rows="3" ${e.loading ? "disabled" : ""}>${escapeHtml(e.answers[q.id] || "")}</textarea>
-            </div>`,
-            )
-            .join("")}
+          <div class="progress-bar"><div class="progress-bar-fill" style="width:${progress}%"></div></div>
+          <div class="section-title">${t("questionLabel")} ${e.currentIndex + 1} ${t("examOf").replace("{n}", e.questions.length)}</div>
+          <div class="exam-question">
+            <div class="q-head"><span>${t("questionLabel")} ${e.currentIndex + 1}</span><span>${q.marks} marks</span></div>
+            <div class="q-text">${escapeHtml(q.question_text)}</div>
+            ${
+              q.question_type === "mcq" && Array.isArray(q.options)
+                ? q.options
+                    .map(
+                      (opt) => `
+              <div class="option-btn ${selectedAnswer === opt ? "selected" : ""}" data-action="exam-select-option" data-option="${escapeHtml(opt)}">
+                ${escapeHtml(opt)}
+              </div>`,
+                    )
+                    .join("")
+                : `<textarea id="exam-answer-${q.id}" rows="4" ${e.loading ? "disabled" : ""}>${escapeHtml(e.answers[q.id] || "")}</textarea>`
+            }
+          </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-primary btn-block" data-action="submit-exam" ${e.loading ? "disabled" : ""}>
-            ${e.loading ? `<span class="spinner"></span> ${t("loading")}` : t("btnSubmitExam")}
-          </button>
+          ${
+            isLast
+              ? `<button class="btn btn-primary btn-block" data-action="submit-exam" ${e.loading ? "disabled" : ""}>
+                   ${e.loading ? `<span class="spinner"></span> ${t("loading")}` : t("btnSubmitExam")}
+                 </button>`
+              : `<button class="btn btn-primary btn-block" data-action="exam-next-question">${t("btnNextExamQuestion")}</button>`
+          }
         </div>
       </div>
     </div>
@@ -1576,7 +1698,10 @@ function renderSessionFooter() {
   const s = state.activeSession;
 
   if (s.error) {
-    return `<button class="btn btn-outline btn-block" data-action="session-close">${t("cancel")}</button>`;
+    return `
+      <button class="btn btn-primary btn-block" data-action="session-retry">${t("btnRetry")}</button>
+      <button class="btn btn-outline btn-block" style="margin-top:8px;" data-action="session-close">${t("cancel")}</button>
+    `;
   }
   if (s.loading) return "";
 
@@ -1946,6 +2071,9 @@ function attachGlobalListeners() {
       case "session-done":
         sessionDone();
         break;
+      case "session-retry":
+        sessionRetry();
+        break;
       case "start-exam":
         startMockExam();
         break;
@@ -1957,6 +2085,12 @@ function attachGlobalListeners() {
         break;
       case "exam-done":
         examDone();
+        break;
+      case "exam-select-option":
+        examSelectOption(target.dataset.option);
+        break;
+      case "exam-next-question":
+        examNextQuestion();
         break;
       case "mark-alert-read":
         markAlertRead(target.dataset.alertId);

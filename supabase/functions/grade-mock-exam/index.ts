@@ -3,26 +3,27 @@
 //
 // Returns: {
 //   totalAwarded: number, totalMarks: number,
-//   results: [{ questionId, marksAwarded, feedback }]
+//   results: [{ question_id, marks_awarded, feedback }]
 // }
 //
-// Auth: caller must be the learner who owns the exam. Auto-grades all
-// questions in a single Claude Haiku call (with prompt caching) and
-// records the outcome.
+// Auth: caller must be the learner who owns the exam. MCQ questions are
+// graded by exact match against the stored answer key (no AI call needed).
+// Short-answer/extended questions are auto-graded in a single Claude Haiku
+// call (with prompt caching), using the stored model answer / mark scheme
+// as additional grading context.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
 
-const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-const MODEL = "claude-haiku-4-5-20251001";
-
-const SYSTEM_PROMPT = `You are Leuro, an exam marker for South African school learners following
-the CAPS curriculum. You will be given a list of exam questions, each with
-its mark allocation and the learner's written answer. Mark each answer
-fairly: award full marks for fully correct answers, partial marks for
+const SYSTEM_PROMPT = `You are Leuro™, an exam marker for South African school learners following
+the CAPS curriculum. You will be given a list of short-answer/extended exam
+questions, each with its mark allocation, a model answer / mark scheme, and
+the learner's written answer. Mark each answer fairly against the mark
+scheme: award full marks for fully correct answers, partial marks for
 partially correct reasoning/working, and zero for incorrect or blank
 answers. Provide brief, constructive feedback (1-2 sentences) per question.
 
@@ -30,6 +31,21 @@ You MUST respond with ONLY a valid JSON array, no markdown fences, no
 commentary. Each element must be: { "question_order": number,
 "marks_awarded": number, "feedback": string }. marks_awarded must be an
 integer between 0 and the question's max marks (inclusive).`;
+
+interface AnswerKeyEntry {
+  answer?: string;
+  explanation?: string;
+}
+
+function parseAnswerKey(raw: string | null): AnswerKeyEntry | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed ? parsed : null;
+  } catch {
+    return { answer: raw };
+  }
+}
 
 function extractJsonArray(text: string): unknown[] {
   let candidate = text.trim();
@@ -104,7 +120,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: questions, error: questionsErr } = await supabase
       .from("mock_exam_questions")
-      .select("id, question_text, marks, question_order")
+      .select("id, question_text, question_type, marks, question_order, correct_answer")
       .eq("exam_id", examId)
       .order("question_order", { ascending: true });
 
@@ -114,75 +130,91 @@ Deno.serve(async (req: Request) => {
 
     const answerMap = new Map(responses.map((r) => [r.questionId, r.answer ?? ""]));
 
-    const gradingInput = questions.map((q) => ({
-      question_order: q.question_order,
-      question_text: q.question_text,
-      max_marks: q.marks,
-      learner_answer: answerMap.get(q.id) ?? "(no answer provided)",
-    }));
+    // MCQ questions are graded by exact match against the stored answer key.
+    const mcqResults = new Map<string, { marks_awarded: number; feedback: string }>();
+    const aiQuestions = [];
 
-    const userPrompt = `Mark the following exam responses:\n\n${JSON.stringify(gradingInput, null, 2)}`;
+    for (const q of questions) {
+      const learnerAnswer = answerMap.get(q.id) ?? "";
+      const key = parseAnswerKey(q.correct_answer);
 
-    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 2048,
-        system: [
-          {
-            type: "text",
-            text: SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        messages: [{ role: "user", content: userPrompt }],
-      }),
-    });
-
-    if (!anthropicRes.ok) {
-      const errText = await anthropicRes.text();
-      console.error("Anthropic API error:", errText);
-      return jsonResponse({ error: "Failed to grade exam" }, 502);
+      if (q.question_type === "mcq") {
+        const correct = (key?.answer ?? "").trim().toLowerCase();
+        const given = learnerAnswer.trim().toLowerCase();
+        const isCorrect = correct.length > 0 && given === correct;
+        mcqResults.set(q.id, {
+          marks_awarded: isCorrect ? q.marks : 0,
+          feedback: isCorrect
+            ? `Correct! ${key?.explanation ?? ""}`.trim()
+            : `Incorrect. The correct answer was: ${key?.answer ?? "(unknown)"}. ${key?.explanation ?? ""}`.trim(),
+        });
+      } else {
+        aiQuestions.push({
+          question_order: q.question_order,
+          question_text: q.question_text,
+          max_marks: q.marks,
+          model_answer: key?.answer ?? "(no model answer available)",
+          mark_scheme_notes: key?.explanation ?? "",
+          learner_answer: learnerAnswer || "(no answer provided)",
+        });
+      }
     }
 
-    const data = await anthropicRes.json();
-    const responseText = (data.content ?? [])
-      .filter((b: { type: string }) => b.type === "text")
-      .map((b: { text: string }) => b.text)
-      .join("\n");
+    let aiGrades: { question_order: number; marks_awarded: number; feedback: string }[] = [];
 
-    let grades: { question_order: number; marks_awarded: number; feedback: string }[];
-    try {
-      const parsed = extractJsonArray(responseText) as Array<{
-        question_order?: number;
-        marks_awarded?: number;
-        feedback?: string;
-      }>;
-      grades = parsed.map((g) => ({
-        question_order: Number(g.question_order ?? 0),
-        marks_awarded: Math.max(0, Math.round(Number(g.marks_awarded ?? 0))),
-        feedback: String(g.feedback ?? ""),
-      }));
-    } catch (parseErr) {
-      console.error("Failed to parse grading result:", parseErr, responseText);
-      return jsonResponse({ error: "Failed to grade exam. Please try again." }, 502);
+    if (aiQuestions.length > 0) {
+      const userPrompt = `Mark the following exam responses against their model answers:\n\n${JSON.stringify(aiQuestions, null, 2)}`;
+
+      let responseText: string;
+      try {
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 2048);
+        responseText = result.text;
+      } catch (err) {
+        if (err instanceof ClaudeTimeoutError) {
+          console.error("Anthropic request timed out:", err);
+          return jsonResponse({ error: "AI grading timed out. Please try again." }, 500);
+        }
+        console.error("Anthropic API error:", err);
+        return jsonResponse({ error: "Failed to grade exam" }, 500);
+      }
+
+      try {
+        const parsed = extractJsonArray(responseText) as Array<{
+          question_order?: number;
+          marks_awarded?: number;
+          feedback?: string;
+        }>;
+        aiGrades = parsed.map((g) => ({
+          question_order: Number(g.question_order ?? 0),
+          marks_awarded: Math.max(0, Math.round(Number(g.marks_awarded ?? 0))),
+          feedback: String(g.feedback ?? ""),
+        }));
+      } catch (parseErr) {
+        console.error("Failed to parse grading result:", parseErr, responseText);
+        return jsonResponse({ error: "Failed to grade exam. Please try again." }, 500);
+      }
     }
 
-    const gradeByOrder = new Map(grades.map((g) => [g.question_order, g]));
+    const aiGradeByOrder = new Map(aiGrades.map((g) => [g.question_order, g]));
 
     const responseRows = questions.map((q) => {
-      const grade = gradeByOrder.get(q.question_order ?? -1);
+      const learnerAnswer = answerMap.get(q.id) ?? "";
+      const mcq = mcqResults.get(q.id);
+      if (mcq) {
+        return {
+          question_id: q.id,
+          learner_response: learnerAnswer,
+          marks_awarded: mcq.marks_awarded,
+          feedback: mcq.feedback,
+        };
+      }
+      const grade = aiGradeByOrder.get(q.question_order ?? -1);
       const marksAwarded = Math.min(grade?.marks_awarded ?? 0, q.marks);
       return {
         question_id: q.id,
-        learner_response: answerMap.get(q.id) ?? "",
+        learner_response: learnerAnswer,
         marks_awarded: marksAwarded,
-        feedback: grade?.feedback ?? "No feedback available.",
+        feedback: grade?.feedback || "No feedback available.",
       };
     });
 

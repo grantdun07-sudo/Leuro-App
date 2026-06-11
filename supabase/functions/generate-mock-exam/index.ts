@@ -2,56 +2,140 @@
 // POST { learnerId, subjectId, difficulty }
 //   difficulty: 'low' | 'medium' | 'high'
 //
-// Returns: { questions: [{ id, question_text, marks, question_order }], examId }
+// Returns: { examId, questions: [{ id, question_text, question_type, marks,
+//             question_order, options?, blooms_level }], totalMarks, difficulty }
 //
-// Auth: caller must be the learner identified by learnerId. Mock exams are
-// a Premium-tier feature.
+// Auth: caller must be the learner identified by learnerId. "low" difficulty
+// is available on all tiers; "medium"/"high" are Premium-only. The model's
+// answer key is stored server-side (for grading) but never returned to the
+// client.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
 
-const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-const MODEL = "claude-haiku-4-5-20251001";
+const TOTAL_MARKS = 30;
 
-const SYSTEM_PROMPT = `You are Leuro, an exam-setter for South African school learners following
-the CAPS curriculum (Grades 4-12). You generate mock exam questions that
-are realistic, curriculum-aligned, and appropriately scaled in difficulty
-to the learner's diagnostic level (1 = foundational, 5 = advanced/exam
-standard).
+const SYSTEM_PROMPT = `You are Leuro™, a CAPS expert exam-setter for South African school
+learners (Grades 4-12).
 
-You MUST respond with ONLY a valid JSON array, no markdown fences, no
-commentary. Each element must be an object: { "question_text": string,
-"marks": number }. The number of elements and marks per element must
-exactly match what is requested.`;
+QUALITY RULES:
+- Every question must be ORIGINAL - never reproduce or closely paraphrase
+  DBE/IEB past paper questions.
+- Questions must follow CAPS cognitive complexity standards for the
+  specified grade and apply Bloom's Taxonomy. For "high" difficulty
+  questions, also apply Barrett's critical-thinking taxonomy (analysis,
+  evaluation, problem-solving, original creation).
+- For "mcq" questions: provide exactly 4 plausible options with exactly 1
+  correct answer.
+- For "shortanswer" and "extended" questions: provide a clear, original
+  model answer / mark scheme in the answer key.
+- Use South African context, examples, names and data where relevant.
+- Keep language age-appropriate for the grade.
+- If asked to respond in Afrikaans, write all question and option text in
+  Afrikaans (the JSON keys themselves stay in English).
+
+You MUST respond with ONLY valid JSON, no markdown fences, no commentary,
+matching this exact shape:
+{
+  "questions": [
+    {
+      "number": 1,
+      "text": "question text",
+      "type": "mcq" | "shortanswer" | "extended",
+      "marks": 5,
+      "options": ["option A", "option B", "option C", "option D"],
+      "bloomsLevel": "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create"
+    }
+  ],
+  "answerKey": {
+    "1": { "answer": "model answer or correct option text", "explanation": "brief explanation of the mark scheme" }
+  }
+}
+Omit "options" for non-mcq questions. The "answerKey" must have one entry
+per question, keyed by its "number" as a string.`;
 
 interface DifficultySpec {
   count: number;
   marksEach: number;
+  bloomsRange: string;
+  questionMix: string;
+  cognitiveLoad: string;
 }
 
 const DIFFICULTY_SPECS: Record<string, DifficultySpec> = {
-  low: { count: 6, marksEach: 5 },
-  medium: { count: 5, marksEach: 6 },
-  high: { count: 3, marksEach: 10 },
+  low: {
+    count: 6,
+    marksEach: 5,
+    bloomsRange: "Remember -> Understand",
+    questionMix:
+      "a mix of multiple-choice ('mcq', 4 options) and short-answer ('shortanswer', 1-2 sentence) questions: " +
+      "definitions, simple recall, and basic application",
+    cognitiveLoad: "Easy",
+  },
+  medium: {
+    count: 5,
+    marksEach: 6,
+    bloomsRange: "Understand -> Apply -> Analyze",
+    questionMix:
+      "a mix of multiple-choice ('mcq', 4 options), short-answer ('shortanswer', 2-3 sentence), and " +
+      "calculation questions (use 'shortanswer' type for calculations): application, simple analysis, and interpretation",
+    cognitiveLoad: "Moderate",
+  },
+  high: {
+    count: 3,
+    marksEach: 10,
+    bloomsRange: "Analyze -> Evaluate -> Create",
+    questionMix:
+      "extended-response ('extended') questions only: analysis, evaluation, problem-solving, case-study " +
+      "analysis, and design/critical-thinking tasks",
+    cognitiveLoad: "High",
+  },
 };
 
-function extractJsonArray(text: string): unknown[] {
+interface RawQuestion {
+  number?: number;
+  text?: string;
+  type?: string;
+  marks?: number;
+  options?: string[];
+  bloomsLevel?: string;
+}
+
+interface RawAnswer {
+  answer?: string;
+  explanation?: string;
+}
+
+interface ParsedExam {
+  questions: RawQuestion[];
+  answerKey: Record<string, RawAnswer | string>;
+}
+
+const QUESTION_TYPES = new Set(["mcq", "shortanswer", "extended"]);
+
+function extractJsonObject(text: string): ParsedExam {
   let candidate = text.trim();
   const fenceMatch = candidate.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fenceMatch) candidate = fenceMatch[1].trim();
 
-  const start = candidate.indexOf("[");
-  const end = candidate.lastIndexOf("]");
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
   if (start !== -1 && end !== -1 && end > start) {
     candidate = candidate.slice(start, end + 1);
   }
 
   const parsed = JSON.parse(candidate);
-  if (!Array.isArray(parsed)) throw new Error("Response is not a JSON array");
-  return parsed;
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.questions)) {
+    throw new Error("Response is missing a 'questions' array");
+  }
+  return {
+    questions: parsed.questions,
+    answerKey: parsed.answerKey && typeof parsed.answerKey === "object" ? parsed.answerKey : {},
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -111,14 +195,15 @@ Deno.serve(async (req: Request) => {
     const tier = profile?.subscription_tier ?? "free";
     const lang = profile?.lang ?? "en";
 
-    if (tier !== "premium") {
+    // "low" difficulty is available on every tier; "medium"/"high" are Premium-only.
+    if (difficulty !== "low" && tier !== "premium") {
       return jsonResponse(
         {
           error: "premium_required",
           message:
             lang === "af"
-              ? "Toetseksamens is 'n Premium-funksie. Gradeer op om toegang te kry."
-              : "Mock exams are a Premium feature. Upgrade to unlock them.",
+              ? "Medium- en hoë-moeilikheidsgraad-toetseksamens is 'n Premium-funksie. Gradeer op om toegang te kry."
+              : "Medium and high difficulty mock exams are a Premium feature. Upgrade to unlock them.",
         },
         403,
       );
@@ -143,59 +228,62 @@ Deno.serve(async (req: Request) => {
     const topicList = (topics ?? []).map((t) => t.title).join(", ") || "general curriculum topics";
     const level = learner.diagnostic_level || 1;
 
-    const userPrompt = `Generate a ${difficulty}-difficulty mock exam for ${subject.name}, Grade ${subject.grade}.
+    const userPrompt = `Generate a ${difficulty}-difficulty CAPS mock exam for ${subject.name}, Grade ${subject.grade}.
+Bloom's level range for this difficulty: ${spec.bloomsRange} (cognitive load: ${spec.cognitiveLoad}).
+Question mix: ${spec.questionMix}.
 Learner diagnostic level: ${level}/5.
 Learner's recent study topics: ${topicList}.
+Language: ${lang === "af" ? "Afrikaans" : "English"}.
 
-Produce exactly ${spec.count} questions, each worth exactly ${spec.marksEach} marks
-(total ${spec.count * spec.marksEach} marks). Vary question types (short answer,
-calculation, short explanation) as appropriate for the subject. Base
-difficulty on the learner's level and, where relevant, draw on their study
-topics. Respond with ONLY the JSON array described in the system prompt.`;
+Produce exactly ${spec.count} questions, numbered 1 to ${spec.count}, each
+worth exactly ${spec.marksEach} marks (total ${spec.count * spec.marksEach}
+marks). Respond with ONLY the JSON object described in the system prompt.`;
 
-    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 2048,
-        system: [
-          {
-            type: "text",
-            text: SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        messages: [{ role: "user", content: userPrompt }],
-      }),
-    });
-
-    if (!anthropicRes.ok) {
-      const errText = await anthropicRes.text();
-      console.error("Anthropic API error:", errText);
-      return jsonResponse({ error: "Failed to generate mock exam" }, 502);
+    let responseText: string;
+    try {
+      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 3072);
+      responseText = result.text;
+    } catch (err) {
+      if (err instanceof ClaudeTimeoutError) {
+        console.error("Anthropic request timed out:", err);
+        return jsonResponse({ error: "AI generation timed out. Please try again." }, 500);
+      }
+      console.error("Anthropic API error:", err);
+      return jsonResponse({ error: "Failed to generate mock exam" }, 500);
     }
 
-    const data = await anthropicRes.json();
-    const responseText = (data.content ?? [])
-      .filter((b: { type: string }) => b.type === "text")
-      .map((b: { text: string }) => b.text)
-      .join("\n");
-
-    let questions: { question_text: string; marks: number }[];
+    let questions: {
+      number: number;
+      text: string;
+      type: string;
+      marks: number;
+      options: string[] | null;
+      bloomsLevel: string | null;
+      correctAnswer: string | null;
+    }[];
     try {
-      const parsed = extractJsonArray(responseText) as Array<{ question_text?: string; marks?: number }>;
-      questions = parsed.map((q, i) => ({
-        question_text: String(q.question_text ?? `Question ${i + 1}`),
-        marks: Number(q.marks ?? spec.marksEach),
-      }));
+      const parsed = extractJsonObject(responseText);
+      questions = parsed.questions.map((q, i) => {
+        const number = Number(q.number ?? i + 1);
+        const type = QUESTION_TYPES.has(String(q.type)) ? String(q.type) : "shortanswer";
+        const rawAnswer = parsed.answerKey[String(number)];
+        const answerObj =
+          typeof rawAnswer === "string" ? { answer: rawAnswer, explanation: "" } : rawAnswer ?? null;
+
+        return {
+          number,
+          text: String(q.text ?? `Question ${number}`),
+          type,
+          marks: Number(q.marks ?? spec.marksEach),
+          options: type === "mcq" && Array.isArray(q.options) ? q.options.map((o) => String(o)) : null,
+          bloomsLevel: q.bloomsLevel ? String(q.bloomsLevel) : null,
+          correctAnswer: answerObj ? JSON.stringify(answerObj) : null,
+        };
+      });
+      if (questions.length === 0) throw new Error("No questions returned");
     } catch (parseErr) {
       console.error("Failed to parse exam questions:", parseErr, responseText);
-      return jsonResponse({ error: "Failed to generate a valid exam. Please try again." }, 502);
+      return jsonResponse({ error: "Failed to generate a valid exam. Please try again." }, 500);
     }
 
     const { data: exam, error: examErr } = await supabase
@@ -204,7 +292,7 @@ topics. Respond with ONLY the JSON array described in the system prompt.`;
         learner_id: learner.id,
         subject_id: subjectId,
         difficulty,
-        total_marks: spec.count * spec.marksEach,
+        total_marks: TOTAL_MARKS,
         started_at: new Date().toISOString(),
       })
       .select("id")
@@ -215,17 +303,22 @@ topics. Respond with ONLY the JSON array described in the system prompt.`;
       return jsonResponse({ error: "Failed to create exam" }, 500);
     }
 
-    const rows = questions.map((q, i) => ({
+    const rows = questions.map((q) => ({
       exam_id: exam.id,
-      question_text: q.question_text,
+      question_text: q.text,
+      question_type: q.type,
+      options: q.options,
+      blooms_level: q.bloomsLevel,
+      correct_answer: q.correctAnswer,
       marks: q.marks,
-      question_order: i + 1,
+      question_order: q.number,
     }));
 
+    // Select only learner-facing columns - correct_answer is kept server-side for grading.
     const { data: insertedQuestions, error: insertErr } = await supabase
       .from("mock_exam_questions")
       .insert(rows)
-      .select("id, question_text, marks, question_order");
+      .select("id, question_text, question_type, options, blooms_level, marks, question_order");
 
     if (insertErr || !insertedQuestions) {
       console.error("Failed to insert exam questions:", insertErr);
@@ -235,6 +328,8 @@ topics. Respond with ONLY the JSON array described in the system prompt.`;
     return jsonResponse({
       examId: exam.id,
       questions: insertedQuestions.sort((a, b) => (a.question_order ?? 0) - (b.question_order ?? 0)),
+      totalMarks: TOTAL_MARKS,
+      difficulty,
     });
   } catch (err) {
     console.error("generate-mock-exam error:", err);

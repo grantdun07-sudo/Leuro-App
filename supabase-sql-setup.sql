@@ -105,10 +105,21 @@ create table if not exists public.mock_exam_questions (
   id uuid primary key default gen_random_uuid(),
   exam_id uuid not null references public.mock_exams(id) on delete cascade,
   question_text text not null,
+  question_type text not null default 'shortanswer' check (question_type in ('mcq', 'shortanswer', 'extended')),
+  options jsonb,
+  blooms_level text,
+  correct_answer text,
   marks int not null,
   question_order int,
   created_at timestamp default now()
 );
+
+-- Migration for installs created before Phase 2 (adds question_type/options/
+-- blooms_level/correct_answer to an existing mock_exam_questions table).
+alter table public.mock_exam_questions add column if not exists question_type text not null default 'shortanswer';
+alter table public.mock_exam_questions add column if not exists options jsonb;
+alter table public.mock_exam_questions add column if not exists blooms_level text;
+alter table public.mock_exam_questions add column if not exists correct_answer text;
 
 create table if not exists public.mock_exam_responses (
   id uuid primary key default gen_random_uuid(),

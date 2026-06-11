@@ -3,32 +3,40 @@
 //   phase: 'explain' | 'example' | 'attempt' | 'feedback'
 //   context: { explainText?, exampleText?, attemptQuestion? }
 //
-// Returns: { response: string, tokens_used: number }
+// Returns: { response: string, phase: string, tokensUsed: number }
 //
 // Auth: caller must be the learner who owns the topic (enforced via RLS
-// using the caller's JWT for all reads/writes).
+// using the caller's JWT for all reads/writes). Subject, grade, diagnostic
+// level and language are looked up server-side rather than trusted from the
+// request body.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { containsCrisisLanguage, SADAG_CRISIS_MESSAGE } from "../_shared/safety.ts";
+import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
 
-const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-const MODEL = "claude-haiku-4-5-20251001";
+const SYSTEM_PROMPT = `You are Leuro™, an expert South African CAPS tutor for Grades 4-12.
+You help learners with one study topic at a time, working through four
+steps: explanation, worked example, practice attempt, and feedback.
 
-const SYSTEM_PROMPT = `You are Leuro, a warm, encouraging South African study tutor for school
-learners following the CAPS curriculum (Grades 4-12). You help with one
-study topic at a time, working through four steps: explanation, worked
-example, practice attempt, and feedback.
+Apply Bloom's Taxonomy to match each step's cognitive level:
+- Explain = Remember + Understand
+- Example = Understand + Apply
+- Attempt = Apply + Analyze
+- Feedback = Analyze + Evaluate (use Barrett's critical-thinking taxonomy
+  when evaluating the learner's reasoning, not just the final answer)
 
-General rules:
-- Keep language simple, age-appropriate, and encouraging.
-- Use South African context and examples where helpful.
-- Never use markdown headers (#). Plain text or simple numbered/bulleted
-  lists only. Keep responses concise (under ~180 words) unless a worked
-  example genuinely needs more steps.
+Rules:
+- Be age-appropriate, clear, and concise.
+- Follow CAPS cognitive complexity standards for the learner's grade.
+- Use South African context and examples where relevant.
+- Never reproduce copyrighted exam content (e.g. DBE/IEB past papers) -
+  create original explanations, examples and questions only.
+- Plain text only - no markdown headers (#). Simple numbered/bulleted lists
+  are fine.
 - If asked to respond in Afrikaans, respond entirely in Afrikaans.
 - Adjust difficulty to the learner's diagnostic level (1 = needs lots of
   support and basics, 5 = ready for advanced, exam-style challenge).`;
@@ -39,6 +47,7 @@ interface RequestBody {
   topicId: string;
   phase: Phase;
   learnerInput?: string;
+  previousResponse?: string;
   context?: {
     explainText?: string;
     exampleText?: string;
@@ -63,8 +72,10 @@ function buildUserPrompt(
     case "explain":
       return (
         header +
-        `Explain this topic to the learner in a friendly, clear way. ` +
-        `Cover the key idea(s) they need to understand before trying an example.`
+        `Explain this topic to the learner (Bloom's: Remember + Understand). ` +
+        `In 150-200 words, cover: a clear definition, the key concept(s) the ` +
+        `learner needs to know, and a real-world (ideally South African) ` +
+        `connection. Use age-appropriate language and explain any jargon.`
       );
     case "example":
       return (
@@ -72,8 +83,10 @@ function buildUserPrompt(
         (body.context?.explainText
           ? `You previously explained: """${body.context.explainText}"""\n\n`
           : "") +
-        `Now give ONE fully worked example for this topic, showing each step ` +
-        `of the solution clearly so the learner can follow the method.`
+        `Now give ONE fully worked example for this topic (Bloom's: Understand ` +
+        `+ Apply), in 200-300 words. Structure it as problem -> working -> ` +
+        `answer, showing each step of the method clearly so the learner can ` +
+        `follow along. Use a realistic South African context where possible.`
       );
     case "attempt":
       return (
@@ -81,10 +94,12 @@ function buildUserPrompt(
         (body.context?.exampleText
           ? `You previously gave this worked example: """${body.context.exampleText}"""\n\n`
           : "") +
-        `Now write ONE new practice question on this topic for the learner to ` +
-        `attempt themselves. It should be similar in style/difficulty to the ` +
-        `worked example but with different numbers/details. Output ONLY the ` +
-        `question text - do not include the answer or any hints.`
+        `Now write ONE new, original practice question on this topic (Bloom's: ` +
+        `Apply + Analyze) for the learner to attempt themselves. Make it about ` +
+        `50% harder than the worked example - similar style but with different ` +
+        `numbers/details. Include a mark allocation if applicable (e.g. "(4 marks)") ` +
+        `and give clear instructions for how the learner should respond. Output ` +
+        `ONLY the question text - do not include the answer or any hints.`
       );
     case "feedback": {
       const question = body.context?.attemptQuestion ?? "(question not available)";
@@ -93,9 +108,12 @@ function buildUserPrompt(
         header +
         `The practice question was: """${question}"""\n` +
         `The learner's answer was: """${answer}"""\n\n` +
-        `Evaluate the learner's answer. Tell them clearly whether they got it ` +
-        `right, partially right, or incorrect. Explain why, show the correct ` +
-        `approach/answer if needed, and end with one encouraging sentence.`
+        `Evaluate the learner's answer (Bloom's: Analyze + Evaluate, applying ` +
+        `Barrett's critical-thinking taxonomy to their reasoning, not just the ` +
+        `final answer). Identify what they did well and any gaps or ` +
+        `misconceptions, provide constructive corrections (show the correct ` +
+        `approach/answer if needed), and suggest a next step. Keep the tone ` +
+        `encouraging throughout.`
       );
     }
   }
@@ -211,7 +229,7 @@ Deno.serve(async (req: Request) => {
           "struggling emotionally. Please check in with them.",
       });
 
-      return jsonResponse({ response: safeResponse, tokens_used: 0, safety_flag: true });
+      return jsonResponse({ response: safeResponse, phase: body.phase, tokensUsed: 0, safety_flag: true });
     }
 
     const userPrompt = buildUserPrompt(
@@ -223,41 +241,20 @@ Deno.serve(async (req: Request) => {
       lang,
     );
 
-    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1024,
-        system: [
-          {
-            type: "text",
-            text: SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        messages: [{ role: "user", content: userPrompt }],
-      }),
-    });
-
-    if (!anthropicRes.ok) {
-      const errText = await anthropicRes.text();
-      console.error("Anthropic API error:", errText);
-      return jsonResponse({ error: "Failed to generate study content" }, 502);
+    let responseText: string;
+    let tokensUsed: number;
+    try {
+      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 1024);
+      responseText = result.text;
+      tokensUsed = result.tokensUsed;
+    } catch (err) {
+      if (err instanceof ClaudeTimeoutError) {
+        console.error("Anthropic request timed out:", err);
+        return jsonResponse({ error: "AI generation timed out. Please try again." }, 500);
+      }
+      console.error("Anthropic API error:", err);
+      return jsonResponse({ error: "Failed to generate study content" }, 500);
     }
-
-    const data = await anthropicRes.json();
-    const responseText = (data.content ?? [])
-      .filter((b: { type: string }) => b.type === "text")
-      .map((b: { text: string }) => b.text)
-      .join("\n")
-      .trim();
-
-    const tokensUsed = (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
 
     await supabase.from("study_sessions").insert({
       learner_id: learner.id,
@@ -296,7 +293,7 @@ Deno.serve(async (req: Request) => {
         .eq("id", learner.id);
     }
 
-    return jsonResponse({ response: responseText, tokens_used: tokensUsed });
+    return jsonResponse({ response: responseText, phase: body.phase, tokensUsed });
   } catch (err) {
     console.error("generate-study-guide error:", err);
     return jsonResponse({ error: "Internal server error" }, 500);
