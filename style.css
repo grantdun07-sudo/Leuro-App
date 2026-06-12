@@ -1326,6 +1326,92 @@ h1, h2, h3, h4 {
 .account-row .label { font-size: var(--font-size-caption); color: var(--text-muted); }
 .account-row .value { font-weight: 600; font-size: var(--font-size-body); text-align: right; }
 
+/* Profile card */
+.account-profile-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-16);
+}
+.avatar-lg {
+  width: 64px;
+  height: 64px;
+  font-size: 24px;
+  flex-shrink: 0;
+}
+.account-profile-info { min-width: 0; }
+.account-profile-name {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.2;
+}
+.account-profile-email {
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  margin-top: 2px;
+  word-break: break-word;
+}
+.account-profile-grade {
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  color: var(--primary);
+  margin-top: 6px;
+}
+
+/* Section label + subscription tier badge */
+.account-section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.account-section-label {
+  font-size: var(--font-size-body);
+  font-weight: 700;
+  color: var(--text);
+}
+.tier-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: var(--radius-tag);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.tier-badge-free { background: var(--border); color: var(--text-muted); }
+.tier-badge-basic { background: var(--primary); color: var(--white); }
+.tier-badge-premium { background: var(--accent); color: var(--primary-dark); }
+
+/* Stats row: gold numbers, purple labels */
+.account-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--spacing-12);
+  margin-bottom: var(--spacing-16);
+}
+.account-stat {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-16) var(--spacing-8);
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+.account-stat .num {
+  font-size: 26px;
+  font-weight: 900;
+  color: var(--accent);
+  line-height: 1;
+}
+.account-stat .lbl {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-top: 6px;
+}
+
 .referral-code-box {
   display: flex;
   align-items: center;

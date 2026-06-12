@@ -224,6 +224,15 @@ const translations = {
     referralProgress: "referrals to your next free month",
     btnLogout: "Log Out",
     languageLabel: "Language",
+    subscriptionLabel: "Subscription",
+    upgradeLabel: "Upgrade",
+    statStreak: "Streak",
+    statSessions: "Sessions",
+    statLevel: "Level",
+    comingSoon: "Coming soon",
+    free: "Free",
+    basic: "Basic",
+    premium: "Premium",
     perMonth: "/month",
     yourCurrentPlan: "Your current plan",
 
@@ -439,6 +448,15 @@ const translations = {
     referralProgress: "verwysings tot jou volgende gratis maand",
     btnLogout: "Meld Af",
     languageLabel: "Taal",
+    subscriptionLabel: "Intekening",
+    upgradeLabel: "Gradeer op",
+    statStreak: "Reeks",
+    statSessions: "Sessies",
+    statLevel: "Vlak",
+    comingSoon: "Binnekort beskikbaar",
+    free: "Gratis",
+    basic: "Basies",
+    premium: "Premium",
     perMonth: "/maand",
     yourCurrentPlan: "Jou huidige plan",
 
@@ -3021,37 +3039,74 @@ async function markAlertRead(alertId) {
 // ---------------------------------------------------------------------
 function renderAccountTab() {
   const profile = state.profile;
-  const tier = profile.subscription_tier;
+  const learner = state.learner;
+  const isLearner = profile.role === "learner";
+  const tier = profile.subscription_tier || "free";
+  const tierBadgeClass =
+    tier === "premium" ? "tier-badge-premium" : tier === "basic" ? "tier-badge-basic" : "tier-badge-free";
 
   return `
-    <div class="card">
-      <h3 class="mt-0 screen-title">${t("accountHeading")}</h3>
-      <div class="account-row">
-        <span class="label">${t("labelFullName")}</span>
-        <span class="value">${escapeHtml(profile.full_name || "-")}</span>
-      </div>
-      <div class="account-row">
-        <span class="label">${t("labelEmail")}</span>
-        <span class="value">${escapeHtml(profile.email)}</span>
-      </div>
-      <div class="account-row">
-        <span class="label">${t("currentPlan")}</span>
-        <span class="value"><span class="badge badge-purple">${t(tier)}</span></span>
-      </div>
-      <div class="account-row">
-        <span class="label">${t("languageLabel")}</span>
-        <span class="value">
-          <button class="lang-toggle" style="background:var(--bg); color:var(--purple); border:1px solid var(--border);" data-action="toggle-lang">
-            ${state.lang === "en" ? "English" : "Afrikaans"}
-          </button>
-        </span>
+    <h3 class="screen-title" style="margin:0 0 14px;">${t("accountHeading")}</h3>
+
+    <!-- 1. Profile -->
+    <div class="card account-profile-card">
+      <span class="avatar-circle avatar-lg">${escapeHtml(getInitials(profile.full_name))}</span>
+      <div class="account-profile-info">
+        <div class="account-profile-name">${escapeHtml(profile.full_name || "-")}</div>
+        <div class="account-profile-email">${escapeHtml(profile.email || "")}</div>
+        ${isLearner && learner ? `<div class="account-profile-grade">${t("labelGrade")} ${learner.grade}</div>` : ""}
       </div>
     </div>
 
-    ${profile.role === "learner" ? renderReferralCard() : ""}
-    ${profile.role === "learner" ? renderTierCards(tier) : ""}
+    <!-- 2. Subscription -->
+    <div class="card">
+      <div class="account-section-row">
+        <span class="account-section-label">${t("subscriptionLabel")}</span>
+        <span class="tier-badge ${tierBadgeClass}">${t(tier)}</span>
+      </div>
+      ${
+        tier === "free"
+          ? `<button class="btn btn-gold btn-block" style="margin-top:14px;" data-action="account-upgrade">${t("upgradeLabel")}</button>`
+          : ""
+      }
+    </div>
 
+    <!-- 3. Language -->
+    <div class="card">
+      <span class="account-section-label">Language / Taal</span>
+      <div class="pill-row" style="margin-top:12px;">
+        <button type="button" class="pill-btn ${state.lang === "en" ? "selected" : ""}" data-action="set-lang" data-lang="en">English</button>
+        <button type="button" class="pill-btn ${state.lang === "af" ? "selected" : ""}" data-action="set-lang" data-lang="af">Afrikaans</button>
+      </div>
+    </div>
+
+    <!-- 4. Stats -->
+    ${isLearner && learner ? renderAccountStats(learner) : ""}
+
+    <!-- Referral rewards (existing feature, learners only) -->
+    ${isLearner ? renderReferralCard() : ""}
+
+    <!-- 5. Logout -->
     <button class="btn btn-danger btn-block" data-action="logout" style="margin-top:6px;">${t("btnLogout")}</button>
+  `;
+}
+
+function renderAccountStats(learner) {
+  return `
+    <div class="account-stats">
+      <div class="account-stat">
+        <div class="num">${learner.streak_days || 0}</div>
+        <div class="lbl">${t("statStreak")}</div>
+      </div>
+      <div class="account-stat">
+        <div class="num">${learner.sessions_completed || 0}</div>
+        <div class="lbl">${t("statSessions")}</div>
+      </div>
+      <div class="account-stat">
+        <div class="num">${learner.diagnostic_level || 0}</div>
+        <div class="lbl">${t("statLevel")}</div>
+      </div>
+    </div>
   `;
 }
 
@@ -3140,6 +3195,24 @@ async function toggleLanguage() {
   render();
 }
 
+// Account-tab language selection: switch the UI immediately, then persist the
+// choice to profiles.lang (the "Users can update own profile" RLS policy
+// permits this for the authenticated user).
+async function setLanguage(lang) {
+  const next = lang === "af" ? "af" : "en";
+  state.lang = next;
+  document.documentElement.lang = next;
+  if (state.profile) state.profile.lang = next;
+  render();
+
+  try {
+    const { error } = await sbClient.from("profiles").update({ lang: next }).eq("id", state.user.id);
+    if (error) throw error;
+  } catch (err) {
+    console.error("Failed to persist language preference", err);
+  }
+}
+
 // ---------------------------------------------------------------------
 // PAYFAST UPGRADE
 // ---------------------------------------------------------------------
@@ -3207,6 +3280,12 @@ function attachGlobalListeners() {
         break;
       case "toggle-lang":
         toggleLanguage();
+        break;
+      case "set-lang":
+        setLanguage(target.dataset.lang);
+        break;
+      case "account-upgrade":
+        showToast(t("comingSoon"), "info");
         break;
       case "logout":
         handleLogout();
