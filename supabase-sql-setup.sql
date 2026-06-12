@@ -208,12 +208,14 @@ create table if not exists public.content_flags (
   flagged_text text not null,
   context text,
   account_frozen boolean default false,
+  parent_acknowledged boolean default false,
   created_at timestamp default now()
 );
 
 -- Migration for existing tables (safe to re-run)
 alter table public.content_flags alter column learner_id drop not null;
 alter table public.content_flags add column if not exists user_id uuid references auth.users(id) on delete cascade;
+alter table public.content_flags add column if not exists parent_acknowledged boolean default false;
 
 -- Saved Study Guides (Exams tab > Study Guide section > "Save Guide")
 create table if not exists public.saved_guides (

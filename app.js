@@ -247,6 +247,13 @@ const translations = {
     accountFrozenMessage: "Your account has been temporarily paused. Your parent or guardian has been notified and will need to confirm before you can continue.",
     btnClose: "Close",
 
+    acknowledgeThankYou: "Thank you for confirming.",
+    acknowledgeReactivated: "Your child's account has been reactivated.",
+    acknowledgeSupportMsg: "Please speak with your child and ensure they have the support they need.",
+    acknowledgeSadag: "SADAG: 0800 21 22 23",
+    acknowledgeError: "This link is invalid or has expired. Please contact Leuro™ support.",
+    btnGoToLeuro: "Go to leuroai.co.za",
+
     linkSuccess: "Learner linked successfully!",
     linkNotFound: "No learner found with that referral code.",
     upgradeTo: "Upgrade to",
@@ -475,6 +482,13 @@ const translations = {
     safetyTier2Message: "Hierdie tipe taal is nie op Leuro™ toegelaat nie.",
     accountFrozenMessage: "Jou rekening is tydelik gepauzeer. Jou ouer of voog is ingelig en sal moet bevestig voordat jy kan voortgaan.",
     btnClose: "Sluit",
+
+    acknowledgeThankYou: "Dankie dat jy bevestig het.",
+    acknowledgeReactivated: "Jou kind se rekening is heraktiveer.",
+    acknowledgeSupportMsg: "Praat asseblief met jou kind en maak seker hulle kry die ondersteuning wat hulle nodig het.",
+    acknowledgeSadag: "SADAG: 0800 21 22 23",
+    acknowledgeError: "Hierdie skakel is ongeldig of het verval. Kontak asseblief Leuro™-ondersteuning.",
+    btnGoToLeuro: "Gaan na leuroai.co.za",
 
     linkSuccess: "Leerder suksesvol geskakel!",
     linkNotFound: "Geen leerder met daardie verwysingskode gevind nie.",
@@ -748,13 +762,13 @@ async function flagContent(text, severity, context, learnerId) {
     account_frozen: severity === 1,
   };
 
-  let flag = null;
-  const { data, error } = await sbClient
+  const { data: flagData, error } = await sbClient
     .from("content_flags")
     .insert(insertPayload)
-    .select()
+    .select("id")
     .single();
 
+  let flagId = null;
   if (error) {
     console.error("flagContent: content_flags insert failed", {
       error,
@@ -765,7 +779,7 @@ async function flagContent(text, severity, context, learnerId) {
       payload: insertPayload,
     });
   } else {
-    flag = data;
+    flagId = flagData?.id ?? null;
   }
 
   try {
@@ -822,7 +836,7 @@ async function flagContent(text, severity, context, learnerId) {
           severity,
           flaggedText: text,
           context,
-          flagId: flag ? flag.id : null,
+          flagId,
         }),
       });
       if (!res.ok) {
@@ -928,6 +942,8 @@ function getApp() {
 document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
+  if (await handleAcknowledgeRoute()) return;
+
   registerServiceWorker();
   setupOfflineDetection();
   handlePayfastReturn();
@@ -967,6 +983,84 @@ async function init() {
 
   state.loading = false;
   render();
+}
+
+// ---------------------------------------------------------------------
+// PUBLIC ACKNOWLEDGMENT LINK (/acknowledge?token=...)
+// ---------------------------------------------------------------------
+// Parents/guardians click this link (from a content-safety notification) to
+// reactivate their child's account. Works without being logged in and
+// bypasses the normal app shell entirely - no nav, no tabs.
+async function handleAcknowledgeRoute() {
+  if (!window.location.pathname.includes("/acknowledge")) return false;
+
+  const app = getApp();
+  const token = new URLSearchParams(window.location.search).get("token");
+
+  if (!token) {
+    app.innerHTML = renderAcknowledgeScreen("error");
+    return true;
+  }
+
+  app.innerHTML = renderAcknowledgeScreen("loading");
+
+  let status = "success";
+  try {
+    const res = await fetchWithTimeout(`${FN_URL}/acknowledge-flag`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ token }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) status = "error";
+  } catch (err) {
+    console.error("acknowledge-flag request failed:", err);
+    status = "error";
+  }
+
+  app.innerHTML = renderAcknowledgeScreen(status);
+  return true;
+}
+
+function renderAcknowledgeScreen(status) {
+  let body;
+  if (status === "loading") {
+    body = `
+      <div class="diagnostic-body diagnostic-center">
+        <span class="spinner spinner-purple"></span>
+      </div>
+    `;
+  } else if (status === "error") {
+    body = `
+      <div class="diagnostic-body diagnostic-center">
+        <p class="diagnostic-lead">${escapeHtml(t("acknowledgeError"))}</p>
+        <a class="btn btn-gold btn-block" href="https://leuroai.co.za">${t("btnGoToLeuro")}</a>
+      </div>
+    `;
+  } else {
+    body = `
+      <div class="diagnostic-body diagnostic-center">
+        <h2 class="diagnostic-title">${escapeHtml(t("acknowledgeThankYou"))}</h2>
+        <p class="diagnostic-lead">${escapeHtml(t("acknowledgeReactivated"))}</p>
+        <p class="diagnostic-lead">${escapeHtml(t("acknowledgeSupportMsg"))}</p>
+        <p class="diagnostic-lead">${escapeHtml(t("acknowledgeSadag"))}</p>
+        <a class="btn btn-gold btn-block" href="https://leuroai.co.za">${t("btnGoToLeuro")}</a>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="diagnostic-overlay" id="acknowledge-screen">
+      <div class="diagnostic-modal">
+        ${diagnosticHeaderBar()}
+        ${body}
+      </div>
+    </div>
+  `;
 }
 
 function handlePayfastReturn() {

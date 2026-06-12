@@ -5,3 +5,10 @@
 
 [functions]
   node_bundler = "esbuild"
+
+# Public content-flag acknowledgment link (/acknowledge?token=...) is
+# handled client-side in app.js - rewrite it to index.html so the SPA loads.
+[[redirects]]
+  from = "/acknowledge"
+  to = "/index.html"
+  status = 200
