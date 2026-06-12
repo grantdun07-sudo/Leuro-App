@@ -751,47 +751,39 @@ async function checkContent(text, context, learnerId) {
 // Records a content safety flag, freezes the account when required, and
 // notifies the learner's parent/guardian.
 async function flagContent(text, severity, context, learnerId) {
-  // learner_id may legitimately be null (e.g. state.learner hasn't loaded
-  // yet) - insert anyway and rely on user_id for ownership/RLS.
-  const insertPayload = {
-    learner_id: learnerId || null,
-    user_id: state.user?.id || null,
-    severity,
-    flagged_text: text,
-    context,
-    account_frozen: severity === 1,
-  };
-
-  const { data: flagData, error } = await sbClient
-    .from("content_flags")
-    .insert(insertPayload)
-    .select("id")
-    .single();
-
+  // The browser can't INSERT into content_flags directly - RLS blocks it
+  // (403). The save-content-flag edge function performs the write with the
+  // service role key and also freezes the profile on a tier 1 flag. We
+  // forward the session token so it can derive a trusted user_id.
   let flagId = null;
-  if (error) {
-    console.error("flagContent: content_flags insert failed", {
-      error,
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
-      payload: insertPayload,
+  try {
+    const res = await fetchWithTimeout(`${FN_URL}/save-content-flag`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${state.session?.access_token || SUPABASE_ANON_KEY}`,
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({
+        learner_id: learnerId || null,
+        severity,
+        flagged_text: text,
+        context,
+        account_frozen: severity === 1,
+      }),
     });
-  } else {
-    flagId = flagData?.id ?? null;
+    if (!res.ok) {
+      console.error("flagContent: save-content-flag failed", res.status, await res.text());
+    } else {
+      const flagData = await res.json();
+      flagId = flagData?.id ?? null;
+    }
+  } catch (err) {
+    console.error("flagContent: save-content-flag request failed", err);
   }
 
   try {
-    if (severity === 1) {
-      const { error: profileErr } = await sbClient
-        .from("profiles")
-        .update({ account_frozen: true, freeze_reason: "Self-harm content detected" })
-        .eq("id", state.user.id);
-      if (profileErr) {
-        console.error("flagContent: failed to freeze account (severity 1)", profileErr);
-      }
-    } else if (severity === 2) {
+    if (severity === 2) {
       // Freeze the account only after 3 tier-2 flags within the last 7 days.
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       let countQuery = sbClient
