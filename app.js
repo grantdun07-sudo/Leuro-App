@@ -922,7 +922,7 @@ function renderSignupForm() {
     <form data-action="signup-form">
       <div class="field">
         <label>${t("labelFullName")}</label>
-        <input type="text" name="fullName" required autocomplete="name" />
+        <input type="text" name="fullName" required minlength="2" autocomplete="name" />
       </div>
       <div class="field">
         <label>${t("labelEmail")}</label>
@@ -1001,6 +1001,17 @@ async function handleSignup(form) {
     const email = form.email.value.trim();
     const password = form.password.value;
     const fullName = form.fullName.value.trim();
+
+    if (fullName.length < 2) {
+      showToast(
+        state.lang === "af"
+          ? "Voer asseblief jou volle naam in (minstens 2 karakters)."
+          : "Please enter your full name (at least 2 characters).",
+        "error",
+      );
+      return;
+    }
+
     const metaData = {
       role: authRole,
       full_name: fullName,
@@ -1059,6 +1070,18 @@ async function handleSignup(form) {
     // client must NOT insert into public.profiles directly - RLS blocks that.
     await new Promise((resolve) => setTimeout(resolve, 500));
     await ensureUserRecords(data.user, metaData);
+
+    // The trigger-created profile row has full_name/referral_code from
+    // signup metadata, but fill them in explicitly here too - this is what
+    // gives every learner their LEURO-XXXXXX referral code.
+    const referralCode = `LEURO-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const { error: profileUpdateErr } = await sbClient
+      .from("profiles")
+      .update({ full_name: fullName, referral_code: referralCode })
+      .eq("id", state.user.id);
+    if (profileUpdateErr) {
+      console.error("Failed to update profile after signup", profileUpdateErr);
+    }
 
     await loadUserData();
     render();
