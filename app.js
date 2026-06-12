@@ -570,27 +570,111 @@ function difficultyLabel(difficulty) {
 // ---------------------------------------------------------------------
 // Tier 1 - self-harm / suicidal ideation. Detected text is NEVER sent to
 // Claude and is intercepted entirely client-side.
-const TIER1_PATTERNS = [
-  /suicid\w*/i,
-  /kill(ing)?\s*myself/i,
-  /end(ing)?\s*my\s*life/i,
-  /want(ed|ing)?\s*to\s*die/i,
-  /wish(ed)?\s*(i\s*(was|were)\s*dead|i\s*was\s*never\s*born)/i,
-  /self[\s-]?harm\w*/i,
-  /cutting\s*myself/i,
-  /hurt(ing)?\s*myself/i,
-  /don'?t\s*want\s*to\s*(live|be\s*alive)/i,
-  /no\s*reason\s*to\s*live/i,
-  /better\s*off\s*dead/i,
+// Tier 1 phrases are matched as plain substrings against the lowercased,
+// apostrophe-stripped input, so any variation (with/without apostrophes,
+// or appearing anywhere in a longer sentence) is caught.
+const TIER1_PHRASES = [
+  "suicid",
+  "kill myself",
+  "killing myself",
+  "end my life",
+  "ending my life",
+  "end it all",
+  "how do i end it",
+  "want to die",
+  "wanted to die",
+  "wanting to die",
+  "wanna die",
+  "rather be dead",
+  "wish i was dead",
+  "wish i were dead",
+  "wished i was dead",
+  "wished i were dead",
+  "wish i was never born",
+  "wished i was never born",
+  "wish i wasnt alive",
+  "self harm",
+  "self-harm",
+  "selfharm",
+  "harm myself",
+  "harming myself",
+  "cutting myself",
+  "cut myself",
+  "hurt myself",
+  "hurting myself",
+  "dont want to live",
+  "dont want to be alive",
+  "dont want to be here",
+  "no reason to live",
+  "no point in living",
+  "better off dead",
+  "better off without me",
+  // Additional crisis phrases
+  "dont like life",
+  "hate my life",
+  "hate life",
+  "not worth living",
+  "life is not worth",
+  "nobody cares about me",
+  "nobody would miss me",
+  "cant go on",
+  "tired of living",
+  "tired of life",
+  "life is pointless",
+  "i give up on life",
+  "no one cares",
+  "no one would care",
+  "pointless being here",
+  "i suffer",
+  "suffering too much",
+  "cant take it anymore",
+  "too much pain",
+  "make it stop",
+  "how do i make it stop",
+  // Self-harm method-seeking
+  "how do i cut",
+  "how to cut myself",
+  "how do i hurt myself",
+  "how to hurt myself",
+  "how do i harm myself",
+  "how to harm myself",
+  "how do i kill myself",
+  "how to kill myself",
+  "how do i end my life",
+  "how to end my life",
+  "how do i commit suicide",
+  "how to commit suicide",
+  "ways to hurt myself",
+  "ways to harm myself",
+  "ways to die",
+  "where can i cut",
+  "what can i use to hurt",
+  "does cutting help",
+  "does hurting help",
+  "i want to cut",
+  "i want to hurt",
+  "i want to harm",
+  "i need to cut",
+  "i need to hurt",
+  "i need to harm",
   // Afrikaans
-  /selfmoord\w*/i,
-  /wil\s*(self)?moord\s*pleeg/i,
-  /wil\s*(nie\s*meer\s*)?(lewe|leef)/i,
-  /sny(dery)?\s*my(self)?/i,
-  /seermaak\s*my(self)?/i,
-  /geen\s*rede\s*om\s*te\s*(lewe|leef)/i,
-  /wil\s*dood\s*?gaan/i,
+  "selfmoord",
+  "wil selfmoord pleeg",
+  "wil moord pleeg",
+  "wil nie meer lewe",
+  "wil nie meer leef",
+  "sny myself",
+  "seermaak myself",
+  "geen rede om te lewe",
+  "geen rede om te leef",
+  "wil doodgaan",
+  "wil dood gaan",
 ];
+
+function containsTier1Language(text) {
+  const normalized = text.toLowerCase().replace(/['’]/g, "");
+  return TIER1_PHRASES.some((phrase) => normalized.includes(phrase));
+}
 
 // Tier 2 - profanity, slurs, sexual content and discriminatory language
 // (English and Afrikaans).
@@ -630,17 +714,15 @@ const TIER2_REGEX = buildWordRegex(TIER2_WORDS);
 async function checkContent(text, context, learnerId) {
   if (!text || !text.trim()) return true;
 
-  for (const pattern of TIER1_PATTERNS) {
-    if (pattern.test(text)) {
-      await flagContent(text, 1, context, learnerId);
-      if (state.profile) {
-        state.profile.account_frozen = true;
-        state.profile.freeze_reason = "Self-harm content detected";
-      }
-      state.safetyOverlay = { severity: 1 };
-      render();
-      return false;
+  if (containsTier1Language(text)) {
+    await flagContent(text, 1, context, learnerId);
+    if (state.profile) {
+      state.profile.account_frozen = true;
+      state.profile.freeze_reason = "Self-harm content detected";
     }
+    state.safetyOverlay = { severity: 1 };
+    render();
+    return false;
   }
 
   if (TIER2_REGEX.test(text)) {
