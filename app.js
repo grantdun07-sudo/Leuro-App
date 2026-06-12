@@ -1295,7 +1295,7 @@ function renderDiagnosticScreen() {
   else inner = renderDiagnosticLang();
 
   return `
-    <div class="diagnostic-overlay">
+    <div class="diagnostic-overlay" id="diagnostic-modal">
       <div class="diagnostic-modal">
         ${inner}
       </div>
@@ -1464,7 +1464,7 @@ function diagnosticSelectOption(letter) {
   render();
 }
 
-function diagnosticNext() {
+async function diagnosticNext() {
   const d = state.diagnostic;
   if (d.selectedOption === null) return;
   d.answers[d.currentIndex] = d.selectedOption;
@@ -1482,15 +1482,14 @@ function diagnosticNext() {
     d.level = scoreToLevel(score);
     d.step = "results";
     render();
+
+    // Persist the result now so the completion button can simply dismiss
+    // the modal and navigate home with no pending async work.
+    await saveDiagnosticResult(d);
   }
 }
 
-async function diagnosticFinish() {
-  const d = state.diagnostic;
-  if (d.saving) return;
-  d.saving = true;
-  render();
-
+async function saveDiagnosticResult(d) {
   try {
     const { error: updateErr } = await sbClient
       .from("learners")
@@ -1510,16 +1509,20 @@ async function diagnosticFinish() {
     if (insertErr) throw insertErr;
 
     state.learner.diagnostic_level = d.level;
-    state.showDiagnostic = false;
-    state.diagnostic = null;
-    state.currentTab = "home";
-    render();
   } catch (err) {
     console.error("Failed to save diagnostic", err);
-    d.saving = false;
     showToast(t("errorGeneric"), "error");
-    render();
   }
+}
+
+function diagnosticFinish() {
+  // The diagnostic result was already persisted before the results screen
+  // was shown, so this is a plain synchronous UI dismissal.
+  document.getElementById("diagnostic-modal")?.remove();
+  state.showDiagnostic = false;
+  state.diagnostic = null;
+  state.currentTab = "home";
+  render();
 }
 
 function retakeDiagnostic() {
