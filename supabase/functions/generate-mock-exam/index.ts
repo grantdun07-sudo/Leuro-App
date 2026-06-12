@@ -1,6 +1,8 @@
 // Supabase Edge Function: generate-mock-exam
-// POST { learnerId, subjectId, difficulty }
+// POST { learnerId, subjectId, difficulty, term?, topics? }
 //   difficulty: 'low' | 'medium' | 'high'
+//   term: 1 | 2 | 3 | 4 (CAPS term, optional)
+//   topics: string[] - learner-specified topics to examine (optional)
 //
 // Returns: { examId, questions: [{ id, question_text, question_type, marks,
 //             question_order, options?, blooms_level }], totalMarks, difficulty }
@@ -154,10 +156,12 @@ Deno.serve(async (req: Request) => {
     }
 
     const body = await req.json();
-    const { learnerId, subjectId, difficulty } = body as {
+    const { learnerId, subjectId, difficulty, term, topics } = body as {
       learnerId?: string;
       subjectId?: string;
       difficulty?: string;
+      term?: number;
+      topics?: string[];
     };
 
     if (!learnerId || !subjectId || !difficulty) {
@@ -219,25 +223,37 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "Subject not found" }, 404);
     }
 
-    const { data: topics } = await supabase
-      .from("topics")
-      .select("title")
-      .eq("learner_id", learner.id)
-      .eq("subject_id", subjectId);
+    const requestedTopics = Array.isArray(topics)
+      ? topics.map((tp) => String(tp).trim()).filter(Boolean)
+      : [];
 
-    const topicList = (topics ?? []).map((t) => t.title).join(", ") || "general curriculum topics";
+    let topicList: string;
+    if (requestedTopics.length > 0) {
+      topicList = requestedTopics.join(", ");
+    } else {
+      const { data: recentTopics } = await supabase
+        .from("topics")
+        .select("title")
+        .eq("learner_id", learner.id)
+        .eq("subject_id", subjectId);
+
+      topicList = (recentTopics ?? []).map((t) => t.title).join(", ") || "general curriculum topics";
+    }
+
     const level = learner.diagnostic_level || 1;
+    const termNum = Number(term);
+    const termLine = termNum >= 1 && termNum <= 4 ? `\nCAPS Term: Term ${termNum}.` : "";
 
-    const userPrompt = `Generate a ${difficulty}-difficulty CAPS mock exam for ${subject.name}, Grade ${subject.grade}.
+    const userPrompt = `Generate a ${difficulty}-difficulty CAPS mock exam for ${subject.name}, Grade ${subject.grade}.${termLine}
 Bloom's level range for this difficulty: ${spec.bloomsRange} (cognitive load: ${spec.cognitiveLoad}).
 Question mix: ${spec.questionMix}.
 Learner diagnostic level: ${level}/5.
-Learner's recent study topics: ${topicList}.
+${requestedTopics.length > 0 ? "Focus the exam specifically and only on these topics" : "Learner's recent study topics"}: ${topicList}.
 Language: ${lang === "af" ? "Afrikaans" : "English"}.
 
 Produce exactly ${spec.count} questions, numbered 1 to ${spec.count}, each
 worth exactly ${spec.marksEach} marks (total ${spec.count * spec.marksEach}
-marks). Respond with ONLY the JSON object described in the system prompt.`;
+marks).${requestedTopics.length > 0 ? " Every question must relate directly to the topics listed above." : ""} Respond with ONLY the JSON object described in the system prompt.`;
 
     let responseText: string;
     try {

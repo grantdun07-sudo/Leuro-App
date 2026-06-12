@@ -161,6 +161,13 @@ const translations = {
     examsHeading: "Mock Exams",
     yourDiagnosticLevel: "Your diagnostic level",
     selectSubjectLabel: "Subject",
+    selectTermLabel: "Term",
+    examTopicsLabel: "Topics",
+    examTopicsPlaceholder: "e.g. Photosynthesis, Food Chains, Ecosystems",
+    term1: "Term 1",
+    term2: "Term 2",
+    term3: "Term 3",
+    term4: "Term 4",
     selectDifficultyLabel: "Difficulty",
     diffLow: "Low",
     diffMedium: "Medium",
@@ -355,6 +362,13 @@ const translations = {
     examsHeading: "Toetseksamens",
     yourDiagnosticLevel: "Jou diagnostiese vlak",
     selectSubjectLabel: "Vak",
+    selectTermLabel: "Kwartaal",
+    examTopicsLabel: "Onderwerpe",
+    examTopicsPlaceholder: "bv. Fotosintese, Voedselkettings, Ekostelsels",
+    term1: "Kwartaal 1",
+    term2: "Kwartaal 2",
+    term3: "Kwartaal 3",
+    term4: "Kwartaal 4",
     selectDifficultyLabel: "Moeilikheidsgraad",
     diffLow: "Laag",
     diffMedium: "Medium",
@@ -455,6 +469,10 @@ const state = {
     answer: "",
     saving: false,
     saved: false,
+  },
+  mockExamSetup: {
+    term: 1,
+    topics: "",
   },
   refresher: {
     step: "setup",
@@ -1932,6 +1950,7 @@ function renderMockExamSection() {
   const isPremium = tier === "premium";
   const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
   const completedExams = state.exams.filter((e) => e.completed_at);
+  const mx = state.mockExamSetup;
 
   return `
     <div class="card">
@@ -1940,6 +1959,20 @@ function renderMockExamSection() {
         <select id="exam-subject">
           ${state.subjects.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}
         </select>
+      </div>
+      <div class="field">
+        <label>${t("selectTermLabel")}</label>
+        <div class="pill-row">
+          ${[1, 2, 3, 4]
+            .map(
+              (term) => `<button type="button" class="pill-btn ${mx.term === term ? "selected" : ""}" data-action="exam-set-term" data-term="${term}">${t(`term${term}`)}</button>`,
+            )
+            .join("")}
+        </div>
+      </div>
+      <div class="field">
+        <label>${t("examTopicsLabel")}</label>
+        <textarea id="exam-topics" rows="3" placeholder="${t("examTopicsPlaceholder")}">${escapeHtml(mx.topics || "")}</textarea>
       </div>
       <div class="field">
         <label>${t("selectDifficultyLabel")}</label>
@@ -2506,16 +2539,30 @@ function renderRefresherComplete() {
   `;
 }
 
+function examSetTerm(term) {
+  const topicsTextarea = document.getElementById("exam-topics");
+  if (topicsTextarea) state.mockExamSetup.topics = topicsTextarea.value;
+  state.mockExamSetup.term = term;
+  render();
+}
+
 async function startMockExam() {
   const subjectSelect = document.getElementById("exam-subject");
   const difficultySelect = document.getElementById("exam-difficulty");
+  const topicsTextarea = document.getElementById("exam-topics");
   if (!subjectSelect || !difficultySelect) return;
 
   const difficulty = difficultySelect.value;
+  const term = state.mockExamSetup.term;
+  const topicsText = topicsTextarea ? topicsTextarea.value : "";
+  const topics = topicsText
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
   const btn = document.querySelector('[data-action="start-exam"]');
   setButtonLoading(btn, true);
 
-  console.log("📋 Mock Exam API", { difficulty, status: "calling" });
+  console.log("📋 Mock Exam API", { difficulty, term, topics, status: "calling" });
 
   try {
     const res = await fetchWithTimeout(`${FN_URL}/generate-mock-exam`, {
@@ -2529,6 +2576,8 @@ async function startMockExam() {
         learnerId: state.learner.id,
         subjectId: subjectSelect.value,
         difficulty,
+        term,
+        topics,
       }),
     });
     const data = await res.json();
@@ -3108,6 +3157,9 @@ function attachGlobalListeners() {
         break;
       case "refresher-back-to-study":
         refresherBackToStudy();
+        break;
+      case "exam-set-term":
+        examSetTerm(parseInt(target.dataset.term, 10));
         break;
       case "start-exam":
         startMockExam();
