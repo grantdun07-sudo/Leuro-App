@@ -737,41 +737,71 @@ async function checkContent(text, context, learnerId) {
 // Records a content safety flag, freezes the account when required, and
 // notifies the learner's parent/guardian.
 async function flagContent(text, severity, context, learnerId) {
-  try {
-    const { data: flag, error } = await sbClient
-      .from("content_flags")
-      .insert({
-        learner_id: learnerId,
-        severity,
-        flagged_text: text,
-        context,
-        account_frozen: severity === 1,
-      })
-      .select()
-      .single();
-    if (error) throw error;
+  // learner_id may legitimately be null (e.g. state.learner hasn't loaded
+  // yet) - insert anyway and rely on user_id for ownership/RLS.
+  const insertPayload = {
+    learner_id: learnerId || null,
+    user_id: state.user?.id || null,
+    severity,
+    flagged_text: text,
+    context,
+    account_frozen: severity === 1,
+  };
 
+  let flag = null;
+  const { data, error } = await sbClient
+    .from("content_flags")
+    .insert(insertPayload)
+    .select()
+    .single();
+
+  if (error) {
+    console.error("flagContent: content_flags insert failed", {
+      error,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+      payload: insertPayload,
+    });
+  } else {
+    flag = data;
+  }
+
+  try {
     if (severity === 1) {
-      await sbClient
+      const { error: profileErr } = await sbClient
         .from("profiles")
         .update({ account_frozen: true, freeze_reason: "Self-harm content detected" })
         .eq("id", state.user.id);
+      if (profileErr) {
+        console.error("flagContent: failed to freeze account (severity 1)", profileErr);
+      }
     } else if (severity === 2) {
       // Freeze the account only after 3 tier-2 flags within the last 7 days.
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const { count } = await sbClient
+      let countQuery = sbClient
         .from("content_flags")
         .select("id", { count: "exact", head: true })
-        .eq("learner_id", learnerId)
         .eq("severity", 2)
         .gte("created_at", sevenDaysAgo);
+      countQuery = learnerId
+        ? countQuery.eq("learner_id", learnerId)
+        : countQuery.eq("user_id", state.user?.id);
+
+      const { count, error: countErr } = await countQuery;
+      if (countErr) {
+        console.error("flagContent: failed to count tier-2 flags", countErr);
+      }
 
       if ((count || 0) >= 3) {
-        await sbClient
+        const { error: freezeErr } = await sbClient
           .from("profiles")
           .update({ account_frozen: true, freeze_reason: "Repeated inappropriate language" })
           .eq("id", state.user.id);
-        if (state.profile) {
+        if (freezeErr) {
+          console.error("flagContent: failed to freeze account (severity 2)", freezeErr);
+        } else if (state.profile) {
           state.profile.account_frozen = true;
           state.profile.freeze_reason = "Repeated inappropriate language";
           render();
@@ -779,21 +809,26 @@ async function flagContent(text, severity, context, learnerId) {
       }
     }
 
-    await fetchWithTimeout(`${FN_URL}/notify-parent`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${state.session.access_token}`,
-        apikey: SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({
-        learnerId,
-        severity,
-        flaggedText: text,
-        context,
-        flagId: flag ? flag.id : null,
-      }),
-    });
+    if (learnerId) {
+      const res = await fetchWithTimeout(`${FN_URL}/notify-parent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${state.session.access_token}`,
+          apikey: SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          learnerId,
+          severity,
+          flaggedText: text,
+          context,
+          flagId: flag ? flag.id : null,
+        }),
+      });
+      if (!res.ok) {
+        console.error("flagContent: notify-parent failed", res.status, await res.text());
+      }
+    }
   } catch (err) {
     console.error("flagContent error:", err);
   }

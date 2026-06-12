@@ -197,15 +197,23 @@ create table if not exists public.parent_alerts (
 -- Content safety flags raised by the client-side checkContent() screen
 -- (self-harm/crisis language = severity 1, profanity/slurs/sexual/
 -- discriminatory language = severity 2).
+-- learner_id may be null (e.g. if the learner record hasn't loaded yet);
+-- user_id is always set from the caller's auth session and is the
+-- fallback ownership column for RLS.
 create table if not exists public.content_flags (
   id uuid primary key default gen_random_uuid(),
-  learner_id uuid not null references public.learners(id) on delete cascade,
+  learner_id uuid references public.learners(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   severity int not null check (severity in (1, 2)),
   flagged_text text not null,
   context text,
   account_frozen boolean default false,
   created_at timestamp default now()
 );
+
+-- Migration for existing tables (safe to re-run)
+alter table public.content_flags alter column learner_id drop not null;
+alter table public.content_flags add column if not exists user_id uuid references auth.users(id) on delete cascade;
 
 -- Saved Study Guides (Exams tab > Study Guide section > "Save Guide")
 create table if not exists public.saved_guides (
@@ -235,6 +243,7 @@ create index if not exists idx_mock_exam_responses_question_id on public.mock_ex
 create index if not exists idx_parent_alerts_parent_id on public.parent_alerts(parent_id);
 create index if not exists idx_subjects_grade_curriculum on public.subjects(grade, curriculum);
 create index if not exists idx_content_flags_learner_id on public.content_flags(learner_id);
+create index if not exists idx_content_flags_user_id on public.content_flags(user_id);
 create index if not exists idx_content_flags_created_at on public.content_flags(created_at);
 
 -- ---------------------------------------------------------------------
@@ -506,14 +515,19 @@ create policy "Users read own subscription history" on public.subscription_histo
 );
 
 -- content_flags
+-- Ownership is checked via user_id (always set by the client to the
+-- caller's auth uid) OR learner_id (when available), so inserts succeed
+-- even if learner_id is null.
 drop policy if exists "Learners can insert own content flags" on public.content_flags;
 create policy "Learners can insert own content flags" on public.content_flags for insert with check (
-  learner_id in (select id from public.learners where user_id = auth.uid())
+  user_id = auth.uid()
+  or learner_id in (select id from public.learners where user_id = auth.uid())
 );
 
 drop policy if exists "Learners can read own content flags" on public.content_flags;
 create policy "Learners can read own content flags" on public.content_flags for select using (
-  learner_id in (select id from public.learners where user_id = auth.uid())
+  user_id = auth.uid()
+  or learner_id in (select id from public.learners where user_id = auth.uid())
 );
 
 drop policy if exists "Parents can read linked learner content flags" on public.content_flags;
