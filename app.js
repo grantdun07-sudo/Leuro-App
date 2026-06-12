@@ -753,15 +753,26 @@ async function checkContent(text, context, learnerId) {
 async function flagContent(text, severity, context, learnerId) {
   // The browser can't INSERT into content_flags directly - RLS blocks it
   // (403). The save-content-flag edge function performs the write with the
-  // service role key and also freezes the profile on a tier 1 flag. We
-  // forward the session token so it can derive a trusted user_id.
+  // service role key (JWT off, no auth check). We send user_id/learner_id in
+  // the body so the flag stays linked to the learner's profile.
   // state.session may not be populated yet at this point, so fetch the
   // current session fresh from Supabase rather than relying on it.
   const { data: { session } } = await sbClient.auth.getSession();
   const accessToken = session?.access_token || SUPABASE_ANON_KEY;
+  const userId = session?.user?.id || state.user?.id || null;
+  console.log("flagContent: start", { severity, context, learnerId, userId });
 
   let flagId = null;
   try {
+    const payload = {
+      user_id: userId,
+      learner_id: learnerId || null,
+      severity,
+      flagged_text: text,
+      context,
+      account_frozen: severity === 1,
+    };
+    console.log("flagContent: calling save-content-flag", payload);
     const res = await fetchWithTimeout(`${FN_URL}/save-content-flag`, {
       method: "POST",
       headers: {
@@ -769,19 +780,14 @@ async function flagContent(text, severity, context, learnerId) {
         Authorization: `Bearer ${accessToken}`,
         apikey: SUPABASE_ANON_KEY,
       },
-      body: JSON.stringify({
-        learner_id: learnerId || null,
-        severity,
-        flagged_text: text,
-        context,
-        account_frozen: severity === 1,
-      }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       console.error("flagContent: save-content-flag failed", res.status, await res.text());
     } else {
       const flagData = await res.json();
       flagId = flagData?.id ?? null;
+      console.log("flagContent: save-content-flag returned flagId", flagId);
     }
   } catch (err) {
     console.error("flagContent: save-content-flag request failed", err);
@@ -821,11 +827,12 @@ async function flagContent(text, severity, context, learnerId) {
     }
 
     if (learnerId) {
+      console.log("flagContent: calling notify-parent with flagId", flagId);
       const res = await fetchWithTimeout(`${FN_URL}/notify-parent`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${state.session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
           apikey: SUPABASE_ANON_KEY,
         },
         body: JSON.stringify({
@@ -838,6 +845,8 @@ async function flagContent(text, severity, context, learnerId) {
       });
       if (!res.ok) {
         console.error("flagContent: notify-parent failed", res.status, await res.text());
+      } else {
+        console.log("flagContent: notify-parent ok");
       }
     }
   } catch (err) {
