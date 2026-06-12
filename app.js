@@ -755,13 +755,18 @@ async function flagContent(text, severity, context, learnerId) {
   // (403). The save-content-flag edge function performs the write with the
   // service role key and also freezes the profile on a tier 1 flag. We
   // forward the session token so it can derive a trusted user_id.
+  // state.session may not be populated yet at this point, so fetch the
+  // current session fresh from Supabase rather than relying on it.
+  const { data: { session } } = await sbClient.auth.getSession();
+  const accessToken = session?.access_token || SUPABASE_ANON_KEY;
+
   let flagId = null;
   try {
     const res = await fetchWithTimeout(`${FN_URL}/save-content-flag`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${state.session?.access_token || SUPABASE_ANON_KEY}`,
+        Authorization: `Bearer ${accessToken}`,
         apikey: SUPABASE_ANON_KEY,
       },
       body: JSON.stringify({
