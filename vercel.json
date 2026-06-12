@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/acknowledge", "destination": "/index.html" }
+  ]
+}

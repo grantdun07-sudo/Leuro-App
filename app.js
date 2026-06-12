@@ -782,10 +782,12 @@ async function flagContent(text, severity, context, learnerId) {
       },
       body: JSON.stringify(payload),
     });
+    const raw = await res.text();
+    console.log("flagContent: save-content-flag raw response", res.status, raw);
     if (!res.ok) {
-      console.error("flagContent: save-content-flag failed", res.status, await res.text());
+      console.error("flagContent: save-content-flag failed", res.status, raw);
     } else {
-      const flagData = await res.json();
+      const flagData = JSON.parse(raw);
       flagId = flagData?.id ?? null;
       console.log("flagContent: save-content-flag returned flagId", flagId);
     }
@@ -3445,12 +3447,21 @@ function renderLearnerCard(learner) {
   `;
 }
 
+// Escape the message, then turn any https:// URL into a clickable link
+// (used for the content-flag acknowledgment link in safety alerts).
+function linkifyAlertMessage(message) {
+  return escapeHtml(message || "").replace(
+    /(https:\/\/[^\s<]+)/g,
+    '<a href="$1" target="_blank" rel="noopener">$1</a>',
+  );
+}
+
 function renderAlertItem(alert) {
   return `
     <div class="alert-item ${alert.read_at ? "" : "unread"}">
       <span class="alert-icon">${ALERT_ICONS[alert.alert_type] || "🔔"}</span>
       <div style="flex:1;">
-        <div>${escapeHtml(alert.message || "")}</div>
+        <div>${linkifyAlertMessage(alert.message)}</div>
         <div class="alert-meta">${formatDateTime(alert.created_at)}</div>
         ${!alert.read_at ? `<button class="link-btn" data-action="mark-alert-read" data-alert-id="${alert.id}">${t("markRead")}</button>` : ""}
       </div>

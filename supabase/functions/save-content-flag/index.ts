@@ -5,20 +5,36 @@
 // directly (RLS returns 403), so this function performs the write with the
 // service role key, which bypasses RLS entirely.
 //
+// STANDALONE: no shared imports - everything is inlined so this file can be
+// pasted directly into the Supabase dashboard editor.
+//
 // JWT verification is OFF for this function and there is no auth check here -
 // the service role key is what authorizes the write. user_id is taken from
 // the request body so the flag stays linked to the learner's profile (used
 // later by acknowledge-flag to reactivate the account).
 //
 // On a tier 1 (self-harm) flag the learner's profile is frozen as well.
-// Returns the inserted content_flags row id - the real UUID that becomes the
-// acknowledgment token in the parent notification.
+// Returns { id: flag.id } - the real UUID that becomes the acknowledgment
+// token in the parent notification.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -27,6 +43,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (req.method !== "POST") {
+      console.error("save-content-flag: bad method:", req.method);
       return jsonResponse({ error: "Method not allowed" }, 405);
     }
 
@@ -52,6 +69,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "flagged_text is required" }, 400);
     }
 
+    console.log("save-content-flag: creating service-role client");
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const insertPayload = {
@@ -95,6 +113,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    console.log("save-content-flag: success, returning id:", flag.id);
     return jsonResponse({ id: flag.id });
   } catch (err) {
     console.error("save-content-flag error:", err);
