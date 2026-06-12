@@ -129,11 +129,6 @@ alter table public.study_sessions drop constraint if exists study_sessions_phase
 alter table public.study_sessions add constraint study_sessions_phase_check
   check (phase in ('explain', 'example', 'attempt', 'feedback', 'chat'));
 
--- Migration: allow Exam Refresher per-question feedback entries.
-alter table public.study_sessions drop constraint if exists study_sessions_phase_check;
-alter table public.study_sessions add constraint study_sessions_phase_check
-  check (phase in ('explain', 'example', 'attempt', 'feedback', 'chat', 'refresher-feedback'));
-
 create table if not exists public.mock_exam_responses (
   id uuid primary key default gen_random_uuid(),
   question_id uuid not null references public.mock_exam_questions(id) on delete cascade,

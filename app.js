@@ -120,7 +120,8 @@ const translations = {
     tabExamRefresher: "Exam Refresher",
     refresherSetupHeading: "Set up your refresher",
     selectTopicsLabel: "Select topics to revise",
-    noTopicsForSubject: "No topics yet for this subject. Add topics from the Learn tab first.",
+    noSavedGuides: "No study guides yet — create a Study Guide first before using the Exam Refresher",
+    btnGoToStudyGuide: "Go to Study Guide",
     sessionLengthLabel: "Session length",
     min20: "20 min",
     min30: "30 min",
@@ -313,7 +314,8 @@ const translations = {
     tabExamRefresher: "Eksamenopfrissing",
     refresherSetupHeading: "Stel jou opfrissing op",
     selectTopicsLabel: "Kies onderwerpe om te hersien",
-    noTopicsForSubject: "Nog geen onderwerpe vir hierdie vak nie. Voeg eers onderwerpe by in die Leer-oortjie.",
+    noSavedGuides: "Nog geen studiegidse nie — skep eers 'n Studiegids voordat jy die Eksamenopfrisser gebruik",
+    btnGoToStudyGuide: "Gaan na Studiegids",
     sessionLengthLabel: "Sessielengte",
     min20: "20 min",
     min30: "30 min",
@@ -433,6 +435,7 @@ const state = {
   subjects: [],
   topics: [],
   exams: [],
+  savedGuides: [],
   sessionsToday: 0,
   currentTab: "home",
   lang: "en",
@@ -689,7 +692,7 @@ async function loadUserData() {
     state.learner = learner;
     if (!["home", "learn", "study", "account"].includes(state.currentTab)) state.currentTab = "home";
 
-    await Promise.all([loadSubjects(), loadTopics(), loadExams(), loadSessionsToday()]);
+    await Promise.all([loadSubjects(), loadTopics(), loadExams(), loadSessionsToday(), loadSavedGuides()]);
   } else if (profile.role === "parent") {
     if (!["parent", "account"].includes(state.currentTab)) state.currentTab = "parent";
     await loadParentData();
@@ -728,6 +731,17 @@ async function loadExams() {
     .order("created_at", { ascending: false });
   if (error) throw error;
   state.exams = data || [];
+}
+
+async function loadSavedGuides() {
+  if (!state.learner) return;
+  const { data, error } = await sbClient
+    .from("saved_guides")
+    .select("*")
+    .eq("learner_id", state.learner.id)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  state.savedGuides = data || [];
 }
 
 async function loadSessionsToday() {
@@ -1969,6 +1983,13 @@ function renderMockExamSection() {
 function examsSwitchView(view) {
   state.examsView = view;
   render();
+  // Refresh saved guides so any guide saved earlier this session shows up in
+  // the Exam Refresher setup screen.
+  if (view === "refresher") {
+    loadSavedGuides()
+      .then(() => render())
+      .catch((err) => console.warn("Could not reload saved guides:", err));
+  }
 }
 
 async function generateStudyGuide() {
@@ -2054,8 +2075,26 @@ const REFRESHER_LEVELS = [
 
 function renderRefresherSetup() {
   const r = state.refresher;
-  const subjectId = r.subjectId || (state.subjects[0] && state.subjects[0].id) || null;
-  const topicsForSubject = state.topics.filter((tp) => tp.subject_id === subjectId);
+  const guides = state.savedGuides || [];
+
+  // The Exam Refresher revises topics the learner has already saved as Study
+  // Guides. Only offer subjects (and topics) that have saved guides.
+  if (guides.length === 0) {
+    return `
+      <div class="card">
+        <div class="empty-state">
+          <div class="empty-icon">📘</div>
+          <p>${t("noSavedGuides")}</p>
+        </div>
+        <button class="btn btn-gold btn-block" data-action="exams-switch-view" data-view="studyguide">${t("btnGoToStudyGuide")}</button>
+      </div>
+    `;
+  }
+
+  const subjectName = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
+  const guideSubjectIds = [...new Set(guides.map((g) => g.subject_id).filter(Boolean))];
+  const subjectId = guideSubjectIds.includes(r.subjectId) ? r.subjectId : guideSubjectIds[0] || null;
+  const guidesForSubject = guides.filter((g) => g.subject_id === subjectId);
 
   return `
     <div class="card">
@@ -2064,23 +2103,19 @@ function renderRefresherSetup() {
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
         <select id="refresher-subject" data-action="refresher-subject-select">
-          ${state.subjects.map((s) => `<option value="${s.id}" ${s.id === subjectId ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}
+          ${guideSubjectIds.map((id) => `<option value="${id}" ${id === subjectId ? "selected" : ""}>${escapeHtml(subjectName[id] || "")}</option>`).join("")}
         </select>
       </div>
 
       <div class="field">
         <label>${t("selectTopicsLabel")}</label>
-        ${
-          topicsForSubject.length === 0
-            ? `<p class="muted">${t("noTopicsForSubject")}</p>`
-            : `<div class="chip-row">
-                ${topicsForSubject
-                  .map(
-                    (tp) => `<button type="button" class="topic-chip ${r.selectedTopics.includes(tp.id) ? "selected" : ""}" data-action="refresher-toggle-topic" data-topic-id="${tp.id}">${escapeHtml(tp.title)}</button>`,
-                  )
-                  .join("")}
-              </div>`
-        }
+        <div class="chip-row">
+          ${guidesForSubject
+            .map(
+              (g) => `<button type="button" class="topic-chip ${r.selectedTopics.includes(g.id) ? "selected" : ""}" data-action="refresher-toggle-topic" data-topic-id="${g.id}">${escapeHtml(g.topic_title)}</button>`,
+            )
+            .join("")}
+        </div>
       </div>
 
       <div class="field">
@@ -2154,7 +2189,17 @@ async function refresherStart() {
   }
 
   const subjectSelect = document.getElementById("refresher-subject");
-  r.subjectId = (subjectSelect && subjectSelect.value) || r.subjectId || (state.subjects[0] && state.subjects[0].id);
+  r.subjectId = (subjectSelect && subjectSelect.value) || r.subjectId;
+
+  // selectedTopics holds saved_guide ids - map them to their topic titles
+  // (deduped) to send to the edge function, which generates fresh content.
+  const guideMap = Object.fromEntries((state.savedGuides || []).map((g) => [g.id, g.topic_title]));
+  const topicTitles = [...new Set(r.selectedTopics.map((id) => guideMap[id]).filter(Boolean))];
+  if (!topicTitles.length) {
+    showToast(t("selectAtLeastOneTopic"), "error");
+    return;
+  }
+
   r.loading = true;
   r.error = null;
   render();
@@ -2163,15 +2208,13 @@ async function refresherStart() {
     const data = await callStudyGuideApi({
       phase: "refresher",
       subjectId: r.subjectId,
-      topics: r.selectedTopics,
+      topics: topicTitles,
       level: r.level,
       duration: r.duration,
     });
 
-    const topicMap = Object.fromEntries(state.topics.map((tp) => [tp.id, tp.title]));
     const sections = (data.refresher?.sections || []).map((sec) => ({
-      topicId: sec.topicId,
-      topicTitle: sec.topicTitle || topicMap[sec.topicId] || "",
+      topicTitle: sec.topicTitle || "",
       summary: Array.isArray(sec.summary) ? sec.summary : [],
       definitions: Array.isArray(sec.definitions) ? sec.definitions : [],
       workedExample: sec.workedExample || "",
@@ -2286,7 +2329,8 @@ async function refresherSubmitAnswer(sectionIndex, questionIndex) {
   try {
     const data = await callStudyGuideApi({
       phase: "refresher-feedback",
-      topicId: section.topicId,
+      subjectId: r.subjectId,
+      topicTitle: section.topicTitle,
       learnerInput: answer,
       level: r.level,
       context: { refresherQuestion: question.question },

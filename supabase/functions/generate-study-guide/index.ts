@@ -14,17 +14,19 @@
 //                 Returns: { studyGuide: { topicTitle, keyConcepts, example,
 //                 selfCheckQuestion }, tokensUsed }
 //
-// 'refresher'  - Exam Refresher session content for the Study tab.
-//                 Requires subjectId + topics (array of topic ids owned by
-//                 the learner) + level ('confident'|'revising'|'rescue') +
-//                 duration (20|30|40 minutes) instead of topicId.
-//                 Returns: { refresher: { sections: [{ topicId, topicTitle,
-//                 summary, definitions, workedExample, questions }] },
-//                 tokensUsed }
+// 'refresher'  - Exam Refresher session content for the Study tab. Topics
+//                 come from the learner's saved Study Guides, so they are
+//                 passed as free-text titles rather than topic ids.
+//                 Requires subjectId + topics (array of topic titles) +
+//                 level ('confident'|'revising'|'rescue') + duration
+//                 (20|30|40 minutes) instead of topicId.
+//                 Returns: { refresher: { sections: [{ topicTitle, summary,
+//                 definitions, workedExample, questions }] }, tokensUsed }
 //
 // 'refresher-feedback' - instant feedback on one Exam Refresher practice
-//                 question. Requires topicId + learnerInput (the learner's
-//                 answer) + context.refresherQuestion (the question text).
+//                 question. Requires subjectId + topicTitle + learnerInput
+//                 (the learner's answer) + context.refresherQuestion (the
+//                 question text).
 //                 Returns: { feedback: { correct: boolean, feedback: string },
 //                 tokensUsed }
 //
@@ -72,7 +74,7 @@ interface RequestBody {
   topicId?: string;
   subjectId?: string;
   topicTitle?: string;
-  topics?: string[];
+  topics?: string[]; // Exam Refresher: topic titles (from saved study guides)
   level?: "confident" | "revising" | "rescue";
   duration?: number;
   phase: Phase;
@@ -215,7 +217,7 @@ const REFRESHER_LEVEL_INFO: Record<string, { questionCount: number; depth: strin
 };
 
 function buildRefresherPrompt(
-  topics: { id: string; title: string }[],
+  topicTitles: string[],
   level: "confident" | "revising" | "rescue",
   duration: number,
   subjectName: string,
@@ -226,7 +228,7 @@ function buildRefresherPrompt(
   const langLine = lang === "af" ? "Respond in Afrikaans." : "Respond in English.";
   const levelText = learnerLevel > 0 ? `${learnerLevel}/5` : "1/5 (not yet diagnosed, assume a beginner)";
   const info = REFRESHER_LEVEL_INFO[level] ?? REFRESHER_LEVEL_INFO.revising;
-  const topicList = topics.map((tp) => `- "${tp.title}" (topicId: ${tp.id})`).join("\n");
+  const topicList = topicTitles.map((title) => `- "${title}"`).join("\n");
 
   return (
     `Subject: ${subjectName} | Grade: ${grade} | Learner level: ${levelText}\n${langLine}\n\n` +
@@ -239,10 +241,10 @@ function buildRefresherPrompt(
     `Never reproduce copyrighted exam content - create original questions only.\n\n` +
     `Respond with ONLY a raw JSON object (no markdown, no code fences, no extra ` +
     `text) with exactly this shape:\n` +
-    `{"sections": [{"topicId": string, "topicTitle": string, "summary": string[], ` +
+    `{"sections": [{"topicTitle": string, "summary": string[], ` +
     `"definitions": string[], "workedExample": string, "questions": [{"question": ` +
     `string, "marks": number}]}]}\n` +
-    `Use the exact topicId values given above, and return one section per topic ` +
+    `Use the exact topic titles given above, and return one section per topic ` +
     `in the same order.`
   );
 }
@@ -292,7 +294,7 @@ Deno.serve(async (req: Request) => {
     if (!["explain", "example", "attempt", "feedback", "chat", "studyguide", "refresher", "refresher-feedback"].includes(body.phase)) {
       return jsonResponse({ error: "invalid phase" }, 400);
     }
-    if (!["studyguide", "refresher"].includes(body.phase) && !body.topicId) {
+    if (!["studyguide", "refresher", "refresher-feedback"].includes(body.phase) && !body.topicId) {
       return jsonResponse({ error: "topicId is required" }, 400);
     }
 
@@ -352,8 +354,9 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Standalone Exam Refresher generation (Study tab) - no single topic
-    // record needed, but the selected topics must belong to the learner.
+    // Standalone Exam Refresher generation (Study tab). Topics come from the
+    // learner's saved Study Guides and are passed as free-text titles, so no
+    // topics-table record is required.
     if (body.phase === "refresher") {
       if (
         !body.subjectId ||
@@ -368,17 +371,19 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ error: "invalid level" }, 400);
       }
 
-      const [{ data: subject }, { data: topicRows }] = await Promise.all([
-        supabase.from("subjects").select("name").eq("id", body.subjectId).single(),
-        supabase.from("topics").select("id, title").eq("learner_id", learner.id).in("id", body.topics),
-      ]);
-
-      if (!topicRows || topicRows.length === 0) {
-        return jsonResponse({ error: "No matching topics found" }, 404);
+      const topicTitles = body.topics.map((s) => String(s).trim()).filter(Boolean).slice(0, 8);
+      if (topicTitles.length === 0) {
+        return jsonResponse({ error: "No valid topics provided" }, 400);
       }
 
+      const { data: subject } = await supabase
+        .from("subjects")
+        .select("name")
+        .eq("id", body.subjectId)
+        .single();
+
       const userPrompt = buildRefresherPrompt(
-        topicRows,
+        topicTitles,
         body.level,
         body.duration,
         subject?.name ?? "General",
@@ -387,7 +392,7 @@ Deno.serve(async (req: Request) => {
         lang,
       );
 
-      const maxTokens = Math.min(8192, 1024 + topicRows.length * 1200);
+      const maxTokens = Math.min(8192, 1024 + topicTitles.length * 1200);
 
       try {
         const result = await callClaude(SYSTEM_PROMPT, userPrompt, maxTokens);
@@ -401,6 +406,64 @@ Deno.serve(async (req: Request) => {
         }
         console.error("generate-study-guide (refresher) error:", err);
         return jsonResponse({ error: "Failed to generate refresher" }, 500);
+      }
+    }
+
+    // Exam Refresher per-question feedback (Study tab). Like 'refresher', the
+    // topic is a free-text title from a saved guide, so there is no topics
+    // record - feedback is returned as structured JSON and not logged to
+    // study_sessions (which requires a topic_id).
+    if (body.phase === "refresher-feedback") {
+      const question = body.context?.refresherQuestion ?? "";
+      const answer = body.learnerInput ?? "";
+      if (!body.subjectId || !body.topicTitle || !question || !answer) {
+        return jsonResponse(
+          { error: "subjectId, topicTitle, learnerInput and context.refresherQuestion are required" },
+          400,
+        );
+      }
+
+      // Child-safety screen on the learner's submitted answer.
+      if (containsCrisisLanguage(answer)) {
+        const safeResponse = SADAG_CRISIS_MESSAGE[lang as "en" | "af"] ?? SADAG_CRISIS_MESSAGE.en;
+        await supabase.rpc("create_parent_alert", {
+          p_learner_id: learner.id,
+          p_alert_type: "safety_flag",
+          p_message:
+            "Leuro detected language in a study session that may indicate your child is " +
+            "struggling emotionally. Please check in with them.",
+        });
+        return jsonResponse({ feedback: { correct: false, feedback: safeResponse }, tokensUsed: 0, safety_flag: true });
+      }
+
+      const { data: subject } = await supabase
+        .from("subjects")
+        .select("name")
+        .eq("id", body.subjectId)
+        .single();
+
+      const userPrompt = buildRefresherFeedbackPrompt(
+        question,
+        answer,
+        body.topicTitle,
+        subject?.name ?? "General",
+        learner.grade,
+        body.level ?? "revising",
+        lang,
+      );
+
+      try {
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 512);
+        const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+        const feedback = JSON.parse(cleaned);
+        return jsonResponse({ feedback, tokensUsed: result.tokensUsed });
+      } catch (err) {
+        if (err instanceof ClaudeTimeoutError) {
+          console.error("Anthropic request timed out:", err);
+          return jsonResponse({ error: "AI generation timed out. Please try again." }, 500);
+        }
+        console.error("generate-study-guide (refresher-feedback) error:", err);
+        return jsonResponse({ error: "Failed to generate feedback" }, 500);
       }
     }
 
@@ -450,9 +513,9 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Child-safety screen on learner-submitted text (attempt answers / feedback / chat / refresher feedback)
+    // Child-safety screen on learner-submitted text (attempt answers / feedback / chat)
     if (
-      (body.phase === "feedback" || body.phase === "attempt" || body.phase === "chat" || body.phase === "refresher-feedback") &&
+      (body.phase === "feedback" || body.phase === "attempt" || body.phase === "chat") &&
       containsCrisisLanguage(body.learnerInput)
     ) {
       const safeResponse = SADAG_CRISIS_MESSAGE[lang as "en" | "af"] ?? SADAG_CRISIS_MESSAGE.en;
@@ -474,54 +537,7 @@ Deno.serve(async (req: Request) => {
           "struggling emotionally. Please check in with them.",
       });
 
-      if (body.phase === "refresher-feedback") {
-        return jsonResponse({ feedback: { correct: false, feedback: safeResponse }, tokensUsed: 0, safety_flag: true });
-      }
       return jsonResponse({ response: safeResponse, phase: body.phase, tokensUsed: 0, safety_flag: true });
-    }
-
-    // Exam Refresher per-question feedback - returns structured JSON
-    // ({ correct, feedback }) rather than free-form text.
-    if (body.phase === "refresher-feedback") {
-      const question = body.context?.refresherQuestion ?? "";
-      const answer = body.learnerInput ?? "";
-      if (!question || !answer) {
-        return jsonResponse({ error: "context.refresherQuestion and learnerInput are required" }, 400);
-      }
-
-      const userPrompt = buildRefresherFeedbackPrompt(
-        question,
-        answer,
-        topic.title,
-        subject?.name ?? "General",
-        learner.grade,
-        body.level ?? "revising",
-        lang,
-      );
-
-      try {
-        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 512);
-        const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
-        const feedback = JSON.parse(cleaned);
-
-        await supabase.from("study_sessions").insert({
-          learner_id: learner.id,
-          topic_id: topic.id,
-          phase: "refresher-feedback",
-          learner_input: answer,
-          ai_response: feedback.feedback ?? "",
-          completed_at: new Date().toISOString(),
-        });
-
-        return jsonResponse({ feedback, tokensUsed: result.tokensUsed });
-      } catch (err) {
-        if (err instanceof ClaudeTimeoutError) {
-          console.error("Anthropic request timed out:", err);
-          return jsonResponse({ error: "AI generation timed out. Please try again." }, 500);
-        }
-        console.error("generate-study-guide (refresher-feedback) error:", err);
-        return jsonResponse({ error: "Failed to generate feedback" }, 500);
-      }
     }
 
     const userPrompt = buildUserPrompt(
