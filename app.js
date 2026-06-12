@@ -117,6 +117,46 @@ const translations = {
     errorStudyGuideGeneration: "Unable to generate study guide. Please try again.",
     enterTopicFirst: "Please enter a topic first.",
 
+    tabExamRefresher: "Exam Refresher",
+    refresherSetupHeading: "Set up your refresher",
+    selectTopicsLabel: "Select topics to revise",
+    noTopicsForSubject: "No topics yet for this subject. Add topics from the Learn tab first.",
+    sessionLengthLabel: "Session length",
+    min20: "20 min",
+    min30: "30 min",
+    min40: "40 min",
+    prepLevelLabel: "How are you feeling?",
+    levelConfidentLabel: "Confident",
+    levelConfidentDesc: "Light revision, focus on exam technique",
+    levelRevisingLabel: "Revising",
+    levelRevisingDesc: "Moderate recap + practice questions",
+    levelRescueLabel: "Rescue Me",
+    levelRescueDesc: "Start from scratch, full prep",
+    btnStartRefresher: "Start Refresher",
+    selectAtLeastOneTopic: "Please select at least one topic.",
+    btnPause: "Pause",
+    btnResume: "Resume",
+    btnEndSession: "End Session",
+    summaryLabel: "Summary",
+    definitionsLabel: "Key Definitions",
+    workedExampleLabel: "Worked Example",
+    practiceQuestionsLabel: "Practice Questions",
+    marksLabel: "marks",
+    sessionCompleteHeading: "Session Complete!",
+    timeUsedLabel: "Time used",
+    topicsCoveredLabel: "Topics covered",
+    questionsAttemptedLabel: "Questions attempted",
+    questionsCorrectLabel: "Correct answers",
+    btnTryAgain: "Try Again",
+    btnBackToStudy: "Back to Study",
+    motivationHigh: "Excellent work! You're well prepared for this exam.",
+    motivationMedium: "Good effort! A bit more practice and you'll be ready.",
+    motivationLow: "Keep going! Review these topics again before your exam.",
+    correctLabel: "Correct!",
+    incorrectLabel: "Not quite",
+    generatingRefresher: "Building your refresher...",
+    errorRefresherGeneration: "Unable to generate refresher content. Please try again.",
+
     examsHeading: "Mock Exams",
     yourDiagnosticLevel: "Your diagnostic level",
     selectSubjectLabel: "Subject",
@@ -270,6 +310,46 @@ const translations = {
     errorStudyGuideGeneration: "Kon nie studiegids genereer nie. Probeer asseblief weer.",
     enterTopicFirst: "Voer asseblief eers 'n onderwerp in.",
 
+    tabExamRefresher: "Eksamenopfrissing",
+    refresherSetupHeading: "Stel jou opfrissing op",
+    selectTopicsLabel: "Kies onderwerpe om te hersien",
+    noTopicsForSubject: "Nog geen onderwerpe vir hierdie vak nie. Voeg eers onderwerpe by in die Leer-oortjie.",
+    sessionLengthLabel: "Sessielengte",
+    min20: "20 min",
+    min30: "30 min",
+    min40: "40 min",
+    prepLevelLabel: "Hoe voel jy?",
+    levelConfidentLabel: "Gereed",
+    levelConfidentDesc: "Ligte hersiening, fokus op eksamentegniek",
+    levelRevisingLabel: "Hersien",
+    levelRevisingDesc: "Matige opsomming + oefeningsvrae",
+    levelRescueLabel: "Red My",
+    levelRescueDesc: "Volledige voorbereiding, basics tot eksamengereed",
+    btnStartRefresher: "Begin Opfrissing",
+    selectAtLeastOneTopic: "Kies asseblief minstens een onderwerp.",
+    btnPause: "Pouseer",
+    btnResume: "Hervat",
+    btnEndSession: "Beëindig Sessie",
+    summaryLabel: "Opsomming",
+    definitionsLabel: "Sleuteldefinisies",
+    workedExampleLabel: "Uitgewerkte Voorbeeld",
+    practiceQuestionsLabel: "Oefeningsvrae",
+    marksLabel: "punte",
+    sessionCompleteHeading: "Sessie Voltooi!",
+    timeUsedLabel: "Tyd gebruik",
+    topicsCoveredLabel: "Onderwerpe gedek",
+    questionsAttemptedLabel: "Vrae probeer",
+    questionsCorrectLabel: "Korrekte antwoorde",
+    btnTryAgain: "Probeer Weer",
+    btnBackToStudy: "Terug na Studeer",
+    motivationHigh: "Uitstekende werk! Jy is goed voorbereid vir hierdie eksamen.",
+    motivationMedium: "Goeie poging! 'n Bietjie meer oefening en jy sal gereed wees.",
+    motivationLow: "Hou aan! Hersien hierdie onderwerpe weer voor jou eksamen.",
+    correctLabel: "Korrek!",
+    incorrectLabel: "Nie heeltemal nie",
+    generatingRefresher: "Bou jou opfrissing...",
+    errorRefresherGeneration: "Kon nie opfrissinginhoud genereer nie. Probeer asseblief weer.",
+
     examsHeading: "Toetseksamens",
     yourDiagnosticLevel: "Jou diagnostiese vlak",
     selectSubjectLabel: "Vak",
@@ -372,6 +452,19 @@ const state = {
     answer: "",
     saving: false,
     saved: false,
+  },
+  refresher: {
+    step: "setup",
+    subjectId: null,
+    selectedTopics: [],
+    duration: 20,
+    level: "confident",
+    loading: false,
+    error: null,
+    sections: null,
+    totalSeconds: 0,
+    remainingSeconds: 0,
+    paused: false,
   },
 };
 
@@ -1759,9 +1852,10 @@ function renderExamsTab() {
     <div class="exams-toggle">
       <button class="exams-toggle-btn ${view === "studyguide" ? "active" : ""}" data-action="exams-switch-view" data-view="studyguide">${t("tabStudyGuide")}</button>
       <button class="exams-toggle-btn ${view === "mockexam" ? "active" : ""}" data-action="exams-switch-view" data-view="mockexam">${t("tabMockExam")}</button>
+      <button class="exams-toggle-btn ${view === "refresher" ? "active" : ""}" data-action="exams-switch-view" data-view="refresher">${t("tabExamRefresher")}</button>
     </div>
 
-    ${view === "studyguide" ? renderStudyGuideSection() : renderMockExamSection()}
+    ${view === "studyguide" ? renderStudyGuideSection() : view === "mockexam" ? renderMockExamSection() : renderRefresherSection()}
   `;
 }
 
@@ -1938,6 +2032,434 @@ async function saveStudyGuide() {
     sg.saving = false;
     render();
   }
+}
+
+// ---------------------------------------------------------------------
+// EXAM REFRESHER
+// ---------------------------------------------------------------------
+let refresherTimerId = null;
+
+function renderRefresherSection() {
+  const r = state.refresher;
+  if (r.step === "active") return renderRefresherActive();
+  if (r.step === "complete") return renderRefresherComplete();
+  return renderRefresherSetup();
+}
+
+const REFRESHER_LEVELS = [
+  { level: "confident", emoji: "💪", labelKey: "levelConfidentLabel", descKey: "levelConfidentDesc" },
+  { level: "revising", emoji: "📖", labelKey: "levelRevisingLabel", descKey: "levelRevisingDesc" },
+  { level: "rescue", emoji: "🆘", labelKey: "levelRescueLabel", descKey: "levelRescueDesc" },
+];
+
+function renderRefresherSetup() {
+  const r = state.refresher;
+  const subjectId = r.subjectId || (state.subjects[0] && state.subjects[0].id) || null;
+  const topicsForSubject = state.topics.filter((tp) => tp.subject_id === subjectId);
+
+  return `
+    <div class="card">
+      <h3 class="mt-0 screen-title">${t("refresherSetupHeading")}</h3>
+
+      <div class="field">
+        <label>${t("selectSubjectLabel")}</label>
+        <select id="refresher-subject" data-action="refresher-subject-select">
+          ${state.subjects.map((s) => `<option value="${s.id}" ${s.id === subjectId ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}
+        </select>
+      </div>
+
+      <div class="field">
+        <label>${t("selectTopicsLabel")}</label>
+        ${
+          topicsForSubject.length === 0
+            ? `<p class="muted">${t("noTopicsForSubject")}</p>`
+            : `<div class="chip-row">
+                ${topicsForSubject
+                  .map(
+                    (tp) => `<button type="button" class="topic-chip ${r.selectedTopics.includes(tp.id) ? "selected" : ""}" data-action="refresher-toggle-topic" data-topic-id="${tp.id}">${escapeHtml(tp.title)}</button>`,
+                  )
+                  .join("")}
+              </div>`
+        }
+      </div>
+
+      <div class="field">
+        <label>${t("sessionLengthLabel")}</label>
+        <div class="pill-row">
+          ${[20, 30, 40]
+            .map(
+              (d) => `<button type="button" class="pill-btn ${r.duration === d ? "selected" : ""}" data-action="refresher-set-duration" data-duration="${d}">${t(`min${d}`)}</button>`,
+            )
+            .join("")}
+        </div>
+      </div>
+
+      <div class="field">
+        <label>${t("prepLevelLabel")}</label>
+        <div class="level-card-list">
+          ${REFRESHER_LEVELS.map((lvl) => renderRefresherLevelCard(lvl)).join("")}
+        </div>
+      </div>
+
+      ${r.error ? `<p style="color:var(--danger);">${escapeHtml(r.error)}</p>` : ""}
+
+      <button class="btn btn-gold btn-block" data-action="refresher-start" ${r.loading ? "disabled" : ""}>
+        ${r.loading ? `<span class="spinner"></span> ${t("generatingRefresher")}` : t("btnStartRefresher")}
+      </button>
+    </div>
+  `;
+}
+
+function renderRefresherLevelCard(lvl) {
+  const r = state.refresher;
+  return `
+    <div class="level-card ${r.level === lvl.level ? "selected" : ""}" data-action="refresher-set-level" data-level="${lvl.level}">
+      <div class="level-card-emoji">${lvl.emoji}</div>
+      <div class="level-card-label">${t(lvl.labelKey)}</div>
+      <div class="level-card-desc">${t(lvl.descKey)}</div>
+    </div>
+  `;
+}
+
+function refresherSubjectChange(subjectId) {
+  const r = state.refresher;
+  r.subjectId = subjectId;
+  r.selectedTopics = [];
+  render();
+}
+
+function refresherToggleTopic(topicId) {
+  const r = state.refresher;
+  const idx = r.selectedTopics.indexOf(topicId);
+  if (idx === -1) r.selectedTopics.push(topicId);
+  else r.selectedTopics.splice(idx, 1);
+  render();
+}
+
+function refresherSetDuration(duration) {
+  state.refresher.duration = duration;
+  render();
+}
+
+function refresherSetLevel(level) {
+  state.refresher.level = level;
+  render();
+}
+
+async function refresherStart() {
+  const r = state.refresher;
+  if (!r.selectedTopics.length) {
+    showToast(t("selectAtLeastOneTopic"), "error");
+    return;
+  }
+
+  const subjectSelect = document.getElementById("refresher-subject");
+  r.subjectId = (subjectSelect && subjectSelect.value) || r.subjectId || (state.subjects[0] && state.subjects[0].id);
+  r.loading = true;
+  r.error = null;
+  render();
+
+  try {
+    const data = await callStudyGuideApi({
+      phase: "refresher",
+      subjectId: r.subjectId,
+      topics: r.selectedTopics,
+      level: r.level,
+      duration: r.duration,
+    });
+
+    const topicMap = Object.fromEntries(state.topics.map((tp) => [tp.id, tp.title]));
+    const sections = (data.refresher?.sections || []).map((sec) => ({
+      topicId: sec.topicId,
+      topicTitle: sec.topicTitle || topicMap[sec.topicId] || "",
+      summary: Array.isArray(sec.summary) ? sec.summary : [],
+      definitions: Array.isArray(sec.definitions) ? sec.definitions : [],
+      workedExample: sec.workedExample || "",
+      questions: (Array.isArray(sec.questions) ? sec.questions : []).map((q) => ({
+        question: q.question || "",
+        marks: q.marks || null,
+        answer: "",
+        submitted: false,
+        loading: false,
+        feedback: null,
+      })),
+      expanded: true,
+    }));
+
+    if (!sections.length) {
+      r.error = t("errorRefresherGeneration");
+      r.loading = false;
+      render();
+      return;
+    }
+
+    r.sections = sections;
+    r.totalSeconds = r.duration * 60;
+    r.remainingSeconds = r.totalSeconds;
+    r.paused = false;
+    r.step = "active";
+    r.loading = false;
+    render();
+    startRefresherTimer();
+  } catch (err) {
+    r.error = err && err.name === "AbortError" ? t("errorRetryContent") : (err && err.message) || t("errorRefresherGeneration");
+    r.loading = false;
+    render();
+  }
+}
+
+function startRefresherTimer() {
+  stopRefresherTimer();
+  refresherTimerId = setInterval(() => {
+    const r = state.refresher;
+    if (r.paused) return;
+    r.remainingSeconds = Math.max(0, r.remainingSeconds - 1);
+    updateRefresherTimerDisplay();
+    if (r.remainingSeconds <= 0) {
+      refresherEndSession();
+    }
+  }, 1000);
+}
+
+function stopRefresherTimer() {
+  if (refresherTimerId) {
+    clearInterval(refresherTimerId);
+    refresherTimerId = null;
+  }
+}
+
+function updateRefresherTimerDisplay() {
+  const r = state.refresher;
+  const timerEl = document.getElementById("refresher-timer");
+  const fillEl = document.getElementById("refresher-progress-fill");
+  if (timerEl) {
+    timerEl.textContent = formatTimer(r.remainingSeconds);
+    timerEl.classList.toggle("timer-danger", r.remainingSeconds <= 300);
+  }
+  if (fillEl) {
+    const pct = r.totalSeconds > 0 ? Math.min(100, ((r.totalSeconds - r.remainingSeconds) / r.totalSeconds) * 100) : 0;
+    fillEl.style.width = `${pct}%`;
+  }
+}
+
+function formatTimer(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function refresherTogglePause() {
+  state.refresher.paused = !state.refresher.paused;
+  render();
+}
+
+function refresherEndSession() {
+  stopRefresherTimer();
+  state.refresher.step = "complete";
+  render();
+}
+
+function refresherToggleSection(index) {
+  const r = state.refresher;
+  if (!r.sections || !r.sections[index]) return;
+  r.sections[index].expanded = !r.sections[index].expanded;
+  render();
+}
+
+async function refresherSubmitAnswer(sectionIndex, questionIndex) {
+  const r = state.refresher;
+  const section = r.sections && r.sections[sectionIndex];
+  const question = section && section.questions[questionIndex];
+  if (!section || !question) return;
+
+  const textarea = document.getElementById(`refresher-answer-${sectionIndex}-${questionIndex}`);
+  const answer = textarea ? textarea.value.trim() : "";
+  if (!answer) {
+    showToast(t("yourAnswerLabel"), "error");
+    return;
+  }
+
+  question.answer = answer;
+  question.loading = true;
+  render();
+
+  try {
+    const data = await callStudyGuideApi({
+      phase: "refresher-feedback",
+      topicId: section.topicId,
+      learnerInput: answer,
+      level: r.level,
+      context: { refresherQuestion: question.question },
+    });
+
+    question.feedback = data.feedback || { correct: false, feedback: "" };
+    question.submitted = true;
+  } catch (err) {
+    question.feedback = { correct: false, feedback: (err && err.message) || t("errorRetryContent") };
+    question.submitted = true;
+  } finally {
+    question.loading = false;
+    render();
+  }
+}
+
+function refresherTryAgain() {
+  stopRefresherTimer();
+  const r = state.refresher;
+  r.step = "setup";
+  r.sections = null;
+  r.error = null;
+  r.paused = false;
+  r.totalSeconds = 0;
+  r.remainingSeconds = 0;
+  render();
+}
+
+function refresherBackToStudy() {
+  stopRefresherTimer();
+  const r = state.refresher;
+  r.step = "setup";
+  r.sections = null;
+  r.selectedTopics = [];
+  r.error = null;
+  r.paused = false;
+  r.totalSeconds = 0;
+  r.remainingSeconds = 0;
+  state.examsView = "studyguide";
+  render();
+}
+
+function renderRefresherActive() {
+  const r = state.refresher;
+  const pct = r.totalSeconds > 0 ? Math.min(100, ((r.totalSeconds - r.remainingSeconds) / r.totalSeconds) * 100) : 0;
+
+  return `
+    <div class="card">
+      <div class="refresher-timer-row">
+        <h3 class="mt-0 screen-title">${t("tabExamRefresher")}</h3>
+        <span id="refresher-timer" class="refresher-timer ${r.remainingSeconds <= 300 ? "timer-danger" : ""}">${formatTimer(r.remainingSeconds)}</span>
+      </div>
+      <div class="progress-bar">
+        <div id="refresher-progress-fill" class="progress-bar-fill progress-bar-fill-purple" style="width:${pct}%;"></div>
+      </div>
+      <button class="btn btn-outline btn-block" data-action="refresher-toggle-pause">${r.paused ? t("btnResume") : t("btnPause")}</button>
+    </div>
+
+    ${(r.sections || []).map((sec, i) => renderRefresherSectionCard(sec, i)).join("")}
+
+    <button class="btn btn-gold btn-block" data-action="refresher-end-session">${t("btnEndSession")}</button>
+  `;
+}
+
+function renderRefresherSectionCard(section, index) {
+  return `
+    <div class="card refresher-section-card">
+      <button type="button" class="refresher-section-header" data-action="refresher-toggle-section" data-index="${index}">
+        <span>${escapeHtml(section.topicTitle)}</span>
+        <span class="refresher-section-chevron">${section.expanded ? "▾" : "▸"}</span>
+      </button>
+      ${section.expanded ? renderRefresherSectionBody(section, index) : ""}
+    </div>
+  `;
+}
+
+function renderRefresherSectionBody(section, index) {
+  return `
+    <div class="refresher-section-body">
+      ${
+        section.summary.length
+          ? `<div class="section-title">${t("summaryLabel")}</div>
+             <ul class="study-guide-list">${section.summary.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ul>`
+          : ""
+      }
+      ${
+        section.definitions.length
+          ? `<div class="section-title">${t("definitionsLabel")}</div>
+             <ul class="study-guide-list">${section.definitions.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`
+          : ""
+      }
+      ${
+        section.workedExample
+          ? `<div class="section-title">${t("workedExampleLabel")}</div>
+             <div class="ai-bubble">${escapeHtml(section.workedExample)}</div>`
+          : ""
+      }
+      ${
+        section.questions.length
+          ? `<div class="section-title">${t("practiceQuestionsLabel")}</div>
+             ${section.questions.map((q, qi) => renderRefresherQuestion(q, index, qi)).join("")}`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderRefresherQuestion(question, sectionIndex, questionIndex) {
+  const marks = question.marks ? ` (${question.marks} ${t("marksLabel")})` : "";
+  return `
+    <div class="refresher-question">
+      <div class="ai-bubble">${escapeHtml(question.question)}${escapeHtml(marks)}</div>
+      ${
+        question.submitted
+          ? ""
+          : `<div class="chat-answer-box">
+               <textarea id="refresher-answer-${sectionIndex}-${questionIndex}" rows="3" placeholder="${t("yourAnswerLabel")}">${escapeHtml(question.answer || "")}</textarea>
+               <button class="btn btn-primary btn-block" data-action="refresher-submit-answer" data-section-index="${sectionIndex}" data-question-index="${questionIndex}" ${question.loading ? "disabled" : ""}>
+                 ${question.loading ? `<span class="spinner"></span> ${t("generating")}` : t("btnSubmitAnswer")}
+               </button>
+             </div>`
+      }
+      ${
+        question.feedback
+          ? `<div class="refresher-feedback ${question.feedback.correct ? "feedback-correct" : "feedback-incorrect"}">
+               <strong>${question.feedback.correct ? t("correctLabel") : t("incorrectLabel")}</strong>
+               <p>${escapeHtml(question.feedback.feedback || "")}</p>
+             </div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderRefresherComplete() {
+  const r = state.refresher;
+  const sections = r.sections || [];
+  const allQuestions = sections.flatMap((s) => s.questions);
+  const attempted = allQuestions.filter((q) => q.submitted).length;
+  const correct = allQuestions.filter((q) => q.submitted && q.feedback && q.feedback.correct).length;
+  const timeUsed = Math.max(0, r.totalSeconds - r.remainingSeconds);
+
+  let motivationKey = "motivationLow";
+  if (attempted > 0) {
+    const ratio = correct / attempted;
+    if (ratio >= 0.7) motivationKey = "motivationHigh";
+    else if (ratio >= 0.4) motivationKey = "motivationMedium";
+  }
+
+  return `
+    <div class="card text-center">
+      <h3 class="mt-0 screen-title">${t("sessionCompleteHeading")}</h3>
+      <div class="refresher-stat-row">
+        <span>${t("timeUsedLabel")}</span>
+        <strong>${formatTimer(timeUsed)}</strong>
+      </div>
+      <div class="refresher-stat-row">
+        <span>${t("topicsCoveredLabel")}</span>
+        <strong>${sections.length}</strong>
+      </div>
+      <div class="refresher-stat-row">
+        <span>${t("questionsAttemptedLabel")}</span>
+        <strong>${attempted} / ${allQuestions.length}</strong>
+      </div>
+      <div class="refresher-stat-row">
+        <span>${t("questionsCorrectLabel")}</span>
+        <strong>${correct} / ${attempted}</strong>
+      </div>
+      <p class="muted">${t(motivationKey)}</p>
+      <button class="btn btn-outline btn-block" data-action="refresher-try-again">${t("btnTryAgain")}</button>
+      <button class="btn btn-gold btn-block" style="margin-top:10px;" data-action="refresher-back-to-study">${t("btnBackToStudy")}</button>
+    </div>
+  `;
 }
 
 async function startMockExam() {
@@ -2513,6 +3035,36 @@ function attachGlobalListeners() {
       case "save-study-guide":
         saveStudyGuide();
         break;
+      case "refresher-toggle-topic":
+        refresherToggleTopic(target.dataset.topicId);
+        break;
+      case "refresher-set-duration":
+        refresherSetDuration(parseInt(target.dataset.duration, 10));
+        break;
+      case "refresher-set-level":
+        refresherSetLevel(target.dataset.level);
+        break;
+      case "refresher-start":
+        refresherStart();
+        break;
+      case "refresher-toggle-pause":
+        refresherTogglePause();
+        break;
+      case "refresher-end-session":
+        refresherEndSession();
+        break;
+      case "refresher-toggle-section":
+        refresherToggleSection(parseInt(target.dataset.index, 10));
+        break;
+      case "refresher-submit-answer":
+        refresherSubmitAnswer(parseInt(target.dataset.sectionIndex, 10), parseInt(target.dataset.questionIndex, 10));
+        break;
+      case "refresher-try-again":
+        refresherTryAgain();
+        break;
+      case "refresher-back-to-study":
+        refresherBackToStudy();
+        break;
       case "start-exam":
         startMockExam();
         break;
@@ -2566,6 +3118,20 @@ function attachGlobalListeners() {
         break;
       case "link-learner-form":
         handleLinkLearner(form);
+        break;
+      default:
+        break;
+    }
+  });
+
+  document.body.addEventListener("change", (e) => {
+    const target = e.target.closest("[data-action]");
+    if (!target) return;
+    const action = target.dataset.action;
+
+    switch (action) {
+      case "refresher-subject-select":
+        refresherSubjectChange(target.value);
         break;
       default:
         break;

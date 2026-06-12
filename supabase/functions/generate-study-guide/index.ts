@@ -1,7 +1,8 @@
 // Supabase Edge Function: generate-study-guide
 // POST { topicId, phase, learnerInput?, context? }
 //   phase: 'explain' | 'example' | 'attempt' | 'feedback' | 'chat' | 'studyguide'
-//   context: { explainText?, exampleText?, attemptQuestion?, history? }
+//          | 'refresher' | 'refresher-feedback'
+//   context: { explainText?, exampleText?, attemptQuestion?, history?, refresherQuestion? }
 //
 // 'chat'       - free-form follow-up question within an existing topic chat.
 //                 Requires topicId. context.history is the recent
@@ -12,6 +13,20 @@
 //                 Requires subjectId + topicTitle instead of topicId.
 //                 Returns: { studyGuide: { topicTitle, keyConcepts, example,
 //                 selfCheckQuestion }, tokensUsed }
+//
+// 'refresher'  - Exam Refresher session content for the Study tab.
+//                 Requires subjectId + topics (array of topic ids owned by
+//                 the learner) + level ('confident'|'revising'|'rescue') +
+//                 duration (20|30|40 minutes) instead of topicId.
+//                 Returns: { refresher: { sections: [{ topicId, topicTitle,
+//                 summary, definitions, workedExample, questions }] },
+//                 tokensUsed }
+//
+// 'refresher-feedback' - instant feedback on one Exam Refresher practice
+//                 question. Requires topicId + learnerInput (the learner's
+//                 answer) + context.refresherQuestion (the question text).
+//                 Returns: { feedback: { correct: boolean, feedback: string },
+//                 tokensUsed }
 //
 // All other phases return: { response: string, phase: string, tokensUsed: number }
 //
@@ -51,12 +66,15 @@ Rules:
 - Adjust difficulty to the learner's diagnostic level (1 = needs lots of
   support and basics, 5 = ready for advanced, exam-style challenge).`;
 
-type Phase = "explain" | "example" | "attempt" | "feedback" | "chat" | "studyguide";
+type Phase = "explain" | "example" | "attempt" | "feedback" | "chat" | "studyguide" | "refresher" | "refresher-feedback";
 
 interface RequestBody {
   topicId?: string;
   subjectId?: string;
   topicTitle?: string;
+  topics?: string[];
+  level?: "confident" | "revising" | "rescue";
+  duration?: number;
   phase: Phase;
   learnerInput?: string;
   previousResponse?: string;
@@ -65,6 +83,7 @@ interface RequestBody {
     exampleText?: string;
     attemptQuestion?: string;
     history?: { role: "ai" | "learner"; text: string }[];
+    refresherQuestion?: string;
   };
 }
 
@@ -168,6 +187,89 @@ function buildStudyGuidePrompt(
   );
 }
 
+// Exam Refresher: per-preparation-level depth and practice-question counts.
+const REFRESHER_LEVEL_INFO: Record<string, { questionCount: number; depth: string }> = {
+  confident: {
+    questionCount: 3,
+    depth:
+      `Provide a short bulleted summary (3-5 bullets) of only the most important ` +
+      `points - the learner mainly needs a quick recall refresher and exam ` +
+      `technique tips. Leave "definitions" as an empty array and "workedExample" ` +
+      `as an empty string.`,
+  },
+  revising: {
+    questionCount: 5,
+    depth:
+      `Provide a fuller summary (5-7 bullets) covering the topic, plus a ` +
+      `"definitions" array of 3-5 key terms each formatted as "Term: short ` +
+      `definition". Leave "workedExample" as an empty string.`,
+  },
+  rescue: {
+    questionCount: 7,
+    depth:
+      `Provide a thorough summary that explains the topic from the basics ` +
+      `(6-10 bullets), a "definitions" array of 4-6 key terms each formatted as ` +
+      `"Term: short definition", and a "workedExample" (one fully worked ` +
+      `example, 150-250 words, structured as problem -> working -> answer).`,
+  },
+};
+
+function buildRefresherPrompt(
+  topics: { id: string; title: string }[],
+  level: "confident" | "revising" | "rescue",
+  duration: number,
+  subjectName: string,
+  grade: number,
+  learnerLevel: number,
+  lang: string,
+): string {
+  const langLine = lang === "af" ? "Respond in Afrikaans." : "Respond in English.";
+  const levelText = learnerLevel > 0 ? `${learnerLevel}/5` : "1/5 (not yet diagnosed, assume a beginner)";
+  const info = REFRESHER_LEVEL_INFO[level] ?? REFRESHER_LEVEL_INFO.revising;
+  const topicList = topics.map((tp) => `- "${tp.title}" (topicId: ${tp.id})`).join("\n");
+
+  return (
+    `Subject: ${subjectName} | Grade: ${grade} | Learner level: ${levelText}\n${langLine}\n\n` +
+    `The learner is doing a ${duration}-minute Exam Refresher session at ` +
+    `preparation level "${level}". ${info.depth}\n\n` +
+    `Create refresher content for EACH of the following topics:\n${topicList}\n\n` +
+    `For each topic, also write exactly ${info.questionCount} original, ` +
+    `exam-style practice questions appropriate for Grade ${grade} CAPS, each ` +
+    `with a mark allocation (e.g. 2-4 marks), increasing roughly in difficulty. ` +
+    `Never reproduce copyrighted exam content - create original questions only.\n\n` +
+    `Respond with ONLY a raw JSON object (no markdown, no code fences, no extra ` +
+    `text) with exactly this shape:\n` +
+    `{"sections": [{"topicId": string, "topicTitle": string, "summary": string[], ` +
+    `"definitions": string[], "workedExample": string, "questions": [{"question": ` +
+    `string, "marks": number}]}]}\n` +
+    `Use the exact topicId values given above, and return one section per topic ` +
+    `in the same order.`
+  );
+}
+
+function buildRefresherFeedbackPrompt(
+  question: string,
+  answer: string,
+  topicTitle: string,
+  subjectName: string,
+  grade: number,
+  level: string,
+  lang: string,
+): string {
+  const langLine = lang === "af" ? "Respond in Afrikaans." : "Respond in English.";
+  return (
+    `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | ` +
+    `Exam Refresher preparation level: ${level}\n${langLine}\n\n` +
+    `The exam-refresher practice question was: """${question}"""\n` +
+    `The learner's answer was: """${answer}"""\n\n` +
+    `Evaluate the learner's answer. Respond with ONLY a raw JSON object (no ` +
+    `markdown, no code fences, no extra text) with exactly these keys:\n` +
+    `{"correct": boolean (true if the answer is substantially correct), ` +
+    `"feedback": string (2-4 encouraging sentences explaining what was right or ` +
+    `wrong, and the correct approach/answer if needed)}`
+  );
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -187,10 +289,10 @@ Deno.serve(async (req: Request) => {
     if (!body.phase) {
       return jsonResponse({ error: "phase is required" }, 400);
     }
-    if (!["explain", "example", "attempt", "feedback", "chat", "studyguide"].includes(body.phase)) {
+    if (!["explain", "example", "attempt", "feedback", "chat", "studyguide", "refresher", "refresher-feedback"].includes(body.phase)) {
       return jsonResponse({ error: "invalid phase" }, 400);
     }
-    if (body.phase !== "studyguide" && !body.topicId) {
+    if (!["studyguide", "refresher"].includes(body.phase) && !body.topicId) {
       return jsonResponse({ error: "topicId is required" }, 400);
     }
 
@@ -250,6 +352,58 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Standalone Exam Refresher generation (Study tab) - no single topic
+    // record needed, but the selected topics must belong to the learner.
+    if (body.phase === "refresher") {
+      if (
+        !body.subjectId ||
+        !Array.isArray(body.topics) ||
+        body.topics.length === 0 ||
+        !body.level ||
+        !body.duration
+      ) {
+        return jsonResponse({ error: "subjectId, topics, level and duration are required" }, 400);
+      }
+      if (!["confident", "revising", "rescue"].includes(body.level)) {
+        return jsonResponse({ error: "invalid level" }, 400);
+      }
+
+      const [{ data: subject }, { data: topicRows }] = await Promise.all([
+        supabase.from("subjects").select("name").eq("id", body.subjectId).single(),
+        supabase.from("topics").select("id, title").eq("learner_id", learner.id).in("id", body.topics),
+      ]);
+
+      if (!topicRows || topicRows.length === 0) {
+        return jsonResponse({ error: "No matching topics found" }, 404);
+      }
+
+      const userPrompt = buildRefresherPrompt(
+        topicRows,
+        body.level,
+        body.duration,
+        subject?.name ?? "General",
+        learner.grade,
+        learner.diagnostic_level ?? 0,
+        lang,
+      );
+
+      const maxTokens = Math.min(8192, 1024 + topicRows.length * 1200);
+
+      try {
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, maxTokens);
+        const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+        const refresher = JSON.parse(cleaned);
+        return jsonResponse({ refresher, tokensUsed: result.tokensUsed });
+      } catch (err) {
+        if (err instanceof ClaudeTimeoutError) {
+          console.error("Anthropic request timed out:", err);
+          return jsonResponse({ error: "AI generation timed out. Please try again." }, 500);
+        }
+        console.error("generate-study-guide (refresher) error:", err);
+        return jsonResponse({ error: "Failed to generate refresher" }, 500);
+      }
+    }
+
     const { data: topic, error: topicErr } = await supabase
       .from("topics")
       .select("id, title, subject_id, learner_id")
@@ -296,9 +450,9 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Child-safety screen on learner-submitted text (attempt answers / feedback / chat)
+    // Child-safety screen on learner-submitted text (attempt answers / feedback / chat / refresher feedback)
     if (
-      (body.phase === "feedback" || body.phase === "attempt" || body.phase === "chat") &&
+      (body.phase === "feedback" || body.phase === "attempt" || body.phase === "chat" || body.phase === "refresher-feedback") &&
       containsCrisisLanguage(body.learnerInput)
     ) {
       const safeResponse = SADAG_CRISIS_MESSAGE[lang as "en" | "af"] ?? SADAG_CRISIS_MESSAGE.en;
@@ -320,7 +474,54 @@ Deno.serve(async (req: Request) => {
           "struggling emotionally. Please check in with them.",
       });
 
+      if (body.phase === "refresher-feedback") {
+        return jsonResponse({ feedback: { correct: false, feedback: safeResponse }, tokensUsed: 0, safety_flag: true });
+      }
       return jsonResponse({ response: safeResponse, phase: body.phase, tokensUsed: 0, safety_flag: true });
+    }
+
+    // Exam Refresher per-question feedback - returns structured JSON
+    // ({ correct, feedback }) rather than free-form text.
+    if (body.phase === "refresher-feedback") {
+      const question = body.context?.refresherQuestion ?? "";
+      const answer = body.learnerInput ?? "";
+      if (!question || !answer) {
+        return jsonResponse({ error: "context.refresherQuestion and learnerInput are required" }, 400);
+      }
+
+      const userPrompt = buildRefresherFeedbackPrompt(
+        question,
+        answer,
+        topic.title,
+        subject?.name ?? "General",
+        learner.grade,
+        body.level ?? "revising",
+        lang,
+      );
+
+      try {
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 512);
+        const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+        const feedback = JSON.parse(cleaned);
+
+        await supabase.from("study_sessions").insert({
+          learner_id: learner.id,
+          topic_id: topic.id,
+          phase: "refresher-feedback",
+          learner_input: answer,
+          ai_response: feedback.feedback ?? "",
+          completed_at: new Date().toISOString(),
+        });
+
+        return jsonResponse({ feedback, tokensUsed: result.tokensUsed });
+      } catch (err) {
+        if (err instanceof ClaudeTimeoutError) {
+          console.error("Anthropic request timed out:", err);
+          return jsonResponse({ error: "AI generation timed out. Please try again." }, 500);
+        }
+        console.error("generate-study-guide (refresher-feedback) error:", err);
+        return jsonResponse({ error: "Failed to generate feedback" }, 500);
+      }
     }
 
     const userPrompt = buildUserPrompt(

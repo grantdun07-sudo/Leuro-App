@@ -854,11 +854,11 @@ h1, h2, h3, h4 {
   flex: 1;
   border: none;
   background: transparent;
-  padding: 10px;
+  padding: 10px 6px;
   border-radius: var(--radius-button);
   font-family: var(--font-inter);
   font-weight: 700;
-  font-size: var(--font-size-caption);
+  font-size: 12px;
   color: var(--text-muted);
   cursor: pointer;
 }
@@ -873,6 +873,181 @@ h1, h2, h3, h4 {
   padding-left: var(--spacing-20);
   font-size: var(--font-size-caption);
   line-height: 1.8;
+}
+
+/* ---------------------------------------------------------------------
+   Exam Refresher
+   --------------------------------------------------------------------- */
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-8);
+}
+
+.topic-chip {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-tag);
+  background: var(--white);
+  padding: 8px 16px;
+  font-family: var(--font-inter);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.topic-chip.selected {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--white);
+}
+
+.pill-row {
+  display: flex;
+  gap: var(--spacing-8);
+}
+
+.pill-btn {
+  flex: 1;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--white);
+  padding: 10px;
+  font-family: var(--font-inter);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.pill-btn.selected {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--white);
+}
+
+.level-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-12);
+}
+
+.level-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-12);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-12) var(--spacing-16);
+  cursor: pointer;
+}
+
+.level-card.selected {
+  border-color: var(--primary);
+  background: rgba(90,62,118,0.08);
+}
+
+.level-card-emoji {
+  font-size: 28px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.level-card-label {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.level-card-desc {
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.refresher-timer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-12);
+}
+
+.refresher-timer {
+  font-family: var(--font-inter);
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+.refresher-timer.timer-danger {
+  color: var(--danger);
+}
+
+.refresher-section-card {
+  padding: var(--spacing-16) var(--spacing-20);
+}
+
+.refresher-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: var(--font-inter);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.refresher-section-chevron {
+  color: var(--primary);
+  font-size: 18px;
+}
+
+.refresher-section-body {
+  margin-top: var(--spacing-16);
+}
+
+.refresher-question {
+  margin-bottom: var(--spacing-16);
+}
+
+.refresher-question .ai-bubble {
+  margin-bottom: var(--spacing-8);
+}
+
+.refresher-feedback {
+  margin-top: var(--spacing-8);
+  border-radius: var(--radius-image);
+  padding: var(--spacing-12) var(--spacing-16);
+  font-size: var(--font-size-caption);
+}
+.refresher-feedback p { margin: 4px 0 0; color: inherit; }
+
+.feedback-correct {
+  background: rgba(76,175,80,0.12);
+  border: 1.5px solid var(--success);
+  color: #2e6b30;
+}
+
+.feedback-incorrect {
+  background: rgba(217,83,79,0.1);
+  border: 1.5px solid var(--danger);
+  color: #8a3936;
+}
+
+.refresher-stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-8) 0;
+  border-bottom: 1px solid var(--border);
+}
+.refresher-stat-row:last-of-type {
+  border-bottom: none;
 }
 
 /* ---------------------------------------------------------------------
