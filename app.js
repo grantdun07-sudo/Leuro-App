@@ -2169,8 +2169,8 @@ async function sessionSubmitAnswer(index) {
     return;
   }
 
-  const ok = await checkContent(answer, "learn-attempt", state.learner.id);
-  if (!ok) return;
+  const safe = await checkContent(answer, "learn-attempt", state.learner?.id);
+  if (!safe) return;
 
   s.messages[index].answerBox = false;
   s.messages[index].answered = true;
@@ -2179,15 +2179,15 @@ async function sessionSubmitAnswer(index) {
 }
 
 async function sessionSendChat(form) {
-  const s = state.activeSession;
-  if (!s || s.loading || s.chatLoading || s.safetyFlag) return;
-
   const input = form.querySelector('[name="chatMessage"]');
   const text = input ? input.value.trim() : "";
   if (!text) return;
 
-  const ok = await checkContent(text, "learn-chat", state.learner.id);
-  if (!ok) return;
+  const safe = await checkContent(text, "learn-chat", state.learner?.id);
+  if (!safe) return;
+
+  const s = state.activeSession;
+  if (!s || s.loading || s.chatLoading || s.safetyFlag) return;
 
   input.value = "";
   s.messages.push({ role: "learner", phase: "chat", text });
@@ -2491,8 +2491,8 @@ async function generateStudyGuide() {
     return;
   }
 
-  const ok = await checkContent(topicTitle, "study-guide-topic", state.learner.id);
-  if (!ok) return;
+  const safe = await checkContent(topicTitle, "study-guide-topic", state.learner?.id);
+  if (!safe) return;
 
   const sg = state.studyGuide;
   sg.subjectId = subjectSelect.value;
@@ -2813,8 +2813,8 @@ async function refresherSubmitAnswer(sectionIndex, questionIndex) {
     return;
   }
 
-  const ok = await checkContent(answer, "refresher-answer", state.learner.id);
-  if (!ok) return;
+  const safe = await checkContent(answer, "refresher-answer", state.learner?.id);
+  if (!safe) return;
 
   question.answer = answer;
   question.loading = true;
@@ -3013,18 +3013,17 @@ async function startMockExam() {
   const topicsTextarea = document.getElementById("exam-topics");
   if (!subjectSelect || !difficultySelect) return;
 
+  const topicsText = topicsTextarea ? topicsTextarea.value : "";
+
+  const safe = await checkContent(topicsText, "mock-exam-topics", state.learner?.id);
+  if (!safe) return;
+
   const difficulty = difficultySelect.value;
   const term = state.mockExamSetup.term;
-  const topicsText = topicsTextarea ? topicsTextarea.value : "";
   const topics = topicsText
     .split(/[,\n]/)
     .map((s) => s.trim())
     .filter(Boolean);
-
-  if (topicsText.trim()) {
-    const ok = await checkContent(topicsText, "mock-exam-topics", state.learner.id);
-    if (!ok) return;
-  }
 
   const btn = document.querySelector('[data-action="start-exam"]');
   setButtonLoading(btn, true);
