@@ -75,7 +75,6 @@ const translations = {
 
     navLearn: "Learn",
     navStudy: "Study",
-    navParent: "Parent",
     navAccount: "Account",
     navHome: "Home",
 
@@ -201,20 +200,51 @@ const translations = {
     yourScore: "Your Score",
     btnDone: "Done",
 
-    parentHeading: "Parent Dashboard",
-    linkLearnerHeading: "Link a Learner",
-    linkLearnerPlaceholder: "Enter learner's referral code",
-    btnLink: "Link",
-    noLearners: "No learners linked yet. Ask your child for their referral code in the Account tab.",
-    topicsStudiedLabel: "Topics studied",
     sessionsCompletedLabel: "Sessions completed",
-    lastSessionLabel: "Last session",
-    diagnosticLevelLabel: "Diagnostic level",
-    alertsHeading: "Alerts",
-    noAlerts: "No alerts.",
     activityHeading: "Recent Activity",
-    noActivity: "No recent activity.",
     markRead: "Mark as read",
+
+    navActivity: "Activity",
+    navGoals: "Goals",
+
+    linkChildHeading: "Link Your Child",
+    linkChildIntro: "Enter your child's email address to connect their Leuro™ account to yours.",
+    linkChildEmailLabel: "Child's email",
+    linkChildPlaceholder: "child@example.com",
+    btnLinkChild: "Link Child",
+    btnSkipForNow: "Skip for now",
+    linkChildEmailNotFound: "No Leuro account found for that email. Ask your child to sign up first, then link them here.",
+    linkChildSuccess: "Child linked successfully!",
+    btnLinkAnotherChild: "Link another child",
+    linkedChildrenHeading: "Linked Children",
+    noChildrenLinked: "No children linked yet.",
+
+    allLookingGood: "All looking good — no alerts right now.",
+    alertsActiveBannerOne: "1 alert needs your attention",
+    alertsActiveBannerMany: "{n} alerts need your attention",
+    statSessionsWeek: "Sessions this week",
+    statLastActive: "Last active",
+
+    thisWeekHeading: "This Week",
+    topicsStudiedHeading: "Topics Studied",
+    mockExamsHeading: "Mock Exams",
+    noMockExams: "No mock exams yet.",
+    scoreLabel: "Score",
+    sessionsLabel: "Sessions",
+
+    goalsHeading: "Goals",
+    weeklySessionTargetLabel: "Weekly session target",
+    weeklySessionTargetHelp: "How many study sessions should {name} aim for each week?",
+    focusSubjectsLabel: "Focus subjects",
+    focusSubjectsHelp: "Suggest subjects for {name} to focus on this week.",
+    btnSaveGoals: "Save Goals",
+    goalsSaved: "Goals saved!",
+    goalsVisibleNote: "{name} will see these as suggested goals.",
+
+    notificationPrefsHeading: "Notification Preferences",
+    monthlyRecapLabel: "Monthly recap email",
+    immediateSafetyAlertsLabel: "Immediate safety alerts",
+    alwaysOnLabel: "Always on",
 
     accountHeading: "Account",
     currentPlan: "Current Plan",
@@ -254,8 +284,6 @@ const translations = {
     acknowledgeError: "This link is invalid or has expired. Please contact Leuro™ support.",
     btnGoToLeuro: "Go to leuroai.co.za",
 
-    linkSuccess: "Learner linked successfully!",
-    linkNotFound: "No learner found with that referral code.",
     upgradeTo: "Upgrade to",
     featureLearnOnly: "Learn section only",
     feature3Sessions: "3 study sessions per day",
@@ -311,7 +339,6 @@ const translations = {
 
     navLearn: "Leer",
     navStudy: "Studeer",
-    navParent: "Ouer",
     navAccount: "Rekening",
     navHome: "Tuis",
 
@@ -437,20 +464,51 @@ const translations = {
     yourScore: "Jou Punt",
     btnDone: "Klaar",
 
-    parentHeading: "Ouer-paneelbord",
-    linkLearnerHeading: "Skakel 'n Leerder",
-    linkLearnerPlaceholder: "Voer leerder se verwysingskode in",
-    btnLink: "Skakel",
-    noLearners: "Nog geen leerders geskakel nie. Vra jou kind vir hul verwysingskode in die Rekening-oortjie.",
-    topicsStudiedLabel: "Onderwerpe bestudeer",
     sessionsCompletedLabel: "Sessies voltooi",
-    lastSessionLabel: "Laaste sessie",
-    diagnosticLevelLabel: "Diagnostiese vlak",
-    alertsHeading: "Kennisgewings",
-    noAlerts: "Geen kennisgewings nie.",
     activityHeading: "Onlangse Aktiwiteit",
-    noActivity: "Geen onlangse aktiwiteit nie.",
     markRead: "Merk as gelees",
+
+    navActivity: "Aktiwiteit",
+    navGoals: "Doelwitte",
+
+    linkChildHeading: "Skakel Jou Kind",
+    linkChildIntro: "Voer jou kind se e-posadres in om hul Leuro™-rekening aan joune te koppel.",
+    linkChildEmailLabel: "Kind se e-pos",
+    linkChildPlaceholder: "kind@voorbeeld.com",
+    btnLinkChild: "Skakel Kind",
+    btnSkipForNow: "Slaan oor vir nou",
+    linkChildEmailNotFound: "Geen Leuro-rekening met daardie e-pos gevind nie. Vra jou kind om eers te registreer, en skakel hulle dan hier.",
+    linkChildSuccess: "Kind suksesvol geskakel!",
+    btnLinkAnotherChild: "Skakel nog 'n kind",
+    linkedChildrenHeading: "Geskakelde Kinders",
+    noChildrenLinked: "Nog geen kinders geskakel nie.",
+
+    allLookingGood: "Alles lyk goed — geen kennisgewings op die oomblik nie.",
+    alertsActiveBannerOne: "1 kennisgewing benodig jou aandag",
+    alertsActiveBannerMany: "{n} kennisgewings benodig jou aandag",
+    statSessionsWeek: "Sessies hierdie week",
+    statLastActive: "Laaste aktief",
+
+    thisWeekHeading: "Hierdie Week",
+    topicsStudiedHeading: "Onderwerpe Bestudeer",
+    mockExamsHeading: "Toetseksamens",
+    noMockExams: "Nog geen toetseksamens nie.",
+    scoreLabel: "Punt",
+    sessionsLabel: "Sessies",
+
+    goalsHeading: "Doelwitte",
+    weeklySessionTargetLabel: "Weeklikse sessiedoelwit",
+    weeklySessionTargetHelp: "Hoeveel studiesessies moet {name} elke week nastreef?",
+    focusSubjectsLabel: "Fokusvakke",
+    focusSubjectsHelp: "Stel vakke voor waarop {name} hierdie week kan fokus.",
+    btnSaveGoals: "Stoor Doelwitte",
+    goalsSaved: "Doelwitte gestoor!",
+    goalsVisibleNote: "{name} sal dit as voorgestelde doelwitte sien.",
+
+    notificationPrefsHeading: "Kennisgewingvoorkeure",
+    monthlyRecapLabel: "Maandelikse opsommingse-pos",
+    immediateSafetyAlertsLabel: "Onmiddellike veiligheidskennisgewings",
+    alwaysOnLabel: "Altyd aan",
 
     accountHeading: "Rekening",
     currentPlan: "Huidige Plan",
@@ -490,8 +548,6 @@ const translations = {
     acknowledgeError: "Hierdie skakel is ongeldig of het verval. Kontak asseblief Leuro™-ondersteuning.",
     btnGoToLeuro: "Gaan na leuroai.co.za",
 
-    linkSuccess: "Leerder suksesvol geskakel!",
-    linkNotFound: "Geen leerder met daardie verwysingskode gevind nie.",
     upgradeTo: "Gradeer op na",
     featureLearnOnly: "Slegs leer-afdeling",
     feature3Sessions: "3 studiesessies per dag",
@@ -516,6 +572,10 @@ const state = {
   learner: null,
   parent: null,
   linkedLearners: [],
+  selectedLearnerId: null,
+  showLinkChildScreen: false,
+  linkChildModalOpen: false,
+  goalsDraft: {},
   subjects: [],
   topics: [],
   exams: [],
@@ -1140,7 +1200,7 @@ async function loadUserData() {
 
     await Promise.all([loadSubjects(), loadTopics(), loadExams(), loadSessionsToday(), loadSavedGuides()]);
   } else if (profile.role === "parent") {
-    if (!["parent", "account"].includes(state.currentTab)) state.currentTab = "parent";
+    if (!["home", "activity", "goals", "account"].includes(state.currentTab)) state.currentTab = "home";
     await loadParentData();
   }
 }
@@ -1216,25 +1276,32 @@ async function loadParentData() {
   const learnerIds = parent.linked_learners || [];
   if (learnerIds.length === 0) {
     state.linkedLearners = [];
+    state.selectedLearnerId = null;
     return;
   }
 
-  const [{ data: learners }, { data: profiles }, { data: alerts }] = await Promise.all([
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const sevenDaysAgoIso = sevenDaysAgo.toISOString();
+
+  const [{ data: learners }, { data: profiles }, { data: alerts }, { data: allSubjects }] = await Promise.all([
     sbClient.from("learners").select("*").in("id", learnerIds),
-    sbClient.from("profiles").select("id, full_name, email"),
+    sbClient.from("profiles").select("id, full_name, email, subscription_tier"),
     sbClient
       .from("parent_alerts")
       .select("*")
       .eq("parent_id", parent.id)
       .order("created_at", { ascending: false })
       .limit(20),
+    sbClient.from("subjects").select("id, name, grade, curriculum"),
   ]);
 
   const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
+  const subjectMap = new Map((allSubjects || []).map((s) => [s.id, s]));
 
   const enriched = await Promise.all(
     (learners || []).map(async (learner) => {
-      const [{ data: topics }, { data: activity }] = await Promise.all([
+      const [{ data: topics }, { data: activity }, { data: weekSessions }, { data: exams }] = await Promise.all([
         sbClient.from("topics").select("id").eq("learner_id", learner.id),
         sbClient
           .from("study_sessions")
@@ -1243,20 +1310,66 @@ async function loadParentData() {
           .eq("phase", "feedback")
           .order("created_at", { ascending: false })
           .limit(5),
+        sbClient
+          .from("study_sessions")
+          .select("id, created_at, topics(subject_id)")
+          .eq("learner_id", learner.id)
+          .eq("phase", "explain")
+          .gte("created_at", sevenDaysAgoIso),
+        sbClient
+          .from("mock_exams")
+          .select("id, subject_id, difficulty, learner_score, total_marks, created_at")
+          .eq("learner_id", learner.id)
+          .order("created_at", { ascending: false })
+          .limit(10),
       ]);
 
       const profile = profileMap.get(learner.user_id);
+
+      const weekSubjectIds = new Set((weekSessions || []).map((s) => s.topics?.subject_id).filter(Boolean));
+      const weekSubjects = [...weekSubjectIds].map((id) => subjectMap.get(id)?.name).filter(Boolean);
+
+      const examsWithNames = (exams || []).map((exam) => ({
+        ...exam,
+        subjectName: subjectMap.get(exam.subject_id)?.name || "",
+      }));
+
+      const gradeSubjects = (allSubjects || []).filter((s) => s.grade === learner.grade && s.curriculum === "caps");
+
       return {
         ...learner,
         full_name: profile?.full_name || profile?.email || "Learner",
+        subscription_tier: profile?.subscription_tier || "free",
         topicCount: (topics || []).length,
         activity: activity || [],
         alerts: (alerts || []).filter((a) => a.learner_id === learner.id),
+        weekSessionsCount: (weekSessions || []).length,
+        weekSubjects,
+        exams: examsWithNames,
+        gradeSubjects,
       };
     }),
   );
 
   state.linkedLearners = enriched;
+
+  if (!state.selectedLearnerId || !enriched.some((l) => l.id === state.selectedLearnerId)) {
+    state.selectedLearnerId = enriched[0]?.id || null;
+  }
+}
+
+function getSelectedLearner() {
+  return state.linkedLearners.find((l) => l.id === state.selectedLearnerId) || null;
+}
+
+function getGoalsDraft(learner) {
+  if (!state.goalsDraft[learner.id]) {
+    state.goalsDraft[learner.id] = {
+      weeklyTarget: learner.weekly_session_target || 3,
+      focusSubjects: [...(learner.focus_subjects || [])],
+    };
+  }
+  return state.goalsDraft[learner.id];
 }
 
 // ---------------------------------------------------------------------
@@ -1466,6 +1579,13 @@ async function handleSignup(form) {
     }
 
     await loadUserData();
+
+    // New parent accounts see a one-time "Link Your Child" overlay right
+    // after signup, before the parent dashboard itself is shown.
+    if (authRole === "parent") {
+      state.showLinkChildScreen = true;
+    }
+
     render();
   } catch (err) {
     console.error(err);
@@ -1590,6 +1710,11 @@ function render() {
   if (state.safetyOverlay && state.safetyOverlay.severity === 1) {
     app.insertAdjacentHTML("beforeend", renderSafetyTier1Overlay());
   }
+
+  // Post-signup "Link Your Child" overlay for new parent accounts.
+  if (state.profile.role === "parent" && state.showLinkChildScreen) {
+    app.insertAdjacentHTML("beforeend", renderLinkChildScreen());
+  }
 }
 
 function renderAccountFrozenScreen() {
@@ -1637,11 +1762,17 @@ function renderMainScreen() {
     }
   } else {
     switch (state.currentTab) {
+      case "activity":
+        tabContent = renderParentActivityTab();
+        break;
+      case "goals":
+        tabContent = renderParentGoalsTab();
+        break;
       case "account":
         tabContent = renderAccountTab();
         break;
       default:
-        tabContent = renderParentTab();
+        tabContent = renderParentHomeTab();
     }
   }
 
@@ -1679,7 +1810,9 @@ function renderBottomNav() {
           { id: "account", icon: "👤", label: t("navAccount") },
         ]
       : [
-          { id: "parent", icon: "👨‍👩‍👧", label: t("navParent") },
+          { id: "home", icon: "🏠", label: t("navHome") },
+          { id: "activity", icon: "📊", label: t("navActivity") },
+          { id: "goals", icon: "🎯", label: t("navGoals") },
           { id: "account", icon: "👤", label: t("navAccount") },
         ];
 
@@ -3376,75 +3509,242 @@ function renderExamModal() {
 }
 
 // ---------------------------------------------------------------------
-// PARENT TAB
+// PARENT DASHBOARD - HOME TAB
 // ---------------------------------------------------------------------
-const ALERT_ICONS = { safety_flag: "🚨", low_performance: "📉", study_streak: "🔥" };
+const ALERT_ICONS = {
+  safety_flag: "🚨",
+  safety_flag_crisis: "🚨",
+  safety_flag_language: "🚨",
+  low_performance: "📉",
+  study_streak: "🔥",
+};
 
-function renderParentTab() {
+function renderChildSelector() {
+  if (state.linkedLearners.length <= 1) return "";
   return `
-    <div class="card">
-      <h3 class="mt-0 screen-title">${t("parentHeading")}</h3>
+    <div class="pill-row child-selector">
+      ${state.linkedLearners
+        .map(
+          (l) => `<button type="button" class="pill-btn ${state.selectedLearnerId === l.id ? "selected" : ""}" data-action="select-child" data-learner-id="${l.id}">${escapeHtml(l.full_name)}</button>`,
+        )
+        .join("")}
     </div>
+  `;
+}
 
-    <div class="card">
-      <div class="section-title" style="margin-top:0;">${t("linkLearnerHeading")}</div>
-      <form data-action="link-learner-form">
-        <div class="field-row">
-          <div class="field" style="flex:3;">
-            <input type="text" name="learnerCode" placeholder="${t("linkLearnerPlaceholder")}" maxlength="8" required style="text-transform:uppercase;" />
-          </div>
-          <button type="submit" class="btn btn-primary" style="flex:1; height:44px; align-self:flex-start;">${t("btnLink")}</button>
-        </div>
-      </form>
+function renderParentHomeTab() {
+  const profile = state.profile;
+  const displayName = (profile.full_name || "").trim() || (profile.email || "").split("@")[0] || "";
+  const firstName = displayName.split(/\s+/)[0] || "";
+  const hour = new Date().getHours();
+  const greetingKey = hour < 12 ? "greetingMorning" : hour < 18 ? "greetingAfternoon" : "greetingEvening";
+
+  const greetingCard = `
+    <div class="card home-greeting-card">
+      <div class="home-greeting">${t(greetingKey)}, ${escapeHtml(firstName)} 👋</div>
     </div>
+  `;
+
+  if (state.linkedLearners.length === 0) {
+    return `
+      ${greetingCard}
+      <div class="empty-state">
+        <div class="empty-icon">👨‍👩‍👧</div>
+        <p>${t("noChildrenLinked")}</p>
+        <button class="btn btn-primary" style="margin-top:14px;" data-action="open-link-child-modal">${t("btnLinkAnotherChild")}</button>
+      </div>
+      ${state.linkChildModalOpen ? renderLinkChildModal() : ""}
+    `;
+  }
+
+  const learner = getSelectedLearner();
+  const unreadAlerts = (learner.alerts || []).filter((a) => !a.read_at);
+
+  return `
+    ${greetingCard}
+    ${renderChildSelector()}
 
     ${
-      state.linkedLearners.length === 0
-        ? `<div class="empty-state"><div class="empty-icon">👨‍👩‍👧</div><p>${t("noLearners")}</p></div>`
-        : state.linkedLearners.map((learner) => renderLearnerCard(learner)).join("")
+      unreadAlerts.length > 0
+        ? `<div class="alert-banner alert-banner-danger">
+            <span class="alert-banner-icon">🚨</span>
+            <span>${unreadAlerts.length === 1 ? t("alertsActiveBannerOne") : t("alertsActiveBannerMany").replace("{n}", unreadAlerts.length)}</span>
+          </div>
+          ${unreadAlerts.map((a) => renderAlertItem(a)).join("")}`
+        : `<div class="alert-banner alert-banner-ok">
+            <span class="alert-banner-icon">✅</span>
+            <span>${t("allLookingGood")}</span>
+          </div>`
+    }
+
+    <div class="account-stats" style="margin-top:var(--spacing-16);">
+      <div class="account-stat">
+        <div class="num">${learner.streak_days || 0}</div>
+        <div class="lbl">${t("statStreak")}</div>
+      </div>
+      <div class="account-stat">
+        <div class="num">${learner.weekSessionsCount}</div>
+        <div class="lbl">${t("statSessionsWeek")}</div>
+      </div>
+      <div class="account-stat">
+        <div class="num">${learner.diagnostic_level || 0}</div>
+        <div class="lbl">${t("statLevel")}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="account-section-row">
+        <span class="account-section-label">${t("statLastActive")}</span>
+        <span class="muted">${formatDateTime(learner.last_session)}</span>
+      </div>
+    </div>
+
+    ${state.linkChildModalOpen ? renderLinkChildModal() : ""}
+  `;
+}
+
+// ---------------------------------------------------------------------
+// PARENT DASHBOARD - ACTIVITY TAB (read-only)
+// ---------------------------------------------------------------------
+function renderParentActivityTab() {
+  if (state.linkedLearners.length === 0) {
+    return `
+      <h3 class="screen-title" style="margin:0 0 14px;">${t("activityHeading")}</h3>
+      <div class="empty-state"><div class="empty-icon">📊</div><p>${t("noChildrenLinked")}</p></div>
+    `;
+  }
+
+  const learner = getSelectedLearner();
+
+  return `
+    <h3 class="screen-title" style="margin:0 0 14px;">${t("activityHeading")}</h3>
+    ${renderChildSelector()}
+
+    <div class="card">
+      <div class="section-title" style="margin-top:0;">${t("thisWeekHeading")}</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="num">${learner.weekSessionsCount}</div><div class="lbl">${t("sessionsCompletedLabel")}</div></div>
+        <div class="stat-box"><div class="num">${learner.weekSubjects.length}</div><div class="lbl">${t("topicsStudiedHeading")}</div></div>
+      </div>
+      ${
+        learner.weekSubjects.length > 0
+          ? `<div class="chip-row" style="margin-top:var(--spacing-12);">
+              ${learner.weekSubjects.map((s) => `<span class="topic-chip">${escapeHtml(s)}</span>`).join("")}
+            </div>`
+          : ""
+      }
+    </div>
+
+    <div class="section-title">${t("mockExamsHeading")}</div>
+    ${
+      learner.exams.length === 0
+        ? `<p class="muted">${t("noMockExams")}</p>`
+        : learner.exams.map((exam) => renderParentExamItem(exam)).join("")
     }
   `;
 }
 
-function renderLearnerCard(learner) {
+function renderParentExamItem(exam) {
+  const hasScore = exam.learner_score !== null && exam.learner_score !== undefined;
+  const pct = hasScore && exam.total_marks ? Math.round((exam.learner_score / exam.total_marks) * 100) : null;
+  const scoreClass = pct === null ? "" : pct >= 70 ? "score-good" : pct >= 50 ? "score-mid" : "score-low";
+
   return `
-    <div class="learner-card">
-      <div class="learner-card-head">
-        <h3 class="mt-0">${escapeHtml(learner.full_name)}</h3>
-        <span class="level-pill">${learner.diagnostic_level}</span>
+    <div class="activity-item">
+      <div class="account-section-row">
+        <div>
+          <div style="font-weight:700;">${escapeHtml(exam.subjectName)}</div>
+          <div class="muted">${difficultyLabel(exam.difficulty)} · ${formatDate(exam.created_at)}</div>
+        </div>
+        <div class="exam-score ${scoreClass}">${pct === null ? "—" : pct + "%"}</div>
       </div>
-      <span class="badge badge-purple">${t("gradeLabel")} ${learner.grade}</span>
-      <span class="badge badge-gold">${t("diagnosticLevelLabel")}: ${learner.diagnostic_level}/5</span>
-
-      <div class="stat-grid">
-        <div class="stat-box"><div class="num">${learner.topicCount}</div><div class="lbl">${t("topicsStudiedLabel")}</div></div>
-        <div class="stat-box"><div class="num">${learner.sessions_completed}</div><div class="lbl">${t("sessionsCompletedLabel")}</div></div>
-      </div>
-      <p class="muted">${t("lastSessionLabel")}: ${formatDateTime(learner.last_session)}</p>
-
-      <div class="section-title">${t("alertsHeading")}</div>
-      ${
-        learner.alerts.length === 0
-          ? `<p class="muted">${t("noAlerts")}</p>`
-          : learner.alerts.map((alert) => renderAlertItem(alert)).join("")
-      }
-
-      <div class="section-title">${t("activityHeading")}</div>
-      ${
-        learner.activity.length === 0
-          ? `<p class="muted">${t("noActivity")}</p>`
-          : learner.activity
-              .map(
-                (act) => `
-        <div class="activity-item">
-          ${escapeHtml(act.topics?.title || "")}
-          <div class="activity-time">${formatDateTime(act.completed_at || act.created_at)}</div>
-        </div>`,
-              )
-              .join("")
-      }
     </div>
   `;
+}
+
+// ---------------------------------------------------------------------
+// PARENT DASHBOARD - GOALS TAB
+// ---------------------------------------------------------------------
+function renderParentGoalsTab() {
+  if (state.linkedLearners.length === 0) {
+    return `
+      <h3 class="screen-title" style="margin:0 0 14px;">${t("goalsHeading")}</h3>
+      <div class="empty-state"><div class="empty-icon">🎯</div><p>${t("noChildrenLinked")}</p></div>
+    `;
+  }
+
+  const learner = getSelectedLearner();
+  const draft = getGoalsDraft(learner);
+  const firstName = (learner.full_name || "").split(/\s+/)[0] || learner.full_name;
+
+  return `
+    <h3 class="screen-title" style="margin:0 0 14px;">${t("goalsHeading")}</h3>
+    ${renderChildSelector()}
+
+    <div class="card">
+      <div class="section-title" style="margin-top:0;">${t("weeklySessionTargetLabel")}</div>
+      <p class="muted">${t("weeklySessionTargetHelp").replace("{name}", escapeHtml(firstName))}</p>
+      <div class="field" style="margin-bottom:0;">
+        <input type="number" min="1" max="14" data-action="goals-set-target" value="${draft.weeklyTarget}" />
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title" style="margin-top:0;">${t("focusSubjectsLabel")}</div>
+      <p class="muted">${t("focusSubjectsHelp").replace("{name}", escapeHtml(firstName))}</p>
+      <div class="chip-row" style="margin-top:var(--spacing-12);">
+        ${learner.gradeSubjects
+          .map(
+            (s) => `<button type="button" class="topic-chip ${draft.focusSubjects.includes(s.id) ? "selected" : ""}" data-action="goals-toggle-subject" data-subject-id="${s.id}" data-learner-id="${learner.id}">${escapeHtml(s.name)}</button>`,
+          )
+          .join("")}
+      </div>
+    </div>
+
+    <p class="muted">${t("goalsVisibleNote").replace("{name}", escapeHtml(firstName))}</p>
+    <button class="btn btn-primary btn-block" data-action="goals-save">${t("btnSaveGoals")}</button>
+  `;
+}
+
+async function saveGoals() {
+  const learner = getSelectedLearner();
+  if (!learner) return;
+  const draft = getGoalsDraft(learner);
+
+  try {
+    const { error } = await sbClient.rpc("update_learner_goals", {
+      p_learner_id: learner.id,
+      p_weekly_target: draft.weeklyTarget,
+      p_focus_subjects: draft.focusSubjects,
+    });
+    if (error) throw error;
+
+    learner.weekly_session_target = draft.weeklyTarget;
+    learner.focus_subjects = [...draft.focusSubjects];
+    showToast(t("goalsSaved"), "success");
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || t("errorGeneric"), "error");
+  }
+}
+
+function goalsToggleSubject(learnerId, subjectId) {
+  const learner = state.linkedLearners.find((l) => l.id === learnerId);
+  if (!learner) return;
+  const draft = getGoalsDraft(learner);
+  const idx = draft.focusSubjects.indexOf(subjectId);
+  if (idx >= 0) draft.focusSubjects.splice(idx, 1);
+  else draft.focusSubjects.push(subjectId);
+  render();
+}
+
+function goalsSetTarget(value) {
+  const learner = getSelectedLearner();
+  if (!learner) return;
+  const draft = getGoalsDraft(learner);
+  let n = parseInt(value, 10);
+  if (isNaN(n)) n = 3;
+  draft.weeklyTarget = Math.max(1, Math.min(14, n));
 }
 
 // Escape the message, then turn any https:// URL into a clickable link
@@ -3469,23 +3769,82 @@ function renderAlertItem(alert) {
   `;
 }
 
-async function handleLinkLearner(form) {
-  const code = form.learnerCode.value.trim().toUpperCase();
+async function markAlertRead(alertId) {
+  try {
+    await sbClient.from("parent_alerts").update({ read_at: new Date().toISOString() }).eq("id", alertId);
+    await loadParentData();
+    render();
+  } catch (err) {
+    console.error(err);
+    showToast(t("errorGeneric"), "error");
+  }
+}
+
+// ---------------------------------------------------------------------
+// LINK CHILD (post-signup screen + account tab modal)
+// ---------------------------------------------------------------------
+function renderLinkChildScreen() {
+  return `
+    <div class="diagnostic-overlay" id="link-child-screen">
+      <div class="diagnostic-modal">
+        ${diagnosticHeaderBar()}
+        <div class="diagnostic-body diagnostic-center">
+          <h2 class="diagnostic-title">${t("linkChildHeading")}</h2>
+          <p class="diagnostic-lead">${t("linkChildIntro")}</p>
+          <form data-action="link-child-screen-form" style="width:100%;">
+            <div class="field">
+              <label>${t("linkChildEmailLabel")}</label>
+              <input type="email" name="childEmail" placeholder="${t("linkChildPlaceholder")}" required />
+            </div>
+            <button type="submit" class="btn btn-gold btn-block">${t("btnLinkChild")}</button>
+          </form>
+          <button class="link-btn" style="margin-top:var(--spacing-16);" data-action="skip-link-child">${t("btnSkipForNow")}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderLinkChildModal() {
+  return `
+    <div class="modal-overlay">
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3>${t("linkChildHeading")}</h3>
+          <button class="modal-close" data-action="close-link-child-modal">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="muted">${t("linkChildIntro")}</p>
+          <form data-action="link-child-form">
+            <div class="field">
+              <label>${t("linkChildEmailLabel")}</label>
+              <input type="email" name="childEmail" placeholder="${t("linkChildPlaceholder")}" required />
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">${t("btnLinkChild")}</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function handleLinkChildByEmail(form, onSuccess) {
+  const email = form.childEmail.value.trim();
   const btn = form.querySelector("button[type=submit]");
   setButtonLoading(btn, true);
 
   try {
-    const { data, error } = await sbClient.rpc("link_learner_to_parent", { p_learner_code: code });
+    const { data, error } = await sbClient.rpc("link_learner_by_email", { p_email: email });
     if (error) throw error;
 
     if (!data) {
-      showToast(t("linkNotFound"), "error");
+      showToast(t("linkChildEmailNotFound"), "error");
       return;
     }
 
     await loadParentData();
-    form.reset();
-    showToast(t("linkSuccess"), "success");
+    showToast(t("linkChildSuccess"), "success");
+    if (onSuccess) onSuccess();
     render();
   } catch (err) {
     console.error(err);
@@ -3495,14 +3854,19 @@ async function handleLinkLearner(form) {
   }
 }
 
-async function markAlertRead(alertId) {
+async function toggleMonthlyRecap() {
+  const next = !state.profile.monthly_recap_email;
+  state.profile.monthly_recap_email = next;
+  render();
+
   try {
-    await sbClient.from("parent_alerts").update({ read_at: new Date().toISOString() }).eq("id", alertId);
-    await loadParentData();
-    render();
+    const { error } = await sbClient.from("profiles").update({ monthly_recap_email: next }).eq("id", state.user.id);
+    if (error) throw error;
   } catch (err) {
     console.error(err);
+    state.profile.monthly_recap_email = !next;
     showToast(t("errorGeneric"), "error");
+    render();
   }
 }
 
@@ -3558,8 +3922,51 @@ function renderAccountTab() {
     <!-- Referral rewards (existing feature, learners only) -->
     ${isLearner ? renderReferralCard() : ""}
 
+    <!-- Parent dashboard extras: linked children + notification preferences -->
+    ${!isLearner ? renderParentAccountExtras() : ""}
+
     <!-- 5. Logout -->
     <button class="btn btn-danger btn-block" data-action="logout" style="margin-top:6px;">${t("btnLogout")}</button>
+  `;
+}
+
+function renderParentAccountExtras() {
+  return `
+    <div class="section-title">${t("linkedChildrenHeading")}</div>
+    ${
+      state.linkedLearners.length === 0
+        ? `<p class="muted">${t("noChildrenLinked")}</p>`
+        : state.linkedLearners.map((l) => renderLinkedChildCard(l)).join("")
+    }
+    <button class="btn btn-outline btn-block" style="margin-top:var(--spacing-8);" data-action="open-link-child-modal">${t("btnLinkAnotherChild")}</button>
+
+    <div class="section-title">${t("notificationPrefsHeading")}</div>
+    <div class="card">
+      <div class="toggle-row">
+        <span>${t("monthlyRecapLabel")}</span>
+        <button type="button" class="toggle-switch ${state.profile.monthly_recap_email ? "on" : ""}" data-action="toggle-monthly-recap" role="switch" aria-checked="${state.profile.monthly_recap_email ? "true" : "false"}"></button>
+      </div>
+      <div class="toggle-row">
+        <span>${t("immediateSafetyAlertsLabel")}</span>
+        <span class="toggle-switch on locked" title="${t("alwaysOnLabel")}"></span>
+      </div>
+    </div>
+
+    ${state.linkChildModalOpen ? renderLinkChildModal() : ""}
+  `;
+}
+
+function renderLinkedChildCard(learner) {
+  const tier = learner.subscription_tier || "free";
+  const tierBadgeClass = tier === "premium" ? "tier-badge-premium" : tier === "basic" ? "tier-badge-basic" : "tier-badge-free";
+  return `
+    <div class="linked-child-card">
+      <div>
+        <div style="font-weight:700;">${escapeHtml(learner.full_name)}</div>
+        <div class="muted">${t("gradeLabel")} ${learner.grade}</div>
+      </div>
+      <span class="tier-badge ${tierBadgeClass}">${t(tier)}</span>
+    </div>
   `;
 }
 
@@ -3866,6 +4273,31 @@ function attachGlobalListeners() {
       case "upgrade":
         handleUpgrade(target.dataset.tier);
         break;
+      case "select-child":
+        state.selectedLearnerId = target.dataset.learnerId;
+        render();
+        break;
+      case "goals-toggle-subject":
+        goalsToggleSubject(target.dataset.learnerId, target.dataset.subjectId);
+        break;
+      case "goals-save":
+        saveGoals();
+        break;
+      case "open-link-child-modal":
+        state.linkChildModalOpen = true;
+        render();
+        break;
+      case "close-link-child-modal":
+        state.linkChildModalOpen = false;
+        render();
+        break;
+      case "skip-link-child":
+        state.showLinkChildScreen = false;
+        render();
+        break;
+      case "toggle-monthly-recap":
+        toggleMonthlyRecap();
+        break;
       default:
         break;
     }
@@ -3890,8 +4322,15 @@ function attachGlobalListeners() {
       case "session-chat-form":
         sessionSendChat(form);
         break;
-      case "link-learner-form":
-        handleLinkLearner(form);
+      case "link-child-form":
+        handleLinkChildByEmail(form, () => {
+          state.linkChildModalOpen = false;
+        });
+        break;
+      case "link-child-screen-form":
+        handleLinkChildByEmail(form, () => {
+          state.showLinkChildScreen = false;
+        });
         break;
       default:
         break;
@@ -3906,6 +4345,9 @@ function attachGlobalListeners() {
     switch (action) {
       case "refresher-subject-select":
         refresherSubjectChange(target.value);
+        break;
+      case "goals-set-target":
+        goalsSetTarget(target.value);
         break;
       default:
         break;

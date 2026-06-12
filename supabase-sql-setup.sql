@@ -35,6 +35,9 @@ create table if not exists public.profiles (
 alter table public.profiles add column if not exists account_frozen boolean default false;
 alter table public.profiles add column if not exists freeze_reason text;
 
+-- Migration: parent notification preferences (Parent Dashboard > Account tab)
+alter table public.profiles add column if not exists monthly_recap_email boolean default true;
+
 create table if not exists public.learners (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -142,6 +145,10 @@ alter table public.mock_exam_questions add column if not exists correct_answer t
 
 -- Migration: daily study streak counter shown on the dashboard Home tab.
 alter table public.learners add column if not exists streak_days int default 0;
+
+-- Migration: Parent Dashboard > Goals tab (visible suggestions for the learner)
+alter table public.learners add column if not exists weekly_session_target int default 3 check (weekly_session_target between 1 and 14);
+alter table public.learners add column if not exists focus_subjects uuid[] default array[]::uuid[];
 
 -- Migration: allow free-form follow-up chat messages in the Learn tab.
 alter table public.study_sessions drop constraint if exists study_sessions_phase_check;
@@ -347,6 +354,62 @@ begin
   update public.parents
   set linked_learners = array_append(linked_learners, v_learner_id)
   where id = v_parent_id and not (v_learner_id = any(linked_learners));
+
+  return true;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+-- Link a parent to a learner via the learner's account email (Parent Dashboard > Link Child)
+create or replace function public.link_learner_by_email(p_email text)
+returns boolean as $$
+declare
+  v_parent_id uuid;
+  v_learner_id uuid;
+begin
+  select id into v_parent_id from public.parents where user_id = auth.uid();
+  if v_parent_id is null then
+    raise exception 'not a parent account';
+  end if;
+
+  select l.id into v_learner_id
+  from public.learners l
+  join public.profiles p on p.id = l.user_id
+  where lower(p.email) = lower(p_email) and p.role = 'learner';
+
+  if v_learner_id is null then
+    return false;
+  end if;
+
+  update public.parents
+  set linked_learners = array_append(linked_learners, v_learner_id)
+  where id = v_parent_id and not (v_learner_id = any(linked_learners));
+
+  return true;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+-- Update a linked learner's visible goal suggestions (Parent Dashboard > Goals tab)
+create or replace function public.update_learner_goals(p_learner_id uuid, p_weekly_target int, p_focus_subjects uuid[])
+returns boolean as $$
+declare
+  v_parent_id uuid;
+begin
+  select id into v_parent_id from public.parents where user_id = auth.uid();
+  if v_parent_id is null then
+    raise exception 'not a parent account';
+  end if;
+
+  if not exists (
+    select 1 from public.parents
+    where id = v_parent_id and p_learner_id = any(linked_learners)
+  ) then
+    raise exception 'not authorized for this learner';
+  end if;
+
+  update public.learners
+  set weekly_session_target = greatest(1, least(14, p_weekly_target)),
+      focus_subjects = coalesce(p_focus_subjects, array[]::uuid[])
+  where id = p_learner_id;
 
   return true;
 end;

@@ -1513,6 +1513,80 @@ h1, h2, h3, h4 {
 .activity-item:last-child { border-bottom: none; }
 .activity-item .activity-time { font-size: 11px; color: var(--text-muted); }
 
+/* Parent dashboard: child selector (only shown with 2+ linked children) */
+.child-selector {
+  flex-wrap: wrap;
+  margin-bottom: var(--spacing-16);
+}
+.child-selector .pill-btn { flex: 0 1 auto; }
+
+/* Parent dashboard: home tab alert banners */
+.alert-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-12);
+  padding: var(--spacing-16) var(--spacing-20);
+  border-radius: var(--radius-card);
+  font-weight: 700;
+  font-size: var(--font-size-caption);
+  margin-bottom: var(--spacing-16);
+}
+.alert-banner-icon { font-size: 20px; }
+.alert-banner-danger { background: rgba(217, 83, 79, 0.12); color: var(--danger); }
+.alert-banner-ok { background: rgba(76, 175, 80, 0.12); color: #2e7d32; }
+
+/* Parent dashboard: activity tab mock-exam score colors */
+.exam-score { font-weight: 800; font-size: 18px; }
+.score-good { color: #2e7d32; }
+.score-mid { color: var(--warning); }
+.score-low { color: var(--danger); }
+
+/* Parent dashboard: account tab linked children + notification toggles */
+.linked-child-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--white);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-12) var(--spacing-16);
+  margin-bottom: var(--spacing-8);
+  box-shadow: var(--shadow-soft);
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-8) 0;
+}
+.toggle-row + .toggle-row { border-top: 1px solid var(--border); }
+
+.toggle-switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 99px;
+  border: none;
+  background: var(--border);
+  cursor: pointer;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.toggle-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--white);
+  transition: left 0.15s ease;
+}
+.toggle-switch.on { background: var(--primary); }
+.toggle-switch.on::after { left: 21px; }
+.toggle-switch.locked { cursor: default; opacity: 0.6; }
+
 /* ---------------------------------------------------------------------
    Exam
    --------------------------------------------------------------------- */
