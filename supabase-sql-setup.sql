@@ -72,11 +72,24 @@ create table if not exists public.diagnostic_attempts (
   id uuid primary key default gen_random_uuid(),
   learner_id uuid not null references public.learners(id) on delete cascade,
   grade int not null,
-  subject_id uuid not null references public.subjects(id),
+  subject_id uuid references public.subjects(id),
+  language text,
+  questions jsonb,
+  answers jsonb,
   score int,
+  level_assigned int check (level_assigned >= 1 and level_assigned <= 5),
   level_determined int check (level_determined >= 1 and level_determined <= 5),
   created_at timestamp default now()
 );
+
+-- Migration for existing databases: the diagnostic is now a mixed-subject
+-- AI quiz, so subject_id is optional and the questions/answers are stored as
+-- JSON alongside the assigned level.
+alter table public.diagnostic_attempts alter column subject_id drop not null;
+alter table public.diagnostic_attempts add column if not exists language text;
+alter table public.diagnostic_attempts add column if not exists questions jsonb;
+alter table public.diagnostic_attempts add column if not exists answers jsonb;
+alter table public.diagnostic_attempts add column if not exists level_assigned int;
 
 create table if not exists public.study_sessions (
   id uuid primary key default gen_random_uuid(),

@@ -58,6 +58,20 @@ const translations = {
     diagnosticDoneMsg: "Your starting level is",
     btnStartLearning: "Start Learning",
     retakeDiagnostic: "Retake Diagnostic",
+    diagWelcomeTitle: "Welcome to Leuro™",
+    diagWelcomeSub: "Choose your language to get started",
+    diagPreparing: "Preparing your questions...",
+    diagLoadError: "We couldn't load your diagnostic. Please try again.",
+    diagTryAgain: "Try Again",
+    diagQuestionProgress: "Question {n} of {total}",
+    diagResultsHeading: "Your Starting Level",
+    diagScoreLabel: "You scored {score} out of {total}",
+    diagLevelLabel: "Level",
+    diagMsgLevel1: "Every expert was once a beginner. We'll build your foundations step by step!",
+    diagMsgLevel2: "You've made a solid start. Let's grow your skills together!",
+    diagMsgLevel3: "Nice work — you're right on track. Time to level up!",
+    diagMsgLevel4: "Impressive! You have a strong grasp. Let's aim even higher!",
+    diagMsgLevel5: "Outstanding! You're a true Leuro hero. Let's keep that momentum going!",
 
     navLearn: "Learn",
     navStudy: "Study",
@@ -259,6 +273,20 @@ const translations = {
     diagnosticDoneMsg: "Jou beginvlak is",
     btnStartLearning: "Begin Leer",
     retakeDiagnostic: "Doen Diagnose Weer",
+    diagWelcomeTitle: "Welkom by Leuro™",
+    diagWelcomeSub: "Kies jou taal om te begin",
+    diagPreparing: "Berei jou vrae voor...",
+    diagLoadError: "Ons kon nie jou diagnose laai nie. Probeer asseblief weer.",
+    diagTryAgain: "Probeer Weer",
+    diagQuestionProgress: "Vraag {n} van {total}",
+    diagResultsHeading: "Jou Beginvlak",
+    diagScoreLabel: "Jy het {score} uit {total} behaal",
+    diagLevelLabel: "Vlak",
+    diagMsgLevel1: "Elke kenner was eens 'n beginner. Ons bou jou fondasie stap vir stap!",
+    diagMsgLevel2: "Jy het 'n stewige begin gemaak. Kom ons kweek jou vaardighede saam!",
+    diagMsgLevel3: "Mooi werk — jy is op die regte pad. Tyd om op te gradeer!",
+    diagMsgLevel4: "Indrukwekkend! Jy het 'n sterk begrip. Kom ons mik nog hoër!",
+    diagMsgLevel5: "Uitstekend! Jy is 'n ware Leuro-held. Kom ons hou daardie momentum aan die gang!",
 
     navLearn: "Leer",
     navStudy: "Studeer",
@@ -1114,12 +1142,18 @@ function render() {
     return;
   }
 
-  if (state.profile.role === "learner" && (!state.learner || state.learner.diagnostic_level === 0 || state.showDiagnostic)) {
-    app.innerHTML = renderDiagnosticScreen();
-    return;
-  }
-
   app.innerHTML = renderMainScreen();
+
+  // Diagnostic gate: a non-dismissable full-screen overlay shown on top of
+  // the app whenever a learner has not completed their diagnostic
+  // (diagnostic_level null or 0), or has chosen to retake it.
+  if (
+    state.profile.role === "learner" &&
+    state.learner &&
+    (!state.learner.diagnostic_level || state.showDiagnostic)
+  ) {
+    app.insertAdjacentHTML("beforeend", renderDiagnosticScreen());
+  }
 }
 
 function renderMainScreen() {
@@ -1204,44 +1238,49 @@ function renderBottomNav() {
 // ---------------------------------------------------------------------
 // DIAGNOSTIC
 // ---------------------------------------------------------------------
-const DIAGNOSTIC_QUESTIONS = [
-  {
-    correct: 1,
-    en: { q: "What is 8 + 5?", options: ["12", "13", "14", "15"] },
-    af: { q: "Wat is 8 + 5?", options: ["12", "13", "14", "15"] },
-  },
-  {
-    correct: 1,
-    en: { q: "Which word means the opposite of 'happy'?", options: ["Joyful", "Sad", "Excited", "Calm"] },
-    af: { q: "Watter woord beteken die teenoorgestelde van 'gelukkig'?", options: ["Vrolik", "Hartseer", "Opgewonde", "Kalm"] },
-  },
-  {
-    correct: 2,
-    en: { q: "A train travels 60 km in 1 hour. How far does it travel in 3 hours?", options: ["120 km", "150 km", "180 km", "200 km"] },
-    af: { q: "'n Trein reis 60 km in 1 uur. Hoe ver reis dit in 3 uur?", options: ["120 km", "150 km", "180 km", "200 km"] },
-  },
-  {
-    correct: 1,
-    en: { q: "Solve for x: 2x + 4 = 14", options: ["4", "5", "6", "7"] },
-    af: { q: "Los op vir x: 2x + 4 = 14", options: ["4", "5", "6", "7"] },
-  },
-  {
-    correct: 2,
-    en: { q: "A rectangle has a length of 12 cm and a width of 5 cm. What is its area?", options: ["17 cm²", "34 cm²", "60 cm²", "85 cm²"] },
-    af: { q: "'n Reghoek het 'n lengte van 12 cm en 'n wydte van 5 cm. Wat is die oppervlakte?", options: ["17 cm²", "34 cm²", "60 cm²", "85 cm²"] },
-  },
-];
+const DIAGNOSTIC_QUESTION_COUNT = 10;
+
+function scoreToLevel(score) {
+  if (score <= 2) return 1;
+  if (score <= 4) return 2;
+  if (score <= 6) return 3;
+  if (score <= 8) return 4;
+  return 5;
+}
+
+// Normalises a model-provided correct_answer into one of "A"/"B"/"C"/"D".
+// Accepts a bare letter, a prefixed letter ("B)", "C."), or the full option
+// text (matched against the question's options map).
+function normalizeAnswerLetter(correct, options) {
+  if (typeof correct !== "string") return "";
+  const trimmed = correct.trim();
+  const upper = trimmed.toUpperCase();
+  if (["A", "B", "C", "D"].includes(upper)) return upper;
+  const prefixed = upper.match(/^([ABCD])[).:\-\s]/);
+  if (prefixed) return prefixed[1];
+  if (options) {
+    for (const L of ["A", "B", "C", "D"]) {
+      if (options[L] != null && String(options[L]).trim().toLowerCase() === trimmed.toLowerCase()) {
+        return L;
+      }
+    }
+  }
+  return "";
+}
 
 function ensureDiagnosticState() {
   if (!state.diagnostic) {
     state.diagnostic = {
-      subjectId: state.subjects[0]?.id || null,
-      started: false,
-      finished: false,
+      step: "lang",
+      loading: false,
+      error: null,
+      questions: [],
       currentIndex: 0,
       answers: [],
       selectedOption: null,
-      levelResult: null,
+      score: null,
+      level: null,
+      saving: false,
     };
   }
 }
@@ -1250,157 +1289,237 @@ function renderDiagnosticScreen() {
   ensureDiagnosticState();
   const d = state.diagnostic;
 
-  if (d.finished) return renderDiagnosticResult();
-  if (!d.started) return renderDiagnosticIntro();
-  return renderDiagnosticQuestion();
-}
+  let inner;
+  if (d.step === "results") inner = renderDiagnosticResult();
+  else if (d.step === "questions") inner = renderDiagnosticQuestions();
+  else inner = renderDiagnosticLang();
 
-function renderDiagnosticIntro() {
-  const d = state.diagnostic;
   return `
-    <div class="screen no-nav-padding">
-      <div class="topbar">
-        <div class="topbar-logo">${t("appName")}<span class="tm">™</span></div>
-        <div class="topbar-actions">
-          <button class="lang-toggle" data-action="toggle-lang">${state.lang === "en" ? "AF" : "EN"}</button>
-        </div>
-      </div>
-      <div class="container">
-        <div class="card">
-          <h3>${t("diagnosticTitle")}</h3>
-          <p>${t("diagnosticIntro")}</p>
-        </div>
-        <div class="field">
-          <label>${t("selectSubject")}</label>
-          <select id="diagnostic-subject">
-            ${state.subjects
-              .map((s) => `<option value="${s.id}" ${s.id === d.subjectId ? "selected" : ""}>${escapeHtml(s.name)}</option>`)
-              .join("")}
-          </select>
-        </div>
-        <button class="btn btn-primary btn-block" data-action="diagnostic-begin">${t("btnBeginDiagnostic")}</button>
-        ${
-          state.learner.diagnostic_level > 0
-            ? `<div class="text-center" style="margin-top:14px;"><button class="link-btn" data-action="diagnostic-cancel">${t("cancel")}</button></div>`
-            : ""
-        }
+    <div class="diagnostic-overlay">
+      <div class="diagnostic-modal">
+        ${inner}
       </div>
     </div>
   `;
 }
 
-function renderDiagnosticQuestion() {
+function diagnosticHeaderBar() {
+  return `
+    <div class="diagnostic-header">
+      <div class="diagnostic-logo">${t("appName")}<span class="tm">™</span></div>
+    </div>
+  `;
+}
+
+function renderDiagnosticLang() {
+  return `
+    <div class="diagnostic-header diagnostic-header-tall">
+      <div class="diagnostic-logo">${t("appName")}<span class="tm">™</span></div>
+      <h2 class="diagnostic-welcome">${t("diagWelcomeTitle")}</h2>
+      <p class="diagnostic-welcome-sub">${t("diagWelcomeSub")}</p>
+    </div>
+    <div class="diagnostic-body">
+      <div class="diagnostic-lang-pills">
+        <button class="diagnostic-lang-pill" data-action="diagnostic-set-lang" data-lang="en">English</button>
+        <button class="diagnostic-lang-pill" data-action="diagnostic-set-lang" data-lang="af">Afrikaans</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderDiagnosticQuestions() {
   const d = state.diagnostic;
-  const q = DIAGNOSTIC_QUESTIONS[d.currentIndex];
-  const lang = state.lang === "af" ? "af" : "en";
-  const isLast = d.currentIndex === DIAGNOSTIC_QUESTIONS.length - 1;
-  const progress = ((d.currentIndex + (d.selectedOption !== null ? 1 : 0)) / DIAGNOSTIC_QUESTIONS.length) * 100;
+
+  if (d.loading) {
+    return `
+      ${diagnosticHeaderBar()}
+      <div class="diagnostic-body diagnostic-center">
+        <span class="spinner spinner-purple"></span>
+        <p class="diagnostic-lead">${t("diagPreparing")}</p>
+      </div>
+    `;
+  }
+
+  if (d.error) {
+    return `
+      ${diagnosticHeaderBar()}
+      <div class="diagnostic-body diagnostic-center">
+        <p class="diagnostic-lead">${escapeHtml(d.error)}</p>
+        <button class="btn btn-primary btn-block" data-action="diagnostic-retry">${t("diagTryAgain")}</button>
+      </div>
+    `;
+  }
+
+  const q = d.questions[d.currentIndex];
+  if (!q) return "";
+  const total = d.questions.length;
+  const progress = ((d.currentIndex + (d.selectedOption !== null ? 1 : 0)) / total) * 100;
+  const isLast = d.currentIndex === total - 1;
+  const letters = ["A", "B", "C", "D"];
 
   return `
-    <div class="screen no-nav-padding">
-      <div class="topbar">
-        <div class="topbar-logo">${t("appName")}<span class="tm">™</span></div>
-      </div>
-      <div class="container">
-        <div class="progress-bar"><div class="progress-bar-fill" style="width:${progress}%"></div></div>
-        <div class="section-title">${t("questionLabel")} ${d.currentIndex + 1} ${t("of5")}</div>
-        <div class="card">
-          <h3 class="mt-0">${escapeHtml(q[lang].q)}</h3>
-        </div>
-        ${q[lang].options
-          .map(
-            (opt, i) => `
-          <div class="option-btn ${d.selectedOption === i ? "selected" : ""}" data-action="diagnostic-select" data-index="${i}">
-            ${escapeHtml(opt)}
-          </div>`,
-          )
+    ${diagnosticHeaderBar()}
+    <div class="diagnostic-body">
+      <div class="progress-bar"><div class="progress-bar-fill" style="width:${progress}%"></div></div>
+      <div class="diagnostic-qcount">${t("diagQuestionProgress")
+        .replace("{n}", d.currentIndex + 1)
+        .replace("{total}", total)}</div>
+      <h3 class="diagnostic-question">${escapeHtml(q.question || "")}</h3>
+      <div class="diagnostic-options">
+        ${letters
+          .map((L) => {
+            const optText = q.options ? q.options[L] : undefined;
+            if (optText == null) return "";
+            return `
+              <button class="option-btn ${d.selectedOption === L ? "selected" : ""}" data-action="diagnostic-select" data-letter="${L}">
+                <span class="diagnostic-option-letter">${L}</span> ${escapeHtml(String(optText))}
+              </button>`;
+          })
           .join("")}
-        <button class="btn btn-primary btn-block" data-action="diagnostic-next" ${d.selectedOption === null ? "disabled" : ""}>
-          ${isLast ? t("btnSeeResult") : t("btnNextQuestion")}
-        </button>
       </div>
+      <button class="btn btn-primary btn-block" data-action="diagnostic-next" ${d.selectedOption === null ? "disabled" : ""}>
+        ${isLast ? t("btnSeeResult") : t("btnNextQuestion")}
+      </button>
     </div>
   `;
 }
 
 function renderDiagnosticResult() {
   const d = state.diagnostic;
+  const level = d.level;
   return `
-    <div class="screen no-nav-padding">
-      <div class="topbar">
-        <div class="topbar-logo">${t("appName")}<span class="tm">™</span></div>
-      </div>
-      <div class="container text-center">
-        <div class="card">
-          <h3>${t("diagnosticDoneTitle")}</h3>
-          <p>${t("diagnosticDoneMsg")}</p>
-          <div style="margin:18px 0;">
-            <span class="level-pill" style="width:64px;height:64px;font-size:28px;">${d.levelResult}</span>
-          </div>
-          <p>${t("levelLabel")} ${d.levelResult}/5</p>
-        </div>
-        <button class="btn btn-gold btn-block" data-action="diagnostic-finish">${t("btnStartLearning")}</button>
-      </div>
+    ${diagnosticHeaderBar()}
+    <div class="diagnostic-body diagnostic-center">
+      <h2 class="diagnostic-title">${t("diagResultsHeading")}</h2>
+      <div class="diagnostic-level-badge">${level}</div>
+      <p class="diagnostic-level-text">${t("diagLevelLabel")} ${level}/5</p>
+      <p class="diagnostic-score">${t("diagScoreLabel")
+        .replace("{score}", d.score)
+        .replace("{total}", d.questions.length)}</p>
+      <p class="diagnostic-lead">${t("diagMsgLevel" + level)}</p>
+      <button class="btn btn-gold btn-block" data-action="diagnostic-finish" ${d.saving ? "disabled" : ""}>
+        ${d.saving ? `<span class="spinner"></span> ${t("loading")}` : t("btnStartLearning")}
+      </button>
     </div>
   `;
 }
 
-function diagnosticSelectOption(index) {
-  state.diagnostic.selectedOption = index;
+function diagnosticSetLang(lang) {
+  state.lang = lang === "af" ? "af" : "en";
+  document.documentElement.lang = state.lang;
+  if (state.profile) state.profile.lang = state.lang;
+  loadDiagnosticQuestions();
+}
+
+async function loadDiagnosticQuestions() {
+  const d = state.diagnostic;
+  d.step = "questions";
+  d.loading = true;
+  d.error = null;
+  d.questions = [];
+  d.currentIndex = 0;
+  d.answers = [];
+  d.selectedOption = null;
+  render();
+
+  try {
+    const res = await fetchWithTimeout(`${FN_URL}/run-diagnostic`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${state.session.access_token}`,
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({
+        grade: state.learner.grade,
+        language: state.lang,
+        learner_id: state.learner.id,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw data;
+
+    const questions = Array.isArray(data) ? data : data.questions;
+    if (!Array.isArray(questions) || questions.length === 0) {
+      throw new Error("No questions returned");
+    }
+
+    d.questions = questions;
+    d.loading = false;
+    render();
+  } catch (err) {
+    console.error("run-diagnostic error", err);
+    d.loading = false;
+    d.error = t("diagLoadError");
+    render();
+  }
+}
+
+function diagnosticRetry() {
+  loadDiagnosticQuestions();
+}
+
+function diagnosticSelectOption(letter) {
+  state.diagnostic.selectedOption = letter;
   render();
 }
 
 function diagnosticNext() {
   const d = state.diagnostic;
-  const q = DIAGNOSTIC_QUESTIONS[d.currentIndex];
-  d.answers.push(d.selectedOption === q.correct ? 1 : 0);
+  if (d.selectedOption === null) return;
+  d.answers[d.currentIndex] = d.selectedOption;
 
-  if (d.currentIndex < DIAGNOSTIC_QUESTIONS.length - 1) {
+  if (d.currentIndex < d.questions.length - 1) {
     d.currentIndex += 1;
-    d.selectedOption = null;
+    d.selectedOption = d.answers[d.currentIndex] != null ? d.answers[d.currentIndex] : null;
     render();
   } else {
-    finishDiagnostic();
+    const score = d.questions.reduce((sum, q, i) => {
+      const correct = normalizeAnswerLetter(q.correct_answer, q.options);
+      return sum + (d.answers[i] && d.answers[i] === correct ? 1 : 0);
+    }, 0);
+    d.score = score;
+    d.level = scoreToLevel(score);
+    d.step = "results";
+    render();
   }
 }
 
-async function finishDiagnostic() {
+async function diagnosticFinish() {
   const d = state.diagnostic;
-  const score = d.answers.reduce((sum, a) => sum + a, 0);
-  const level = score === 0 ? 1 : score;
+  if (d.saving) return;
+  d.saving = true;
+  render();
 
   try {
-    await sbClient.from("diagnostic_attempts").insert({
+    const { error: updateErr } = await sbClient
+      .from("learners")
+      .update({ diagnostic_level: d.level })
+      .eq("user_id", state.user.id);
+    if (updateErr) throw updateErr;
+
+    const { error: insertErr } = await sbClient.from("diagnostic_attempts").insert({
       learner_id: state.learner.id,
       grade: state.learner.grade,
-      subject_id: d.subjectId,
-      score,
-      level_determined: level,
+      language: state.lang,
+      questions: d.questions,
+      answers: d.answers,
+      level_assigned: d.level,
+      score: d.score,
     });
+    if (insertErr) throw insertErr;
 
-    await sbClient.from("learners").update({ diagnostic_level: level }).eq("id", state.learner.id);
-
-    state.learner.diagnostic_level = level;
-    d.levelResult = level;
-    d.finished = true;
+    state.learner.diagnostic_level = d.level;
+    state.showDiagnostic = false;
+    state.diagnostic = null;
+    state.currentTab = "home";
     render();
   } catch (err) {
-    console.error(err);
+    console.error("Failed to save diagnostic", err);
+    d.saving = false;
     showToast(t("errorGeneric"), "error");
+    render();
   }
-}
-
-function diagnosticBegin() {
-  const select = document.getElementById("diagnostic-subject");
-  state.diagnostic.subjectId = select ? select.value : state.subjects[0]?.id;
-  state.diagnostic.started = true;
-  render();
-}
-
-function diagnosticCancel() {
-  state.showDiagnostic = false;
-  state.diagnostic = null;
-  render();
 }
 
 function retakeDiagnostic() {
@@ -3089,17 +3208,17 @@ function attachGlobalListeners() {
       case "logout":
         handleLogout();
         break;
-      case "diagnostic-begin":
-        diagnosticBegin();
+      case "diagnostic-set-lang":
+        diagnosticSetLang(target.dataset.lang);
         break;
-      case "diagnostic-cancel":
-        diagnosticCancel();
+      case "diagnostic-retry":
+        diagnosticRetry();
         break;
       case "diagnostic-finish":
-        diagnosticCancel();
+        diagnosticFinish();
         break;
       case "diagnostic-select":
-        diagnosticSelectOption(parseInt(target.dataset.index, 10));
+        diagnosticSelectOption(target.dataset.letter);
         break;
       case "diagnostic-next":
         diagnosticNext();
