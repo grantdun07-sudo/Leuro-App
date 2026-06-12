@@ -242,6 +242,11 @@ const translations = {
     never: "Never",
     cancel: "Cancel",
 
+    safetyCrisisMessage: "Your feelings are valid and important. Please talk to a trusted adult or your parent right away. You can also call the SADAG helpline anytime — it's free: 0800 21 22 23 (available 24 hours).",
+    safetyTier2Message: "This type of language isn't allowed on Leuro™.",
+    accountFrozenMessage: "Your account has been temporarily paused. Your parent or guardian has been notified and will need to confirm before you can continue.",
+    btnClose: "Close",
+
     linkSuccess: "Learner linked successfully!",
     linkNotFound: "No learner found with that referral code.",
     upgradeTo: "Upgrade to",
@@ -466,6 +471,11 @@ const translations = {
     never: "Nooit",
     cancel: "Kanselleer",
 
+    safetyCrisisMessage: "Jou gevoelens is geldig en belangrik. Praat asseblief dadelik met 'n vertroude volwassene of jou ouer. Jy kan ook die SADAG-hulplyn enige tyd skakel — dit is gratis: 0800 21 22 23 (24 uur beskikbaar).",
+    safetyTier2Message: "Hierdie tipe taal is nie op Leuro™ toegelaat nie.",
+    accountFrozenMessage: "Jou rekening is tydelik gepauzeer. Jou ouer of voog is ingelig en sal moet bevestig voordat jy kan voortgaan.",
+    btnClose: "Sluit",
+
     linkSuccess: "Leerder suksesvol geskakel!",
     linkNotFound: "Geen leerder met daardie verwysingskode gevind nie.",
     upgradeTo: "Gradeer op na",
@@ -502,6 +512,7 @@ const state = {
   loading: true,
   showDiagnostic: false,
   showProgressSummary: false,
+  safetyOverlay: null,
   diagnostic: null,
   activeSession: null,
   activeExam: null,
@@ -552,6 +563,158 @@ function getInitials(fullName) {
 
 function difficultyLabel(difficulty) {
   return t(`diff${capitalize(difficulty)}`);
+}
+
+// ---------------------------------------------------------------------
+// CONTENT SAFETY
+// ---------------------------------------------------------------------
+// Tier 1 - self-harm / suicidal ideation. Detected text is NEVER sent to
+// Claude and is intercepted entirely client-side.
+const TIER1_PATTERNS = [
+  /suicid\w*/i,
+  /kill(ing)?\s*myself/i,
+  /end(ing)?\s*my\s*life/i,
+  /want(ed|ing)?\s*to\s*die/i,
+  /wish(ed)?\s*(i\s*(was|were)\s*dead|i\s*was\s*never\s*born)/i,
+  /self[\s-]?harm\w*/i,
+  /cutting\s*myself/i,
+  /hurt(ing)?\s*myself/i,
+  /don'?t\s*want\s*to\s*(live|be\s*alive)/i,
+  /no\s*reason\s*to\s*live/i,
+  /better\s*off\s*dead/i,
+  // Afrikaans
+  /selfmoord\w*/i,
+  /wil\s*(self)?moord\s*pleeg/i,
+  /wil\s*(nie\s*meer\s*)?(lewe|leef)/i,
+  /sny(dery)?\s*my(self)?/i,
+  /seermaak\s*my(self)?/i,
+  /geen\s*rede\s*om\s*te\s*(lewe|leef)/i,
+  /wil\s*dood\s*?gaan/i,
+];
+
+// Tier 2 - profanity, slurs, sexual content and discriminatory language
+// (English and Afrikaans).
+const TIER2_WORDS = [
+  // English profanity / insults
+  "fuck", "fucking", "fucker", "motherfucker", "shit", "bullshit", "bitch",
+  "bastard", "asshole", "dumbass", "jackass", "ass", "dick", "dickhead",
+  "pussy", "cunt", "cock", "prick", "wanker", "twat", "slut", "whore",
+  "douche", "douchebag",
+  // Racial / ethnic slurs
+  "nigger", "nigga", "chink", "spic", "kike", "gook", "wetback", "paki",
+  "coon", "kaffir", "kaffer",
+  // Homophobic / gender-based discriminatory terms
+  "faggot", "fag", "dyke", "tranny", "retard", "retarded",
+  // Sexual / explicit
+  "porn", "porno", "pornography", "blowjob", "handjob", "cumshot",
+  "masturbate", "masturbation", "dildo", "orgasm", "horny", "nude", "nudes",
+  "sext", "sexting", "boobs", "tits", "vagina", "penis", "fellatio",
+  "cunnilingus",
+  // Afrikaans profanity / insults
+  "fok", "fokken", "fokkof", "fokop", "kak", "poephol", "hoer", "teef",
+  "piel", "doos", "naai", "verdomp", "verdomde", "klootsak", "moerskont",
+  "kont",
+];
+
+function buildWordRegex(words) {
+  const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`\\b(${escaped.join("|")})\\b`, "i");
+}
+
+const TIER2_REGEX = buildWordRegex(TIER2_WORDS);
+
+// Screens learner-submitted free text for self-harm/crisis language (tier 1)
+// and profanity/slurs/sexual/discriminatory language (tier 2) BEFORE it is
+// sent to Supabase or Claude. Returns true if the content is clean and the
+// caller may proceed, or false if the content was blocked.
+async function checkContent(text, context, learnerId) {
+  if (!text || !text.trim()) return true;
+
+  for (const pattern of TIER1_PATTERNS) {
+    if (pattern.test(text)) {
+      await flagContent(text, 1, context, learnerId);
+      if (state.profile) {
+        state.profile.account_frozen = true;
+        state.profile.freeze_reason = "Self-harm content detected";
+      }
+      state.safetyOverlay = { severity: 1 };
+      render();
+      return false;
+    }
+  }
+
+  if (TIER2_REGEX.test(text)) {
+    await flagContent(text, 2, context, learnerId);
+    showToast(t("safetyTier2Message"), "error");
+    return false;
+  }
+
+  return true;
+}
+
+// Records a content safety flag, freezes the account when required, and
+// notifies the learner's parent/guardian.
+async function flagContent(text, severity, context, learnerId) {
+  try {
+    const { data: flag, error } = await sbClient
+      .from("content_flags")
+      .insert({
+        learner_id: learnerId,
+        severity,
+        flagged_text: text,
+        context,
+        account_frozen: severity === 1,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    if (severity === 1) {
+      await sbClient
+        .from("profiles")
+        .update({ account_frozen: true, freeze_reason: "Self-harm content detected" })
+        .eq("id", state.user.id);
+    } else if (severity === 2) {
+      // Freeze the account only after 3 tier-2 flags within the last 7 days.
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { count } = await sbClient
+        .from("content_flags")
+        .select("id", { count: "exact", head: true })
+        .eq("learner_id", learnerId)
+        .eq("severity", 2)
+        .gte("created_at", sevenDaysAgo);
+
+      if ((count || 0) >= 3) {
+        await sbClient
+          .from("profiles")
+          .update({ account_frozen: true, freeze_reason: "Repeated inappropriate language" })
+          .eq("id", state.user.id);
+        if (state.profile) {
+          state.profile.account_frozen = true;
+          state.profile.freeze_reason = "Repeated inappropriate language";
+          render();
+        }
+      }
+    }
+
+    await fetchWithTimeout(`${FN_URL}/notify-parent`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${state.session.access_token}`,
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({
+        learnerId,
+        severity,
+        flaggedText: text,
+        context,
+        flagId: flag ? flag.id : null,
+      }),
+    });
+  } catch (err) {
+    console.error("flagContent error:", err);
+  }
 }
 
 const API_TIMEOUT_MS = 15000;
@@ -1183,6 +1346,13 @@ function render() {
     return;
   }
 
+  // Account-frozen gate: a non-dismissable full-screen takeover with no
+  // tabs/navigation, shown until a parent/guardian confirms.
+  if (state.profile.role === "learner" && state.profile.account_frozen) {
+    app.innerHTML = renderAccountFrozenScreen();
+    return;
+  }
+
   app.innerHTML = renderMainScreen();
 
   // Diagnostic gate: a non-dismissable full-screen overlay shown on top of
@@ -1195,6 +1365,39 @@ function render() {
   ) {
     app.insertAdjacentHTML("beforeend", renderDiagnosticScreen());
   }
+
+  // Content-safety tier-1 overlay: shown when self-harm/crisis language is
+  // detected, so the learner sees support resources immediately.
+  if (state.safetyOverlay && state.safetyOverlay.severity === 1) {
+    app.insertAdjacentHTML("beforeend", renderSafetyTier1Overlay());
+  }
+}
+
+function renderAccountFrozenScreen() {
+  return `
+    <div class="diagnostic-overlay" id="account-frozen-screen">
+      <div class="diagnostic-modal">
+        ${diagnosticHeaderBar()}
+        <div class="diagnostic-body diagnostic-center">
+          <p class="diagnostic-lead">${escapeHtml(t("accountFrozenMessage"))}</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderSafetyTier1Overlay() {
+  return `
+    <div class="diagnostic-overlay" id="safety-tier1-modal">
+      <div class="diagnostic-modal">
+        ${diagnosticHeaderBar()}
+        <div class="diagnostic-body diagnostic-center">
+          <p class="diagnostic-lead">${escapeHtml(t("safetyCrisisMessage"))}</p>
+          <button class="btn btn-gold btn-block" data-action="safety-tier1-close">${t("btnClose")}</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function renderMainScreen() {
@@ -1875,7 +2078,7 @@ function sessionRetry() {
   runSessionPhase(s.retry.phase, s.retry.learnerInput, s.retry.context);
 }
 
-function sessionSubmitAnswer(index) {
+async function sessionSubmitAnswer(index) {
   const s = state.activeSession;
   const textarea = document.getElementById(`session-answer-${index}`);
   const answer = textarea ? textarea.value.trim() : "";
@@ -1883,6 +2086,10 @@ function sessionSubmitAnswer(index) {
     showToast(t("yourAnswerLabel"), "error");
     return;
   }
+
+  const ok = await checkContent(answer, "learn-attempt", state.learner.id);
+  if (!ok) return;
+
   s.messages[index].answerBox = false;
   s.messages[index].answered = true;
   s.messages.push({ role: "learner", phase: "attempt-answer", text: answer });
@@ -1896,6 +2103,9 @@ async function sessionSendChat(form) {
   const input = form.querySelector('[name="chatMessage"]');
   const text = input ? input.value.trim() : "";
   if (!text) return;
+
+  const ok = await checkContent(text, "learn-chat", state.learner.id);
+  if (!ok) return;
 
   input.value = "";
   s.messages.push({ role: "learner", phase: "chat", text });
@@ -2198,6 +2408,9 @@ async function generateStudyGuide() {
     showToast(t("enterTopicFirst"), "error");
     return;
   }
+
+  const ok = await checkContent(topicTitle, "study-guide-topic", state.learner.id);
+  if (!ok) return;
 
   const sg = state.studyGuide;
   sg.subjectId = subjectSelect.value;
@@ -2518,6 +2731,9 @@ async function refresherSubmitAnswer(sectionIndex, questionIndex) {
     return;
   }
 
+  const ok = await checkContent(answer, "refresher-answer", state.learner.id);
+  if (!ok) return;
+
   question.answer = answer;
   question.loading = true;
   render();
@@ -2722,6 +2938,12 @@ async function startMockExam() {
     .split(/[,\n]/)
     .map((s) => s.trim())
     .filter(Boolean);
+
+  if (topicsText.trim()) {
+    const ok = await checkContent(topicsText, "mock-exam-topics", state.learner.id);
+    if (!ok) return;
+  }
+
   const btn = document.querySelector('[data-action="start-exam"]');
   setButtonLoading(btn, true);
 
@@ -3330,6 +3552,11 @@ function attachGlobalListeners() {
         break;
       case "retake-diagnostic":
         retakeDiagnostic();
+        break;
+      case "safety-tier1-close":
+        state.safetyOverlay = null;
+        state.currentTab = "home";
+        render();
         break;
       case "open-topic":
         openTopicSession(target.dataset.topicId);

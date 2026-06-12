@@ -25,9 +25,15 @@ create table if not exists public.profiles (
   referral_count int default 0,
   referred_by text,
   lang text default 'en' check (lang in ('en', 'af')),
+  account_frozen boolean default false,
+  freeze_reason text,
   created_at timestamp default now(),
   updated_at timestamp default now()
 );
+
+-- Migration for existing tables (safe to re-run)
+alter table public.profiles add column if not exists account_frozen boolean default false;
+alter table public.profiles add column if not exists freeze_reason text;
 
 create table if not exists public.learners (
   id uuid primary key default gen_random_uuid(),
@@ -188,6 +194,19 @@ create table if not exists public.parent_alerts (
   created_at timestamp default now()
 );
 
+-- Content safety flags raised by the client-side checkContent() screen
+-- (self-harm/crisis language = severity 1, profanity/slurs/sexual/
+-- discriminatory language = severity 2).
+create table if not exists public.content_flags (
+  id uuid primary key default gen_random_uuid(),
+  learner_id uuid not null references public.learners(id) on delete cascade,
+  severity int not null check (severity in (1, 2)),
+  flagged_text text not null,
+  context text,
+  account_frozen boolean default false,
+  created_at timestamp default now()
+);
+
 -- Saved Study Guides (Exams tab > Study Guide section > "Save Guide")
 create table if not exists public.saved_guides (
   id uuid primary key default gen_random_uuid(),
@@ -215,6 +234,8 @@ create index if not exists idx_mock_exam_questions_exam_id on public.mock_exam_q
 create index if not exists idx_mock_exam_responses_question_id on public.mock_exam_responses(question_id);
 create index if not exists idx_parent_alerts_parent_id on public.parent_alerts(parent_id);
 create index if not exists idx_subjects_grade_curriculum on public.subjects(grade, curriculum);
+create index if not exists idx_content_flags_learner_id on public.content_flags(learner_id);
+create index if not exists idx_content_flags_created_at on public.content_flags(created_at);
 
 -- ---------------------------------------------------------------------
 -- FUNCTIONS & TRIGGERS
@@ -332,6 +353,7 @@ alter table public.referral_redemptions enable row level security;
 alter table public.subscription_history enable row level security;
 alter table public.parent_alerts enable row level security;
 alter table public.saved_guides enable row level security;
+alter table public.content_flags enable row level security;
 
 -- profiles
 drop policy if exists "Users can read own profile" on public.profiles;
@@ -481,6 +503,22 @@ create policy "Learners read own referral redemptions" on public.referral_redemp
 drop policy if exists "Users read own subscription history" on public.subscription_history;
 create policy "Users read own subscription history" on public.subscription_history for select using (
   auth.uid() = user_id
+);
+
+-- content_flags
+drop policy if exists "Learners can insert own content flags" on public.content_flags;
+create policy "Learners can insert own content flags" on public.content_flags for insert with check (
+  learner_id in (select id from public.learners where user_id = auth.uid())
+);
+
+drop policy if exists "Learners can read own content flags" on public.content_flags;
+create policy "Learners can read own content flags" on public.content_flags for select using (
+  learner_id in (select id from public.learners where user_id = auth.uid())
+);
+
+drop policy if exists "Parents can read linked learner content flags" on public.content_flags;
+create policy "Parents can read linked learner content flags" on public.content_flags for select using (
+  learner_id in (select unnest(linked_learners) from public.parents where user_id = auth.uid())
 );
 
 -- parent_alerts
