@@ -60,7 +60,7 @@ const translations = {
     retakeDiagnostic: "Retake Diagnostic",
 
     navLearn: "Learn",
-    navExams: "Exams",
+    navStudy: "Study",
     navParent: "Parent",
     navAccount: "Account",
     navHome: "Home",
@@ -213,7 +213,7 @@ const translations = {
     retakeDiagnostic: "Doen Diagnose Weer",
 
     navLearn: "Leer",
-    navExams: "Eksamens",
+    navStudy: "Studeer",
     navParent: "Ouer",
     navAccount: "Rekening",
     navHome: "Tuis",
@@ -594,7 +594,7 @@ async function loadUserData() {
       .single();
     if (learnerErr) throw learnerErr;
     state.learner = learner;
-    if (!["home", "learn", "exams", "account"].includes(state.currentTab)) state.currentTab = "home";
+    if (!["home", "learn", "study", "account"].includes(state.currentTab)) state.currentTab = "home";
 
     await Promise.all([loadSubjects(), loadTopics(), loadExams(), loadSessionsToday()]);
   } else if (profile.role === "parent") {
@@ -1004,7 +1004,7 @@ function renderMainScreen() {
       case "learn":
         tabContent = renderLearnTab();
         break;
-      case "exams":
+      case "study":
         tabContent = renderExamsTab();
         break;
       case "account":
@@ -1053,7 +1053,7 @@ function renderBottomNav() {
       ? [
           { id: "home", icon: "🏠", label: t("navHome") },
           { id: "learn", icon: "📘", label: t("navLearn") },
-          { id: "exams", icon: "📋", label: t("navExams") },
+          { id: "study", icon: "📋", label: t("navStudy") },
           { id: "account", icon: "👤", label: t("navAccount") },
         ]
       : [
@@ -1333,7 +1333,7 @@ function renderHomeTab() {
         <span class="quick-action-icon">📚</span>
         <span class="quick-action-label">${t("quickStartStudying")}</span>
       </button>
-      <button class="quick-action-card" data-action="switch-tab" data-tab="exams">
+      <button class="quick-action-card" data-action="switch-tab" data-tab="study">
         <span class="quick-action-icon">📝</span>
         <span class="quick-action-label">${t("quickMockExam")}</span>
       </button>
