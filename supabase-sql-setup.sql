@@ -475,9 +475,9 @@ returns table (
   total_learners bigint,
   sessions_today bigint,
   unreviewed_flags bigint,
-  tier_free bigint,
-  tier_basic bigint,
-  tier_premium bigint
+  free_learners bigint,
+  basic_learners bigint,
+  premium_learners bigint
 ) as $$
 begin
   if not public.is_admin() then
