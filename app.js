@@ -1572,7 +1572,7 @@ async function handleSignup(form) {
     const referralCode = `LEURO-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
     const { error: profileUpdateErr } = await sbClient
       .from("profiles")
-      .update({ full_name: fullName, referral_code: referralCode })
+      .update({ full_name: fullName, role: authRole, referral_code: referralCode })
       .eq("id", state.user.id);
     if (profileUpdateErr) {
       console.error("Failed to update profile after signup", profileUpdateErr);
