@@ -607,6 +607,15 @@ const state = {
   linkChildModalOpen: false,
   expandedSessionIds: {},
   expandedDateGroups: new Set(),
+  admin: {
+    currentTab: "users",
+    users: null,
+    usersLoading: false,
+    flags: null,
+    flagsLoading: false,
+    stats: null,
+    statsLoading: false,
+  },
   goalsDraft: {},
   subjects: [],
   topics: [],
@@ -1724,6 +1733,13 @@ function render() {
     return;
   }
 
+  // Admin accounts get a dedicated full-screen panel with no learner/parent
+  // tabs, diagnostic gate, or overlays.
+  if (state.profile.role === "admin") {
+    app.innerHTML = renderAdminScreen();
+    return;
+  }
+
   // Account-frozen gate: a non-dismissable full-screen takeover with no
   // tabs/navigation, shown until a parent/guardian confirms.
   if (state.profile.role === "learner" && state.profile.account_frozen) {
@@ -1867,6 +1883,371 @@ function renderBottomNav() {
         )
         .join("")}
     </nav>
+  `;
+}
+
+// ---------------------------------------------------------------------
+// ADMIN DASHBOARD
+// ---------------------------------------------------------------------
+function renderAdminScreen() {
+  const tab = state.admin.currentTab;
+  let tabContent = "";
+  switch (tab) {
+    case "flags":
+      tabContent = renderAdminFlagsTab();
+      break;
+    case "stats":
+      tabContent = renderAdminStatsTab();
+      break;
+    default:
+      tabContent = renderAdminUsersTab();
+  }
+
+  return `
+    <div class="screen no-nav-padding admin-screen">
+      <div class="topbar">
+        <div class="topbar-logo">${t("appName")}<span class="tm">™</span> Admin</div>
+        <div class="topbar-actions">
+          <span class="admin-email">${escapeHtml(state.profile.email)}</span>
+          <button type="button" class="btn btn-gold btn-sm" data-action="logout">Logout</button>
+        </div>
+      </div>
+      <div class="admin-tabs">
+        <button type="button" class="admin-tab-btn ${tab === "users" ? "active" : ""}" data-action="admin-switch-tab" data-tab="users">Users</button>
+        <button type="button" class="admin-tab-btn ${tab === "flags" ? "active" : ""}" data-action="admin-switch-tab" data-tab="flags">Flags</button>
+        <button type="button" class="admin-tab-btn ${tab === "stats" ? "active" : ""}" data-action="admin-switch-tab" data-tab="stats">Stats</button>
+      </div>
+      <div class="container admin-container">${tabContent}</div>
+    </div>
+  `;
+}
+
+// ---- USERS TAB --------------------------------------------------------
+async function loadAdminUsers() {
+  state.admin.usersLoading = true;
+  try {
+    const { data, error } = await sbClient
+      .from("profiles")
+      .select("id, email, role, subscription_tier, created_at, account_frozen")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    state.admin.users = data || [];
+  } catch (err) {
+    console.error(err);
+    state.admin.users = [];
+    showToast(err.message || t("errorGeneric"), "error");
+  } finally {
+    state.admin.usersLoading = false;
+    render();
+  }
+}
+
+function renderAdminUsersTab() {
+  if (state.admin.users === null) {
+    if (!state.admin.usersLoading) loadAdminUsers();
+    return `<div class="loading-row"><span class="spinner spinner-purple"></span> ${t("loading")}</div>`;
+  }
+
+  if (state.admin.users.length === 0) {
+    return `
+      <h3 class="screen-title" style="margin:0 0 14px;">Users</h3>
+      <div class="empty-state"><div class="empty-icon">👤</div><p>No users found.</p></div>
+    `;
+  }
+
+  return `
+    <h3 class="screen-title" style="margin:0 0 14px;">Users</h3>
+    ${state.admin.users.map((user) => renderAdminUserCard(user)).join("")}
+  `;
+}
+
+function renderAdminUserCard(user) {
+  const tier = user.subscription_tier || "free";
+  const tierBadgeClass =
+    tier === "premium" ? "tier-badge-premium" : tier === "basic" ? "tier-badge-basic" : "tier-badge-free";
+
+  return `
+    <div class="card admin-user-card">
+      <div class="admin-user-header">
+        <div class="admin-user-email">${escapeHtml(user.email)}</div>
+        <div class="admin-badges">
+          <span class="role-badge role-badge-${escapeHtml(user.role)}">${escapeHtml(capitalize(user.role))}</span>
+          <span class="tier-badge ${tierBadgeClass}">${escapeHtml(capitalize(tier))}</span>
+        </div>
+      </div>
+      <div class="admin-user-meta">
+        <span class="muted">Joined ${formatDate(user.created_at)}</span>
+        ${
+          user.account_frozen
+            ? `<span class="status-badge status-frozen">Frozen</span>`
+            : `<span class="status-badge status-active">Active</span>`
+        }
+      </div>
+      <div class="admin-user-actions">
+        <select class="admin-tier-select" data-action="admin-change-tier" data-user-id="${user.id}">
+          <option value="free" ${tier === "free" ? "selected" : ""}>Free</option>
+          <option value="basic" ${tier === "basic" ? "selected" : ""}>Basic</option>
+          <option value="premium" ${tier === "premium" ? "selected" : ""}>Premium</option>
+        </select>
+        <button type="button" class="btn btn-sm ${user.account_frozen ? "btn-primary" : "btn-danger"}" data-action="admin-toggle-freeze" data-user-id="${user.id}" data-frozen="${user.account_frozen ? "true" : "false"}">
+          ${user.account_frozen ? "Unfreeze" : "Freeze"}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function adminChangeTier(userId, tier) {
+  try {
+    const { error } = await sbClient.from("profiles").update({ subscription_tier: tier }).eq("id", userId);
+    if (error) throw error;
+    const user = (state.admin.users || []).find((u) => u.id === userId);
+    if (user) user.subscription_tier = tier;
+    showToast("Tier updated", "success");
+    render();
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || t("errorGeneric"), "error");
+  }
+}
+
+async function adminToggleFreeze(userId, currentlyFrozen) {
+  const next = !currentlyFrozen;
+  try {
+    const { error } = await sbClient.from("profiles").update({ account_frozen: next }).eq("id", userId);
+    if (error) throw error;
+    const user = (state.admin.users || []).find((u) => u.id === userId);
+    if (user) user.account_frozen = next;
+    showToast(next ? "Account frozen" : "Account unfrozen", "success");
+    render();
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || t("errorGeneric"), "error");
+  }
+}
+
+// ---- FLAGS TAB ----------------------------------------------------------
+async function loadAdminFlags() {
+  state.admin.flagsLoading = true;
+  try {
+    const { data: flags, error } = await sbClient
+      .from("content_flags")
+      .select("*")
+      .order("flagged_at", { ascending: false });
+    if (error) throw error;
+
+    const userIds = [...new Set((flags || []).map((f) => f.user_id).filter(Boolean))];
+    let profileMap = new Map();
+    if (userIds.length > 0) {
+      const { data: profiles, error: profileErr } = await sbClient
+        .from("profiles")
+        .select("id, email")
+        .in("id", userIds);
+      if (profileErr) throw profileErr;
+      profileMap = new Map((profiles || []).map((p) => [p.id, p]));
+    }
+
+    state.admin.flags = (flags || []).map((flag) => ({
+      ...flag,
+      email: profileMap.get(flag.user_id)?.email || "Unknown user",
+    }));
+  } catch (err) {
+    console.error(err);
+    state.admin.flags = [];
+    showToast(err.message || t("errorGeneric"), "error");
+  } finally {
+    state.admin.flagsLoading = false;
+    render();
+  }
+}
+
+function renderAdminFlagsTab() {
+  if (state.admin.flags === null) {
+    if (!state.admin.flagsLoading) loadAdminFlags();
+    return `<div class="loading-row"><span class="spinner spinner-purple"></span> ${t("loading")}</div>`;
+  }
+
+  if (state.admin.flags.length === 0) {
+    return `
+      <h3 class="screen-title" style="margin:0 0 14px;">Flags</h3>
+      <div class="empty-state"><div class="empty-icon">🚩</div><p>No content flags.</p></div>
+    `;
+  }
+
+  return `
+    <h3 class="screen-title" style="margin:0 0 14px;">Flags</h3>
+    ${state.admin.flags.map((flag) => renderAdminFlagCard(flag)).join("")}
+  `;
+}
+
+function renderAdminFlagCard(flag) {
+  const severityLabel = flag.severity === 1 ? "Severity 1 - Crisis" : "Severity 2 - Policy";
+  const severityClass = flag.severity === 1 ? "status-frozen" : "status-warning";
+
+  return `
+    <div class="card admin-flag-card">
+      <div class="admin-user-header">
+        <div class="admin-user-email">${escapeHtml(flag.email)}</div>
+        <span class="status-badge ${severityClass}">${severityLabel}</span>
+      </div>
+      <p class="admin-flag-text">${escapeHtml(truncateText(flag.flagged_text || "", 200))}</p>
+      <div class="admin-flag-meta">
+        <span class="muted">${formatDateTime(flag.flagged_at)}</span>
+        ${flag.account_frozen ? `<span class="status-badge status-frozen">Account Frozen</span>` : ""}
+        ${
+          flag.parent_notified
+            ? `<span class="status-badge status-active">Parent Notified</span>`
+            : `<span class="status-badge status-pending">Parent Not Notified</span>`
+        }
+        ${
+          flag.admin_reviewed
+            ? `<span class="status-badge status-active">Reviewed</span>`
+            : `<span class="status-badge status-pending">Unreviewed</span>`
+        }
+      </div>
+      <div class="admin-user-actions">
+        ${
+          !flag.admin_reviewed
+            ? `<button type="button" class="btn btn-sm btn-primary" data-action="admin-mark-reviewed" data-flag-id="${flag.id}">Mark Reviewed</button>`
+            : ""
+        }
+        ${
+          flag.account_frozen
+            ? `<button type="button" class="btn btn-sm btn-gold" data-action="admin-unfreeze-from-flag" data-flag-id="${flag.id}" data-user-id="${flag.user_id}">Unfreeze Account</button>`
+            : ""
+        }
+      </div>
+    </div>
+  `;
+}
+
+async function adminMarkFlagReviewed(flagId) {
+  try {
+    const { error } = await sbClient.from("content_flags").update({ admin_reviewed: true }).eq("id", flagId);
+    if (error) throw error;
+    const flag = (state.admin.flags || []).find((f) => f.id === flagId);
+    if (flag) flag.admin_reviewed = true;
+    showToast("Flag marked as reviewed", "success");
+    render();
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || t("errorGeneric"), "error");
+  }
+}
+
+async function adminUnfreezeFromFlag(flagId, userId) {
+  try {
+    const { error } = await sbClient.from("profiles").update({ account_frozen: false }).eq("id", userId);
+    if (error) throw error;
+    (state.admin.flags || []).forEach((f) => {
+      if (f.id === flagId) f.account_frozen = false;
+    });
+    (state.admin.users || []).forEach((u) => {
+      if (u.id === userId) u.account_frozen = false;
+    });
+    showToast("Account unfrozen", "success");
+    render();
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || t("errorGeneric"), "error");
+  }
+}
+
+// ---- STATS TAB ----------------------------------------------------------
+async function loadAdminStats() {
+  state.admin.statsLoading = true;
+  try {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const [totalUsersRes, totalLearnersRes, sessionsTodayRes, unreviewedFlagsRes, freeRes, basicRes, premiumRes] =
+      await Promise.all([
+        sbClient.from("profiles").select("id", { count: "exact", head: true }),
+        sbClient.from("profiles").select("id", { count: "exact", head: true }).eq("role", "learner"),
+        sbClient
+          .from("study_sessions")
+          .select("id", { count: "exact", head: true })
+          .gte("created_at", startOfDay.toISOString()),
+        sbClient.from("content_flags").select("id", { count: "exact", head: true }).eq("admin_reviewed", false),
+        sbClient
+          .from("profiles")
+          .select("id", { count: "exact", head: true })
+          .eq("role", "learner")
+          .eq("subscription_tier", "free"),
+        sbClient
+          .from("profiles")
+          .select("id", { count: "exact", head: true })
+          .eq("role", "learner")
+          .eq("subscription_tier", "basic"),
+        sbClient
+          .from("profiles")
+          .select("id", { count: "exact", head: true })
+          .eq("role", "learner")
+          .eq("subscription_tier", "premium"),
+      ]);
+
+    state.admin.stats = {
+      totalUsers: totalUsersRes.count || 0,
+      totalLearners: totalLearnersRes.count || 0,
+      sessionsToday: sessionsTodayRes.count || 0,
+      unreviewedFlags: unreviewedFlagsRes.count || 0,
+      tierBreakdown: {
+        free: freeRes.count || 0,
+        basic: basicRes.count || 0,
+        premium: premiumRes.count || 0,
+      },
+    };
+  } catch (err) {
+    console.error(err);
+    state.admin.stats = {
+      totalUsers: 0,
+      totalLearners: 0,
+      sessionsToday: 0,
+      unreviewedFlags: 0,
+      tierBreakdown: { free: 0, basic: 0, premium: 0 },
+    };
+    showToast(err.message || t("errorGeneric"), "error");
+  } finally {
+    state.admin.statsLoading = false;
+    render();
+  }
+}
+
+function renderAdminStatsTab() {
+  if (state.admin.stats === null) {
+    if (!state.admin.statsLoading) loadAdminStats();
+    return `<div class="loading-row"><span class="spinner spinner-purple"></span> ${t("loading")}</div>`;
+  }
+
+  const stats = state.admin.stats;
+
+  return `
+    <h3 class="screen-title" style="margin:0 0 14px;">Stats</h3>
+    <div class="admin-stats-grid">
+      <div class="card admin-stat-card">
+        <div class="admin-stat-num">${stats.totalUsers}</div>
+        <div class="admin-stat-lbl">Total Users</div>
+      </div>
+      <div class="card admin-stat-card">
+        <div class="admin-stat-num">${stats.totalLearners}</div>
+        <div class="admin-stat-lbl">Total Learners</div>
+      </div>
+      <div class="card admin-stat-card">
+        <div class="admin-stat-num">${stats.sessionsToday}</div>
+        <div class="admin-stat-lbl">Sessions Today</div>
+      </div>
+      <div class="card admin-stat-card">
+        <div class="admin-stat-num">${stats.unreviewedFlags}</div>
+        <div class="admin-stat-lbl">Unreviewed Flags</div>
+      </div>
+    </div>
+
+    <div class="section-title">Learner Tier Breakdown</div>
+    <div class="card">
+      <div class="account-row"><span class="label">Free</span><span class="value">${stats.tierBreakdown.free}</span></div>
+      <div class="account-row"><span class="label">Basic</span><span class="value">${stats.tierBreakdown.basic}</span></div>
+      <div class="account-row"><span class="label">Premium</span><span class="value">${stats.tierBreakdown.premium}</span></div>
+    </div>
   `;
 }
 
@@ -4444,6 +4825,19 @@ function attachGlobalListeners() {
       case "toggle-monthly-recap":
         toggleMonthlyRecap();
         break;
+      case "admin-switch-tab":
+        state.admin.currentTab = target.dataset.tab;
+        render();
+        break;
+      case "admin-toggle-freeze":
+        adminToggleFreeze(target.dataset.userId, target.dataset.frozen === "true");
+        break;
+      case "admin-mark-reviewed":
+        adminMarkFlagReviewed(target.dataset.flagId);
+        break;
+      case "admin-unfreeze-from-flag":
+        adminUnfreezeFromFlag(target.dataset.flagId, target.dataset.userId);
+        break;
       default:
         break;
     }
@@ -4494,6 +4888,9 @@ function attachGlobalListeners() {
         break;
       case "goals-set-target":
         goalsSetTarget(target.value);
+        break;
+      case "admin-change-tier":
+        adminChangeTier(target.dataset.userId, target.value);
         break;
       default:
         break;

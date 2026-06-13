@@ -415,6 +415,15 @@ begin
 end;
 $$ language plpgsql security definer set search_path = public;
 
+-- Admin dashboard helper: true if the calling user's profile has role = 'admin'.
+-- security definer so it can read profiles regardless of the caller's RLS access.
+create or replace function public.is_admin()
+returns boolean as $$
+  select exists (
+    select 1 from public.profiles where id = auth.uid() and role = 'admin'
+  );
+$$ language sql security definer set search_path = public stable;
+
 -- ---------------------------------------------------------------------
 -- ROW LEVEL SECURITY
 -- ---------------------------------------------------------------------
@@ -616,6 +625,22 @@ drop policy if exists "Parents update own alerts" on public.parent_alerts;
 create policy "Parents update own alerts" on public.parent_alerts for update using (
   parent_id in (select id from public.parents where user_id = auth.uid())
 );
+
+-- admin dashboard
+drop policy if exists "Admins can read all profiles" on public.profiles;
+create policy "Admins can read all profiles" on public.profiles for select using (public.is_admin());
+
+drop policy if exists "Admins can update all profiles" on public.profiles;
+create policy "Admins can update all profiles" on public.profiles for update using (public.is_admin());
+
+drop policy if exists "Admins can read all content flags" on public.content_flags;
+create policy "Admins can read all content flags" on public.content_flags for select using (public.is_admin());
+
+drop policy if exists "Admins can update all content flags" on public.content_flags;
+create policy "Admins can update all content flags" on public.content_flags for update using (public.is_admin());
+
+drop policy if exists "Admins can read all study sessions" on public.study_sessions;
+create policy "Admins can read all study sessions" on public.study_sessions for select using (public.is_admin());
 
 -- ---------------------------------------------------------------------
 -- SEED DATA: CAPS subjects, Grades 4-12

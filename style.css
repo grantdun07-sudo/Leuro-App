@@ -1703,6 +1703,172 @@ h1, h2, h3, h4 {
   text-decoration: underline;
 }
 
+/* ---------------------------------------------------------------------
+   Admin dashboard
+   --------------------------------------------------------------------- */
+
+.admin-email {
+  font-size: var(--font-size-caption);
+  color: rgba(255, 255, 255, 0.85);
+  word-break: break-all;
+}
+
+.admin-tabs {
+  display: flex;
+  background: var(--white);
+  border-bottom: 1px solid var(--border);
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.admin-tab-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: var(--spacing-16) var(--spacing-8);
+  font-family: var(--font-inter);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+}
+
+.admin-tab-btn.active {
+  color: var(--primary);
+  border-bottom-color: var(--accent);
+}
+
+.admin-container { padding-bottom: var(--spacing-32); }
+
+.admin-user-card,
+.admin-flag-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-8);
+}
+
+.admin-user-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-12);
+}
+
+.admin-user-email {
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.admin-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--spacing-4);
+  flex-shrink: 0;
+}
+
+.admin-user-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-8);
+}
+
+.admin-user-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-8);
+  flex-wrap: wrap;
+  margin-top: var(--spacing-4);
+}
+
+.admin-tier-select {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-inter);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+.admin-tier-select:focus {
+  outline: 2px solid var(--primary-light);
+  outline-offset: 1px;
+}
+
+.role-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: var(--radius-tag);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--white);
+}
+.role-badge-admin { background: var(--primary-dark); }
+.role-badge-parent { background: var(--primary); }
+.role-badge-learner { background: var(--primary-light); }
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: var(--radius-tag);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.status-active { background: rgba(76,175,80,0.12); color: #2e6b30; }
+.status-frozen { background: rgba(217,83,79,0.12); color: #8a3936; }
+.status-pending { background: var(--border); color: var(--text-muted); }
+.status-warning { background: rgba(230,179,71,0.2); color: var(--primary-dark); }
+
+.admin-flag-text {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.admin-flag-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-8);
+  flex-wrap: wrap;
+}
+
+.admin-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-12);
+  margin-bottom: var(--spacing-16);
+}
+
+.admin-stat-card {
+  text-align: center;
+  padding: var(--spacing-20) var(--spacing-8);
+}
+
+.admin-stat-num {
+  font-size: 30px;
+  font-weight: 900;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.admin-stat-lbl {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-top: var(--spacing-8);
+}
+
 @media (min-width: 600px) {
   body { font-size: var(--font-size-body); }
   .container { padding: var(--spacing-24); }
@@ -1712,4 +1878,5 @@ h1, h2, h3, h4 {
   .screen-title { font-size: 36px; }
   .section-title { font-size: var(--font-size-subheading); }
   .result-score { font-size: 40px; }
+  .admin-stats-grid { grid-template-columns: repeat(4, 1fr); }
 }
