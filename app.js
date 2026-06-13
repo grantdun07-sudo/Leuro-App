@@ -234,6 +234,8 @@ const translations = {
 
     sessionHistoryHeading: "Session History",
     noSessionsRecorded: "No sessions recorded yet.",
+    sessionCountOne: "{n} session",
+    sessionCountMany: "{n} sessions",
     viewFullSession: "View full session",
     hideFullSession: "Hide full session",
     learnerLabel: "Learner:",
@@ -511,6 +513,8 @@ const translations = {
 
     sessionHistoryHeading: "Sessiegeskiedenis",
     noSessionsRecorded: "Nog geen sessies aangeteken nie.",
+    sessionCountOne: "{n} sessie",
+    sessionCountMany: "{n} sessies",
     viewFullSession: "Bekyk volledige sessie",
     hideFullSession: "Verberg volledige sessie",
     learnerLabel: "Leerder:",
@@ -602,6 +606,7 @@ const state = {
   showLinkChildScreen: false,
   linkChildModalOpen: false,
   expandedSessionIds: {},
+  expandedDateGroups: new Set(),
   goalsDraft: {},
   subjects: [],
   topics: [],
@@ -3698,12 +3703,18 @@ function renderSessionHistory(sessions) {
   }
 
   return groups
-    .map(
-      (group) => `
-        <div class="session-date-header">${escapeHtml(group.label)}</div>
-        ${group.sessions.map((session) => renderSessionHistoryItem(session)).join("")}
-      `,
-    )
+    .map((group) => {
+      const isOpen = state.expandedDateGroups.has(group.label);
+      const count = group.sessions.length;
+      const countLabel = (count === 1 ? t("sessionCountOne") : t("sessionCountMany")).replace("{n}", count);
+      return `
+        <button type="button" class="session-date-header" data-action="toggle-date-group" data-date-label="${escapeHtml(group.label)}">
+          <span>${escapeHtml(group.label)} (${escapeHtml(countLabel)})</span>
+          <span class="session-date-chevron">${isOpen ? "▼" : "▶"}</span>
+        </button>
+        ${isOpen ? group.sessions.map((session) => renderSessionHistoryItem(session)).join("") : ""}
+      `;
+    })
     .join("");
 }
 
@@ -4402,6 +4413,16 @@ function attachGlobalListeners() {
         state.expandedSessionIds[target.dataset.sessionId] = !state.expandedSessionIds[target.dataset.sessionId];
         render();
         break;
+      case "toggle-date-group": {
+        const dateLabel = target.dataset.dateLabel;
+        if (state.expandedDateGroups.has(dateLabel)) {
+          state.expandedDateGroups.delete(dateLabel);
+        } else {
+          state.expandedDateGroups.add(dateLabel);
+        }
+        render();
+        break;
+      }
       case "goals-toggle-subject":
         goalsToggleSubject(target.dataset.learnerId, target.dataset.subjectId);
         break;
