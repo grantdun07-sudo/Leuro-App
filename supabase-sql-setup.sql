@@ -424,6 +424,77 @@ returns boolean as $$
   );
 $$ language sql security definer set search_path = public stable;
 
+-- Admin dashboard: return every profile (security definer bypasses RLS, but
+-- the is_admin() guard ensures only admins ever receive rows).
+create or replace function public.admin_get_all_profiles()
+returns setof public.profiles as $$
+begin
+  if not public.is_admin() then
+    raise exception 'not authorized';
+  end if;
+  return query
+    select * from public.profiles order by created_at desc;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+-- Admin dashboard: return every content flag joined to the reporting user's email.
+create or replace function public.admin_get_all_flags()
+returns table (
+  id uuid,
+  learner_id uuid,
+  user_id uuid,
+  severity int,
+  flagged_text text,
+  context text,
+  account_frozen boolean,
+  parent_notified boolean,
+  parent_acknowledged boolean,
+  admin_reviewed boolean,
+  flagged_at timestamp,
+  created_at timestamp,
+  email text
+) as $$
+begin
+  if not public.is_admin() then
+    raise exception 'not authorized';
+  end if;
+  return query
+    select cf.id, cf.learner_id, cf.user_id, cf.severity, cf.flagged_text,
+           cf.context, cf.account_frozen, cf.parent_notified, cf.parent_acknowledged,
+           cf.admin_reviewed, cf.flagged_at, cf.created_at, p.email
+    from public.content_flags cf
+    left join public.profiles p on p.id = cf.user_id
+    order by cf.flagged_at desc;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+-- Admin dashboard: return a single row of aggregate platform stats.
+create or replace function public.admin_get_stats()
+returns table (
+  total_users bigint,
+  total_learners bigint,
+  sessions_today bigint,
+  unreviewed_flags bigint,
+  tier_free bigint,
+  tier_basic bigint,
+  tier_premium bigint
+) as $$
+begin
+  if not public.is_admin() then
+    raise exception 'not authorized';
+  end if;
+  return query
+    select
+      (select count(*) from public.profiles),
+      (select count(*) from public.profiles where role = 'learner'),
+      (select count(*) from public.study_sessions where created_at >= date_trunc('day', now())),
+      (select count(*) from public.content_flags where admin_reviewed = false),
+      (select count(*) from public.profiles where role = 'learner' and subscription_tier = 'free'),
+      (select count(*) from public.profiles where role = 'learner' and subscription_tier = 'basic'),
+      (select count(*) from public.profiles where role = 'learner' and subscription_tier = 'premium');
+end;
+$$ language plpgsql security definer set search_path = public;
+
 -- ---------------------------------------------------------------------
 -- ROW LEVEL SECURITY
 -- ---------------------------------------------------------------------

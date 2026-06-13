@@ -1926,13 +1926,9 @@ function renderAdminScreen() {
 async function loadAdminUsers() {
   state.admin.usersLoading = true;
   try {
-    const { data, error } = await sbClient
-      .from("profiles")
-      .select("id, email, role, subscription_tier, created_at, account_frozen")
-      .order("created_at", { ascending: false })
-      .limit(500);
+    const { data, error } = await sbClient.rpc("admin_get_all_profiles");
     if (error) {
-      console.error("Admin profiles fetch failed (likely RLS):", error);
+      console.error("Admin profiles fetch failed:", error);
       throw error;
     }
     state.admin.users = data || [];
@@ -2034,26 +2030,12 @@ async function adminToggleFreeze(userId, currentlyFrozen) {
 async function loadAdminFlags() {
   state.admin.flagsLoading = true;
   try {
-    const { data: flags, error } = await sbClient
-      .from("content_flags")
-      .select("*")
-      .order("flagged_at", { ascending: false });
+    const { data, error } = await sbClient.rpc("admin_get_all_flags");
     if (error) throw error;
 
-    const userIds = [...new Set((flags || []).map((f) => f.user_id).filter(Boolean))];
-    let profileMap = new Map();
-    if (userIds.length > 0) {
-      const { data: profiles, error: profileErr } = await sbClient
-        .from("profiles")
-        .select("id, email")
-        .in("id", userIds);
-      if (profileErr) throw profileErr;
-      profileMap = new Map((profiles || []).map((p) => [p.id, p]));
-    }
-
-    state.admin.flags = (flags || []).map((flag) => ({
+    state.admin.flags = (data || []).map((flag) => ({
       ...flag,
-      email: profileMap.get(flag.user_id)?.email || "Unknown user",
+      email: flag.email || "Unknown user",
     }));
   } catch (err) {
     console.error(err);
@@ -2161,44 +2143,19 @@ async function adminUnfreezeFromFlag(flagId, userId) {
 async function loadAdminStats() {
   state.admin.statsLoading = true;
   try {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const [totalUsersRes, totalLearnersRes, sessionsTodayRes, unreviewedFlagsRes, freeRes, basicRes, premiumRes] =
-      await Promise.all([
-        sbClient.from("profiles").select("id", { count: "exact", head: true }),
-        sbClient.from("profiles").select("id", { count: "exact", head: true }).eq("role", "learner"),
-        sbClient
-          .from("study_sessions")
-          .select("id", { count: "exact", head: true })
-          .gte("created_at", startOfDay.toISOString()),
-        sbClient.from("content_flags").select("id", { count: "exact", head: true }).eq("admin_reviewed", false),
-        sbClient
-          .from("profiles")
-          .select("id", { count: "exact", head: true })
-          .eq("role", "learner")
-          .eq("subscription_tier", "free"),
-        sbClient
-          .from("profiles")
-          .select("id", { count: "exact", head: true })
-          .eq("role", "learner")
-          .eq("subscription_tier", "basic"),
-        sbClient
-          .from("profiles")
-          .select("id", { count: "exact", head: true })
-          .eq("role", "learner")
-          .eq("subscription_tier", "premium"),
-      ]);
+    const { data, error } = await sbClient.rpc("admin_get_stats");
+    if (error) throw error;
+    const row = (data && data[0]) || {};
 
     state.admin.stats = {
-      totalUsers: totalUsersRes.count || 0,
-      totalLearners: totalLearnersRes.count || 0,
-      sessionsToday: sessionsTodayRes.count || 0,
-      unreviewedFlags: unreviewedFlagsRes.count || 0,
+      totalUsers: row.total_users || 0,
+      totalLearners: row.total_learners || 0,
+      sessionsToday: row.sessions_today || 0,
+      unreviewedFlags: row.unreviewed_flags || 0,
       tierBreakdown: {
-        free: freeRes.count || 0,
-        basic: basicRes.count || 0,
-        premium: premiumRes.count || 0,
+        free: row.tier_free || 0,
+        basic: row.tier_basic || 0,
+        premium: row.tier_premium || 0,
       },
     };
   } catch (err) {
