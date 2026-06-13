@@ -2157,9 +2157,9 @@ async function loadAdminStats() {
       sessionsToday: Number(row.sessions_today) || 0,
       unreviewedFlags: Number(row.unreviewed_flags) || 0,
       tierBreakdown: {
-        free: Number(row.tier_free) || 0,
-        basic: Number(row.tier_basic) || 0,
-        premium: Number(row.tier_premium) || 0,
+        free: Number(row.free_learners) || 0,
+        basic: Number(row.basic_learners) || 0,
+        premium: Number(row.premium_learners) || 0,
       },
     };
   } catch (err) {
