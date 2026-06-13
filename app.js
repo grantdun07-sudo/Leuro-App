@@ -1997,7 +1997,8 @@ function renderAdminUserCard(user) {
   `;
 }
 
-async function adminChangeTier(userId, tier) {
+async function adminChangeTier(userId, tier, selectEl) {
+  if (selectEl) selectEl.disabled = true;
   try {
     const { error } = await sbClient.from("profiles").update({ subscription_tier: tier }).eq("id", userId);
     if (error) throw error;
@@ -2007,12 +2008,14 @@ async function adminChangeTier(userId, tier) {
     render();
   } catch (err) {
     console.error(err);
+    if (selectEl) selectEl.disabled = false;
     showToast(err.message || t("errorGeneric"), "error");
   }
 }
 
-async function adminToggleFreeze(userId, currentlyFrozen) {
+async function adminToggleFreeze(userId, currentlyFrozen, btn) {
   const next = !currentlyFrozen;
+  setButtonLoading(btn, true);
   try {
     const { error } = await sbClient.from("profiles").update({ account_frozen: next }).eq("id", userId);
     if (error) throw error;
@@ -2022,6 +2025,7 @@ async function adminToggleFreeze(userId, currentlyFrozen) {
     render();
   } catch (err) {
     console.error(err);
+    setButtonLoading(btn, false);
     showToast(err.message || t("errorGeneric"), "error");
   }
 }
@@ -2107,7 +2111,8 @@ function renderAdminFlagCard(flag) {
   `;
 }
 
-async function adminMarkFlagReviewed(flagId) {
+async function adminMarkFlagReviewed(flagId, btn) {
+  setButtonLoading(btn, true);
   try {
     const { error } = await sbClient.from("content_flags").update({ admin_reviewed: true }).eq("id", flagId);
     if (error) throw error;
@@ -2117,11 +2122,13 @@ async function adminMarkFlagReviewed(flagId) {
     render();
   } catch (err) {
     console.error(err);
+    setButtonLoading(btn, false);
     showToast(err.message || t("errorGeneric"), "error");
   }
 }
 
-async function adminUnfreezeFromFlag(flagId, userId) {
+async function adminUnfreezeFromFlag(flagId, userId, btn) {
+  setButtonLoading(btn, true);
   try {
     const { error } = await sbClient.from("profiles").update({ account_frozen: false }).eq("id", userId);
     if (error) throw error;
@@ -2135,6 +2142,7 @@ async function adminUnfreezeFromFlag(flagId, userId) {
     render();
   } catch (err) {
     console.error(err);
+    setButtonLoading(btn, false);
     showToast(err.message || t("errorGeneric"), "error");
   }
 }
@@ -4811,13 +4819,13 @@ function attachGlobalListeners() {
         render();
         break;
       case "admin-toggle-freeze":
-        adminToggleFreeze(target.dataset.userId, target.dataset.frozen === "true");
+        adminToggleFreeze(target.dataset.userId, target.dataset.frozen === "true", target);
         break;
       case "admin-mark-reviewed":
-        adminMarkFlagReviewed(target.dataset.flagId);
+        adminMarkFlagReviewed(target.dataset.flagId, target);
         break;
       case "admin-unfreeze-from-flag":
-        adminUnfreezeFromFlag(target.dataset.flagId, target.dataset.userId);
+        adminUnfreezeFromFlag(target.dataset.flagId, target.dataset.userId, target);
         break;
       default:
         break;
@@ -4871,7 +4879,7 @@ function attachGlobalListeners() {
         goalsSetTarget(target.value);
         break;
       case "admin-change-tier":
-        adminChangeTier(target.dataset.userId, target.value);
+        adminChangeTier(target.dataset.userId, target.value, target);
         break;
       default:
         break;
