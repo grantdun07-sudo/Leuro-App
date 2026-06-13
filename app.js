@@ -232,6 +232,19 @@ const translations = {
     scoreLabel: "Score",
     sessionsLabel: "Sessions",
 
+    sessionHistoryHeading: "Session History",
+    noSessionsRecorded: "No sessions recorded yet.",
+    viewFullSession: "View full session",
+    hideFullSession: "Hide full session",
+    learnerLabel: "Learner:",
+    today: "Today",
+    yesterday: "Yesterday",
+    phaseExplain: "Learn",
+    phaseExample: "Example",
+    phaseAttempt: "Practice",
+    phaseFeedback: "Feedback",
+    phaseChat: "Chat",
+
     goalsHeading: "Goals",
     weeklySessionTargetLabel: "Weekly session target",
     weeklySessionTargetHelp: "How many study sessions should {name} aim for each week?",
@@ -496,6 +509,19 @@ const translations = {
     scoreLabel: "Punt",
     sessionsLabel: "Sessies",
 
+    sessionHistoryHeading: "Sessiegeskiedenis",
+    noSessionsRecorded: "Nog geen sessies aangeteken nie.",
+    viewFullSession: "Bekyk volledige sessie",
+    hideFullSession: "Verberg volledige sessie",
+    learnerLabel: "Leerder:",
+    today: "Vandag",
+    yesterday: "Gister",
+    phaseExplain: "Leer",
+    phaseExample: "Voorbeeld",
+    phaseAttempt: "Oefening",
+    phaseFeedback: "Terugvoer",
+    phaseChat: "Klets",
+
     goalsHeading: "Doelwitte",
     weeklySessionTargetLabel: "Weeklikse sessiedoelwit",
     weeklySessionTargetHelp: "Hoeveel studiesessies moet {name} elke week nastreef?",
@@ -575,6 +601,7 @@ const state = {
   selectedLearnerId: null,
   showLinkChildScreen: false,
   linkChildModalOpen: false,
+  expandedSessionIds: {},
   goalsDraft: {},
   subjects: [],
   topics: [],
@@ -1301,7 +1328,7 @@ async function loadParentData() {
 
   const enriched = await Promise.all(
     (learners || []).map(async (learner) => {
-      const [{ data: topics }, { data: activity }, { data: weekSessions }, { data: exams }] = await Promise.all([
+      const [{ data: topics }, { data: activity }, { data: weekSessions }, { data: exams }, { data: sessionHistory }] = await Promise.all([
         sbClient.from("topics").select("id").eq("learner_id", learner.id),
         sbClient
           .from("study_sessions")
@@ -1322,6 +1349,12 @@ async function loadParentData() {
           .eq("learner_id", learner.id)
           .order("created_at", { ascending: false })
           .limit(10),
+        sbClient
+          .from("study_sessions")
+          .select("id, learner_id, phase, learner_input, ai_response, created_at, completed_at")
+          .eq("learner_id", learner.id)
+          .order("created_at", { ascending: false })
+          .limit(50),
       ]);
 
       const profile = profileMap.get(learner.user_id);
@@ -1347,6 +1380,7 @@ async function loadParentData() {
         weekSubjects,
         exams: examsWithNames,
         gradeSubjects,
+        sessions: sessionHistory || [],
       };
     }),
   );
@@ -3641,6 +3675,93 @@ function renderParentActivityTab() {
         ? `<p class="muted">${t("noMockExams")}</p>`
         : learner.exams.map((exam) => renderParentExamItem(exam)).join("")
     }
+
+    <div class="section-title">${t("sessionHistoryHeading")}</div>
+    ${renderSessionHistory(learner.sessions || [])}
+  `;
+}
+
+function renderSessionHistory(sessions) {
+  if (!sessions || sessions.length === 0) {
+    return `<p class="muted">${t("noSessionsRecorded")}</p>`;
+  }
+
+  const groups = [];
+  let lastLabel = null;
+  for (const session of sessions) {
+    const label = sessionDateGroupLabel(session.created_at);
+    if (label !== lastLabel) {
+      groups.push({ label, sessions: [] });
+      lastLabel = label;
+    }
+    groups[groups.length - 1].sessions.push(session);
+  }
+
+  return groups
+    .map(
+      (group) => `
+        <div class="session-date-header">${escapeHtml(group.label)}</div>
+        ${group.sessions.map((session) => renderSessionHistoryItem(session)).join("")}
+      `,
+    )
+    .join("");
+}
+
+function sessionDateGroupLabel(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (isSameDay(d, today)) return t("today");
+  if (isSameDay(d, yesterday)) return t("yesterday");
+  return formatDate(value);
+}
+
+function isSameDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function sessionPhaseLabel(phase) {
+  return t(`phase${capitalize(phase)}`);
+}
+
+function truncateText(text, maxLength) {
+  if (!text) return "";
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}...`;
+}
+
+function renderSessionHistoryItem(session) {
+  const expanded = !!state.expandedSessionIds[session.id];
+
+  return `
+    <div class="card session-history-card">
+      <div class="session-history-header">
+        <span class="session-phase-tag">${escapeHtml(sessionPhaseLabel(session.phase))}</span>
+        <span class="muted session-history-time">${formatDateTime(session.created_at)}</span>
+      </div>
+      <p class="session-history-preview">${escapeHtml(truncateText(session.learner_input || "", 100))}</p>
+      <button type="button" class="link-btn" data-action="toggle-session-detail" data-session-id="${session.id}">
+        ${expanded ? t("hideFullSession") : t("viewFullSession")}
+      </button>
+      ${
+        expanded
+          ? `
+        <div class="session-history-detail">
+          <div class="session-history-block">
+            <div class="session-history-label">${t("learnerLabel")}</div>
+            <div class="ai-bubble session-history-text">${escapeHtml(session.learner_input || "")}</div>
+          </div>
+          <div class="session-history-block">
+            <div class="session-history-label">${t("appName")}™:</div>
+            <div class="ai-bubble session-history-text session-history-ai">${escapeHtml(session.ai_response || "")}</div>
+          </div>
+        </div>
+      `
+          : ""
+      }
+    </div>
   `;
 }
 
@@ -4275,6 +4396,10 @@ function attachGlobalListeners() {
         break;
       case "select-child":
         state.selectedLearnerId = target.dataset.learnerId;
+        render();
+        break;
+      case "toggle-session-detail":
+        state.expandedSessionIds[target.dataset.sessionId] = !state.expandedSessionIds[target.dataset.sessionId];
         render();
         break;
       case "goals-toggle-subject":

@@ -1513,6 +1513,49 @@ h1, h2, h3, h4 {
 .activity-item:last-child { border-bottom: none; }
 .activity-item .activity-time { font-size: 11px; color: var(--text-muted); }
 
+/* Parent dashboard: Activity tab session history */
+.session-date-header {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: var(--spacing-16) 0 var(--spacing-8);
+}
+.session-history-card { padding: var(--spacing-16) var(--spacing-20); }
+.session-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-8);
+}
+.session-phase-tag {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: var(--radius-tag);
+  background: var(--accent);
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 800;
+}
+.session-history-time { font-size: 12px; }
+.session-history-preview {
+  margin: 0 0 var(--spacing-8);
+  font-size: var(--font-size-caption);
+  color: var(--text);
+}
+.session-history-detail { margin-top: var(--spacing-12); }
+.session-history-block { margin-bottom: var(--spacing-12); }
+.session-history-block:last-child { margin-bottom: 0; }
+.session-history-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
+  margin-bottom: var(--spacing-4);
+}
+.session-history-text { font-size: 13px; }
+.session-history-ai { border: 1.5px solid var(--border); }
+
 /* Parent dashboard: child selector (only shown with 2+ linked children) */
 .child-selector {
   flex-wrap: wrap;
