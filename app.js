@@ -1929,8 +1929,12 @@ async function loadAdminUsers() {
     const { data, error } = await sbClient
       .from("profiles")
       .select("id, email, role, subscription_tier, created_at, account_frozen")
-      .order("created_at", { ascending: false });
-    if (error) throw error;
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (error) {
+      console.error("Admin profiles fetch failed (likely RLS):", error);
+      throw error;
+    }
     state.admin.users = data || [];
   } catch (err) {
     console.error(err);
