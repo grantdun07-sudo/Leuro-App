@@ -2145,17 +2145,21 @@ async function loadAdminStats() {
   try {
     const { data, error } = await sbClient.rpc("admin_get_stats");
     if (error) throw error;
-    const row = (data && data[0]) || {};
+    console.log("admin_get_stats response", data);
+    // rpc() returns an array of rows for a TABLE-returning function, but may
+    // auto-unwrap to a single object - handle both. bigint counts can also
+    // arrive as strings, so coerce with Number().
+    const row = (Array.isArray(data) ? data[0] : data) || {};
 
     state.admin.stats = {
-      totalUsers: row.total_users || 0,
-      totalLearners: row.total_learners || 0,
-      sessionsToday: row.sessions_today || 0,
-      unreviewedFlags: row.unreviewed_flags || 0,
+      totalUsers: Number(row.total_users) || 0,
+      totalLearners: Number(row.total_learners) || 0,
+      sessionsToday: Number(row.sessions_today) || 0,
+      unreviewedFlags: Number(row.unreviewed_flags) || 0,
       tierBreakdown: {
-        free: row.tier_free || 0,
-        basic: row.tier_basic || 0,
-        premium: row.tier_premium || 0,
+        free: Number(row.tier_free) || 0,
+        basic: Number(row.tier_basic) || 0,
+        premium: Number(row.tier_premium) || 0,
       },
     };
   } catch (err) {
