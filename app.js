@@ -2881,7 +2881,12 @@ async function reloadLearner() {
 async function finalizeStructuredSession() {
   const previousSessionsCompleted = state.learner.sessions_completed || 0;
 
-  await Promise.all([loadTopics(), loadSessionsToday(), reloadLearner()]);
+  try {
+    await Promise.all([loadTopics(), loadSessionsToday(), reloadLearner()]);
+  } catch (err) {
+    console.error("Failed to refresh data after session", err);
+    showToast(t("errorGeneric"), "error");
+  }
 
   if (
     state.learner.sessions_completed > previousSessionsCompleted &&
@@ -2904,7 +2909,12 @@ async function finalizeStructuredSession() {
 
 async function sessionClose() {
   state.activeSession = null;
-  await loadSessionsToday();
+  try {
+    await loadSessionsToday();
+  } catch (err) {
+    console.error("Failed to refresh session count", err);
+    showToast(t("errorGeneric"), "error");
+  }
   render();
 }
 
@@ -3805,7 +3815,12 @@ function examClose() {
 
 async function examDone() {
   state.activeExam = null;
-  await loadExams();
+  try {
+    await loadExams();
+  } catch (err) {
+    console.error("Failed to refresh exams", err);
+    showToast(t("errorGeneric"), "error");
+  }
   render();
 }
 
@@ -4567,6 +4582,7 @@ async function setLanguage(lang) {
     if (error) throw error;
   } catch (err) {
     console.error("Failed to persist language preference", err);
+    showToast(t("errorGeneric"), "error");
   }
 }
 
