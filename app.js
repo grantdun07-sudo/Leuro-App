@@ -252,6 +252,7 @@ const translations = {
     weeklySessionTargetHelp: "How many study sessions should {name} aim for each week?",
     focusSubjectsLabel: "Focus subjects",
     focusSubjectsHelp: "Suggest subjects for {name} to focus on this week.",
+    noSubjectsForGrade: "No subjects available for this grade yet.",
     btnSaveGoals: "Save Goals",
     goalsSaved: "Goals saved!",
     goalsVisibleNote: "{name} will see these as suggested goals.",
@@ -531,6 +532,7 @@ const translations = {
     weeklySessionTargetHelp: "Hoeveel studiesessies moet {name} elke week nastreef?",
     focusSubjectsLabel: "Fokusvakke",
     focusSubjectsHelp: "Stel vakke voor waarop {name} hierdie week kan fokus.",
+    noSubjectsForGrade: "Nog geen vakke beskikbaar vir hierdie graad nie.",
     btnSaveGoals: "Stoor Doelwitte",
     goalsSaved: "Doelwitte gestoor!",
     goalsVisibleNote: "{name} sal dit as voorgestelde doelwitte sien.",
@@ -4046,7 +4048,7 @@ function renderParentActivityTab() {
     <div class="section-title">${t("mockExamsHeading")}</div>
     ${
       learner.exams.length === 0
-        ? `<p class="muted">${t("noMockExams")}</p>`
+        ? `<div class="empty-state"><div class="empty-icon">📝</div><p>${t("noMockExams")}</p></div>`
         : learner.exams.map((exam) => renderParentExamItem(exam)).join("")
     }
 
@@ -4057,7 +4059,7 @@ function renderParentActivityTab() {
 
 function renderSessionHistory(sessions) {
   if (!sessions || sessions.length === 0) {
-    return `<p class="muted">${t("noSessionsRecorded")}</p>`;
+    return `<div class="empty-state"><div class="empty-icon">📅</div><p>${t("noSessionsRecorded")}</p></div>`;
   }
 
   const groups = [];
@@ -4193,13 +4195,17 @@ function renderParentGoalsTab() {
     <div class="card">
       <div class="section-title" style="margin-top:0;">${t("focusSubjectsLabel")}</div>
       <p class="muted">${t("focusSubjectsHelp").replace("{name}", escapeHtml(firstName))}</p>
-      <div class="chip-row" style="margin-top:var(--spacing-12);">
-        ${learner.gradeSubjects
-          .map(
-            (s) => `<button type="button" class="topic-chip ${draft.focusSubjects.includes(s.id) ? "selected" : ""}" data-action="goals-toggle-subject" data-subject-id="${s.id}" data-learner-id="${learner.id}">${escapeHtml(s.name)}</button>`,
-          )
-          .join("")}
-      </div>
+      ${
+        learner.gradeSubjects.length === 0
+          ? `<div class="empty-state"><div class="empty-icon">📚</div><p>${t("noSubjectsForGrade")}</p></div>`
+          : `<div class="chip-row" style="margin-top:var(--spacing-12);">
+              ${learner.gradeSubjects
+                .map(
+                  (s) => `<button type="button" class="topic-chip ${draft.focusSubjects.includes(s.id) ? "selected" : ""}" data-action="goals-toggle-subject" data-subject-id="${s.id}" data-learner-id="${learner.id}">${escapeHtml(s.name)}</button>`,
+                )
+                .join("")}
+            </div>`
+      }
     </div>
 
     <p class="muted">${t("goalsVisibleNote").replace("{name}", escapeHtml(firstName))}</p>
