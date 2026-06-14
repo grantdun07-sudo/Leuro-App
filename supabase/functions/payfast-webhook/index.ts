@@ -4,24 +4,22 @@
 // subscription payments and activates / records the learner's plan.
 //
 // PayFast posts as application/x-www-form-urlencoded and WITHOUT a JWT, so
-// this function must be deployed with JWT verification turned OFF
-// (supabase functions deploy payfast-webhook --no-verify-jwt).
+// this function MUST be deployed with JWT verification turned OFF
+// (supabase functions deploy payfast-webhook --no-verify-jwt, or toggle
+// "Enforce JWT Verification" off in the dashboard).
 //
-// STANDALONE: no shared imports - everything is inlined so this file can be
-// pasted directly into the Supabase dashboard editor.
-//
-// Authorization comes from the service role key, which bypasses RLS so the
-// function can update any learner's profile / insert subscription history.
+// STANDALONE: no shared imports and no SDK. All Supabase access is done with
+// plain Deno fetch() calls against the PostgREST REST API, authorized with
+// the service role key (which bypasses RLS). This keeps the file copy-paste
+// deployable straight into the Supabase dashboard editor.
 //
 // Flow:
-//   1. Parse the IPN form body.
-//   2. Read m_payment_id (format: LEURO-{userId}-{timestamp}) -> user_id.
-//   3. Read item_name ("Leuro Basic Monthly" / "Leuro Premium Monthly") -> tier.
-//   4. Update profiles.subscription_tier for that user.
-//   5. Insert a subscription_history row.
-//   6. Always return 200 OK so PayFast does not keep retrying.
-
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+//   1. Parse the IPN form body with URLSearchParams.
+//   2. Read m_payment_id (LEURO-{uuid}-{timestamp}) -> user_id.
+//   3. Read item_name -> tier ('premium' if it contains "remium", else 'basic').
+//   4. PATCH profiles.subscription_tier for that user.
+//   5. POST a row to subscription_history.
+//   6. Always return 200 OK so PayFast does not retry-storm us.
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -33,9 +31,20 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// Headers for every PostgREST request. The service role key is sent both as
+// apikey and as the Bearer token so it bypasses Row Level Security.
+function restHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+    ...extra,
+  };
+}
+
 // Extract the learner's user_id (a UUID, which itself contains hyphens) from
-// an m_payment_id of the form "LEURO-{uuid}-{timestamp}". We strip the prefix
-// and then drop the trailing "-{timestamp}" segment.
+// an m_payment_id of the form "LEURO-{uuid}-{timestamp}". Strip the prefix,
+// then drop the trailing "-{timestamp}" segment by splitting on the LAST dash.
 function extractUserId(mPaymentId: string): string | null {
   if (!mPaymentId) return null;
   const withoutPrefix = mPaymentId.replace(/^LEURO-/, "");
@@ -44,12 +53,10 @@ function extractUserId(mPaymentId: string): string | null {
   return withoutPrefix.slice(0, lastDash);
 }
 
-// Map the PayFast item_name to a subscription tier.
-function tierFromItemName(itemName: string): "basic" | "premium" | null {
-  const name = (itemName || "").toLowerCase();
-  if (name.includes("premium")) return "premium";
-  if (name.includes("basic")) return "basic";
-  return null;
+// Map the PayFast item_name to a subscription tier. "remium" matches both
+// "Premium" and "premium" without needing a case fold.
+function tierFromItemName(itemName: string): "premium" | "basic" {
+  return (itemName || "").includes("remium") ? "premium" : "basic";
 }
 
 Deno.serve(async (req: Request) => {
@@ -57,8 +64,8 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // PayFast retries on non-2xx, so we return 200 even for soft failures and
-  // log loudly instead.
+  // PayFast retries on any non-2xx response, so on soft failures we log loudly
+  // and still return 200.
   try {
     if (req.method !== "POST") {
       console.error("payfast-webhook: bad method:", req.method);
@@ -75,10 +82,11 @@ Deno.serve(async (req: Request) => {
     const mPaymentId = data["m_payment_id"] || "";
     const itemName = data["item_name"] || "";
     const paymentStatus = data["payment_status"] || "";
-    const amountGross = data["amount_gross"] || data["recurring_amount"] || data["amount"] || null;
+    const amountGross =
+      data["amount_gross"] || data["recurring_amount"] || data["amount"] || null;
     const pfPaymentId = data["pf_payment_id"] || mPaymentId || null;
 
-    // Only act on completed payments. Other statuses (e.g. CANCELLED) are
+    // Only act on completed payments. Anything else (e.g. CANCELLED) is
     // acknowledged but not applied.
     if (paymentStatus && paymentStatus.toUpperCase() !== "COMPLETE") {
       console.log("payfast-webhook: ignoring non-complete status:", paymentStatus);
@@ -86,57 +94,62 @@ Deno.serve(async (req: Request) => {
     }
 
     const userId = extractUserId(mPaymentId);
+    if (!userId) {
+      console.error("payfast-webhook: bad m_payment_id:", mPaymentId);
+      return new Response("OK", { status: 200, headers: corsHeaders });
+    }
     const tier = tierFromItemName(itemName);
 
-    if (!userId) {
-      console.error("payfast-webhook: could not extract user_id from m_payment_id:", mPaymentId);
-      return new Response("OK", { status: 200, headers: corsHeaders });
-    }
-    if (!tier) {
-      console.error("payfast-webhook: could not determine tier from item_name:", itemName);
-      return new Response("OK", { status: 200, headers: corsHeaders });
+    // Read the current tier first (for history's tier_from) via REST.
+    let tierFrom: string | null = null;
+    try {
+      const readRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=subscription_tier`,
+        { headers: restHeaders() },
+      );
+      if (readRes.ok) {
+        const rows = await readRes.json();
+        tierFrom = Array.isArray(rows) && rows[0] ? rows[0].subscription_tier ?? null : null;
+      } else {
+        console.error("payfast-webhook: profile read failed:", readRes.status, await readRes.text());
+      }
+    } catch (e) {
+      console.error("payfast-webhook: profile read error:", e);
     }
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-    // Read the current tier first so we can record tier_from in the history.
-    const { data: existing, error: readErr } = await supabase
-      .from("profiles")
-      .select("subscription_tier")
-      .eq("id", userId)
-      .single();
-    if (readErr) {
-      console.error("payfast-webhook: failed to read profile:", JSON.stringify(readErr));
-    }
-    const tierFrom = existing?.subscription_tier || null;
-
-    // 1) Activate the new tier.
-    const { error: updateErr } = await supabase
-      .from("profiles")
-      .update({ subscription_tier: tier })
-      .eq("id", userId);
-    if (updateErr) {
-      console.error("payfast-webhook: failed to update tier:", JSON.stringify(updateErr));
+    // 1) Activate the new tier (PATCH profiles).
+    const updateRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`,
+      {
+        method: "PATCH",
+        headers: restHeaders({ Prefer: "return=minimal" }),
+        body: JSON.stringify({ subscription_tier: tier }),
+      },
+    );
+    if (!updateRes.ok) {
+      console.error("payfast-webhook: tier update failed:", updateRes.status, await updateRes.text());
       return new Response("OK", { status: 200, headers: corsHeaders });
     }
     console.log(`payfast-webhook: set ${userId} -> ${tier}`);
 
-    // 2) Record the subscription event.
+    // 2) Record the subscription event (POST subscription_history).
     const historyRow = {
       user_id: userId,
       tier_from: tierFrom,
       tier_to: tier,
-      amount_paid: amountGross ? Number(amountGross) : null,
+      amount_paid: amountGross !== null ? Number(amountGross) : null,
       currency: "ZAR",
       payment_ref: pfPaymentId,
       source: "payfast",
     };
-    const { error: historyErr } = await supabase
-      .from("subscription_history")
-      .insert(historyRow);
-    if (historyErr) {
-      console.error("payfast-webhook: failed to insert history:", JSON.stringify(historyErr));
+    const historyRes = await fetch(`${SUPABASE_URL}/rest/v1/subscription_history`, {
+      method: "POST",
+      headers: restHeaders({ Prefer: "return=minimal" }),
+      body: JSON.stringify(historyRow),
+    });
+    if (!historyRes.ok) {
       // Tier is already updated; don't fail the webhook over history logging.
+      console.error("payfast-webhook: history insert failed:", historyRes.status, await historyRes.text());
     } else {
       console.log("payfast-webhook: recorded subscription_history for", userId);
     }
