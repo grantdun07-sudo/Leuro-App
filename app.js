@@ -1797,7 +1797,6 @@ function render() {
   // Diagnostic gate: a non-dismissable full-screen overlay shown on top of
   // the app whenever a learner has not completed their diagnostic
   // (diagnostic_level null or 0), or has chosen to retake it.
-  console.log('Diagnostic gate check, level:', state.learner?.diagnostic_level, 'showDiagnostic:', state.showDiagnostic);
   if (
     state.profile.role === "learner" &&
     state.learner &&
@@ -2552,16 +2551,13 @@ async function saveDiagnosticResult(d) {
 }
 
 async function diagnosticFinish() {
-  console.log('diagnosticFinish called, current diagnostic_level:', state.learner?.diagnostic_level);
   // If the result save is still in flight (e.g. the learner tapped Finish
   // immediately), wait for it so state.learner.diagnostic_level is set
   // before the gate below re-evaluates - otherwise render() would treat
   // this as an incomplete diagnostic and show it again from the start.
-  console.log('About to save diagnostic result');
   if (state.diagnostic?.savePromise) {
     await state.diagnostic.savePromise;
   }
-  console.log('Save complete, diagnostic_level now:', state.learner?.diagnostic_level);
   document.getElementById("diagnostic-modal")?.remove();
   state.showDiagnostic = false;
   state.diagnostic = null;
