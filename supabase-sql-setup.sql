@@ -500,6 +500,49 @@ begin
 end;
 $$ language plpgsql security definer set search_path = public;
 
+-- Admin dashboard: permanently delete a user and every linked row.
+-- Deletes the NO ACTION-constrained tables first (parent_learner and
+-- content_flags reference profiles.id directly; saved_guides,
+-- referral_redemptions and parent_alerts reference learners.id/parents.id;
+-- subscription_history references auth.users.id), then deletes from
+-- auth.users, which cascades profiles, learners, parents, topics,
+-- diagnostic_attempts, study_sessions, mock_exams (-> mock_exam_questions ->
+-- mock_exam_responses) and referral_codes.
+--
+-- NOTE: public.parent_learner is a production table not yet defined
+-- elsewhere in this script (both columns FK to profiles.id, NO ACTION).
+create or replace function public.admin_delete_user(p_user_id uuid)
+returns void as $$
+declare
+  v_learner_id uuid;
+  v_parent_id  uuid;
+begin
+  if not public.is_admin() then
+    raise exception 'not authorized';
+  end if;
+
+  if p_user_id = auth.uid() then
+    raise exception 'cannot delete your own admin account';
+  end if;
+
+  select id into v_learner_id from public.learners where user_id = p_user_id;
+  select id into v_parent_id  from public.parents  where user_id = p_user_id;
+
+  delete from public.parent_learner where learner_id = p_user_id or parent_id = p_user_id;
+  delete from public.content_flags  where user_id = p_user_id or learner_id = p_user_id;
+
+  delete from public.saved_guides where learner_id = v_learner_id;
+  delete from public.referral_redemptions
+    where referrer_id = v_learner_id or referee_id = v_learner_id;
+  delete from public.parent_alerts
+    where learner_id = v_learner_id or parent_id = v_parent_id;
+
+  delete from public.subscription_history where user_id = p_user_id;
+
+  delete from auth.users where id = p_user_id;
+end;
+$$ language plpgsql security definer set search_path = public;
+
 -- ---------------------------------------------------------------------
 -- ROW LEVEL SECURITY
 -- ---------------------------------------------------------------------

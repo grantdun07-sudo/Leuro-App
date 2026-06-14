@@ -658,6 +658,7 @@ const state = {
     flagsLoading: false,
     stats: null,
     statsLoading: false,
+    deleteConfirm: null,
   },
   goalsDraft: {},
   subjects: [],
@@ -1986,6 +1987,7 @@ function renderAdminScreen() {
         <button type="button" class="admin-tab-btn ${tab === "stats" ? "active" : ""}" data-action="admin-switch-tab" data-tab="stats">Stats</button>
       </div>
       <div class="container admin-container">${tabContent}</div>
+      ${state.admin.deleteConfirm ? renderAdminDeleteUserModal() : ""}
     </div>
   `;
 }
@@ -2060,6 +2062,11 @@ function renderAdminUserCard(user) {
         <button type="button" class="btn btn-sm ${user.account_frozen ? "btn-primary" : "btn-danger"}" data-action="admin-toggle-freeze" data-user-id="${user.id}" data-frozen="${user.account_frozen ? "true" : "false"}">
           ${user.account_frozen ? "Unfreeze" : "Freeze"}
         </button>
+        ${
+          user.id !== state.profile.id
+            ? `<button type="button" class="btn btn-sm btn-danger" data-action="admin-delete-user-open" data-user-id="${user.id}" data-email="${escapeHtml(user.email)}">Delete</button>`
+            : ""
+        }
       </div>
     </div>
   `;
@@ -2090,6 +2097,47 @@ async function adminToggleFreeze(userId, currentlyFrozen, btn) {
     const user = (state.admin.users || []).find((u) => u.id === userId);
     if (user) user.account_frozen = next;
     showToast(next ? "Account frozen" : "Account unfrozen", "success");
+    render();
+  } catch (err) {
+    console.error(err);
+    setButtonLoading(btn, false);
+    showToast(err.message || t("errorGeneric"), "error");
+  }
+}
+
+function renderAdminDeleteUserModal() {
+  const { userId, email } = state.admin.deleteConfirm;
+  return `
+    <div class="modal-overlay">
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3>Delete User</h3>
+          <button class="modal-close" data-action="admin-delete-user-cancel">✕</button>
+        </div>
+        <div class="modal-body">
+          <p>This will <strong>permanently delete</strong> <strong>${escapeHtml(email)}</strong> and all linked data (learner/parent records, sessions, exams, study guides, flags, etc.). This cannot be undone.</p>
+          <div class="field">
+            <label>Type the email to confirm</label>
+            <input type="text" id="admin-delete-confirm-input" autocomplete="off" placeholder="${escapeHtml(email)}" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" data-action="admin-delete-user-cancel">Cancel</button>
+          <button type="button" class="btn btn-danger" id="admin-delete-confirm-btn" data-action="admin-delete-user-confirm" data-user-id="${userId}" disabled>Delete Permanently</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function adminDeleteUser(userId, btn) {
+  setButtonLoading(btn, true);
+  try {
+    const { error } = await sbClient.rpc("admin_delete_user", { p_user_id: userId });
+    if (error) throw error;
+    state.admin.users = (state.admin.users || []).filter((u) => u.id !== userId);
+    state.admin.deleteConfirm = null;
+    showToast("User deleted", "success");
     render();
   } catch (err) {
     console.error(err);
@@ -5024,6 +5072,17 @@ function attachGlobalListeners() {
       case "admin-toggle-freeze":
         adminToggleFreeze(target.dataset.userId, target.dataset.frozen === "true", target);
         break;
+      case "admin-delete-user-open":
+        state.admin.deleteConfirm = { userId: target.dataset.userId, email: target.dataset.email };
+        render();
+        break;
+      case "admin-delete-user-cancel":
+        state.admin.deleteConfirm = null;
+        render();
+        break;
+      case "admin-delete-user-confirm":
+        adminDeleteUser(target.dataset.userId, target);
+        break;
       case "admin-mark-reviewed":
         adminMarkFlagReviewed(target.dataset.flagId, target);
         break;
@@ -5087,5 +5146,12 @@ function attachGlobalListeners() {
       default:
         break;
     }
+  });
+
+  document.body.addEventListener("input", (e) => {
+    if (e.target.id !== "admin-delete-confirm-input") return;
+    const confirmBtn = document.getElementById("admin-delete-confirm-btn");
+    if (!confirmBtn || !state.admin.deleteConfirm) return;
+    confirmBtn.disabled = e.target.value !== state.admin.deleteConfirm.email;
   });
 }
