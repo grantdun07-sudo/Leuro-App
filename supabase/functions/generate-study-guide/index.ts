@@ -327,6 +327,23 @@ Deno.serve(async (req: Request) => {
     }
 
     const lang = profile?.lang ?? "en";
+    const tier = profile?.subscription_tier ?? "free";
+
+    // Study Guide and Exam Refresher (all phases) are Premium-only features.
+    // Gate them server-side so the limit cannot be bypassed by calling the
+    // function directly, mirroring the premium check in generate-mock-exam.
+    if (["studyguide", "refresher", "refresher-feedback"].includes(body.phase) && tier !== "premium") {
+      return jsonResponse(
+        {
+          error: "premium_required",
+          message:
+            lang === "af"
+              ? "Hierdie is 'n Premium-funksie. Gradeer op om toegang te kry."
+              : "This is a Premium feature. Upgrade to unlock it.",
+        },
+        403,
+      );
+    }
 
     // Standalone study guide generation (Exams tab) - no topic record needed.
     if (body.phase === "studyguide") {
@@ -492,8 +509,6 @@ Deno.serve(async (req: Request) => {
       .select("name")
       .eq("id", topic.subject_id)
       .single();
-
-    const tier = profile?.subscription_tier ?? "free";
 
     // Free tier: max 3 study sessions per day. A "session" starts at the
     // explain phase, so gate new sessions there.
