@@ -2519,7 +2519,8 @@ async function diagnosticNext() {
 
     // Persist the result now so the completion button can simply dismiss
     // the modal and navigate home with no pending async work.
-    await saveDiagnosticResult(d);
+    d.savePromise = saveDiagnosticResult(d);
+    await d.savePromise;
   }
 }
 
@@ -2549,9 +2550,14 @@ async function saveDiagnosticResult(d) {
   }
 }
 
-function diagnosticFinish() {
-  // The diagnostic result was already persisted before the results screen
-  // was shown, so this is a plain synchronous UI dismissal.
+async function diagnosticFinish() {
+  // If the result save is still in flight (e.g. the learner tapped Finish
+  // immediately), wait for it so state.learner.diagnostic_level is set
+  // before the gate below re-evaluates - otherwise render() would treat
+  // this as an incomplete diagnostic and show it again from the start.
+  if (state.diagnostic?.savePromise) {
+    await state.diagnostic.savePromise;
+  }
   document.getElementById("diagnostic-modal")?.remove();
   state.showDiagnostic = false;
   state.diagnostic = null;
