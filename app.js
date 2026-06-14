@@ -621,6 +621,13 @@ function t(key) {
   return (translations[lang] && translations[lang][key]) || translations.en[key] || key;
 }
 
+// Returns a subject's display name in the active language, falling back to
+// the English `name` when no Afrikaans translation is set.
+function subjectLabel(subject) {
+  if (!subject) return "";
+  return (state.lang === "af" && subject.name_af) || subject.name || "";
+}
+
 // ---------------------------------------------------------------------
 // STATE
 // ---------------------------------------------------------------------
@@ -1385,7 +1392,7 @@ async function loadParentData() {
       .eq("parent_id", parent.id)
       .order("created_at", { ascending: false })
       .limit(20),
-    sbClient.from("subjects").select("id, name, grade, curriculum"),
+    sbClient.from("subjects").select("id, name, name_af, grade, curriculum"),
   ]);
 
   const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
@@ -1425,11 +1432,11 @@ async function loadParentData() {
       const profile = profileMap.get(learner.user_id);
 
       const weekSubjectIds = new Set((weekSessions || []).map((s) => s.topics?.subject_id).filter(Boolean));
-      const weekSubjects = [...weekSubjectIds].map((id) => subjectMap.get(id)?.name).filter(Boolean);
+      const weekSubjects = [...weekSubjectIds].map((id) => subjectLabel(subjectMap.get(id))).filter(Boolean);
 
       const examsWithNames = (exams || []).map((exam) => ({
         ...exam,
-        subjectName: subjectMap.get(exam.subject_id)?.name || "",
+        subjectName: subjectLabel(subjectMap.get(exam.subject_id)),
       }));
 
       const gradeSubjects = (allSubjects || []).filter((s) => s.grade === learner.grade && s.curriculum === "caps");
@@ -2598,7 +2605,7 @@ function renderHomeTab() {
   const sessionsToday = state.sessionsToday || 0;
   const sessionsPct = Math.min(100, Math.round((sessionsToday / 3) * 100));
 
-  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
+  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
   const studiedTopics = state.topics.filter((tp) => tp.last_studied);
   const continueTopic = studiedTopics.length
     ? studiedTopics.reduce((a, b) => (new Date(a.last_studied) > new Date(b.last_studied) ? a : b))
@@ -2678,7 +2685,7 @@ function renderProgressSummary() {
 function renderLearnTab() {
   const tier = state.profile.subscription_tier;
   const limitReached = tier === "free" && state.sessionsToday >= 3;
-  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
+  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
 
   return `
     <div class="card">
@@ -2715,7 +2722,7 @@ function renderLearnTab() {
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
         <select id="topic-subject" required>
-          ${state.subjects.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}
+          ${state.subjects.map((s) => `<option value="${s.id}">${escapeHtml(subjectLabel(s))}</option>`).join("")}
         </select>
       </div>
       <div class="field-row">
@@ -3088,7 +3095,7 @@ function renderStudyGuideSection() {
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
         <select id="study-guide-subject">
-          ${state.subjects.map((s) => `<option value="${s.id}" ${sg.subjectId === s.id ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}
+          ${state.subjects.map((s) => `<option value="${s.id}" ${sg.subjectId === s.id ? "selected" : ""}>${escapeHtml(subjectLabel(s))}</option>`).join("")}
         </select>
       </div>
       <div class="field">
@@ -3137,7 +3144,7 @@ function renderStudyGuideCard(sg) {
 function renderMockExamSection() {
   const tier = state.profile.subscription_tier;
   const isPremium = tier === "premium";
-  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
+  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
   const completedExams = state.exams.filter((e) => e.completed_at);
   const mx = state.mockExamSetup;
 
@@ -3146,7 +3153,7 @@ function renderMockExamSection() {
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
         <select id="exam-subject">
-          ${state.subjects.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}
+          ${state.subjects.map((s) => `<option value="${s.id}">${escapeHtml(subjectLabel(s))}</option>`).join("")}
         </select>
       </div>
       <div class="field">
@@ -3316,7 +3323,7 @@ function renderRefresherSetup() {
     `;
   }
 
-  const subjectName = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
+  const subjectName = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
   const guideSubjectIds = [...new Set(guides.map((g) => g.subject_id).filter(Boolean))];
   const subjectId = guideSubjectIds.includes(r.subjectId) ? r.subjectId : guideSubjectIds[0] || null;
   const guidesForSubject = guides.filter((g) => g.subject_id === subjectId);
@@ -3895,7 +3902,7 @@ async function examDone() {
 
 function renderExamModal() {
   const e = state.activeExam;
-  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, s.name]));
+  const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
 
   if (e.results) {
     const percentage = e.results.totalMarks > 0 ? Math.round((e.results.totalAwarded / e.results.totalMarks) * 100) : 0;
@@ -4260,7 +4267,7 @@ function renderParentGoalsTab() {
           : `<div class="chip-row" style="margin-top:var(--spacing-12);">
               ${learner.gradeSubjects
                 .map(
-                  (s) => `<button type="button" class="topic-chip ${draft.focusSubjects.includes(s.id) ? "selected" : ""}" data-action="goals-toggle-subject" data-subject-id="${s.id}" data-learner-id="${learner.id}">${escapeHtml(s.name)}</button>`,
+                  (s) => `<button type="button" class="topic-chip ${draft.focusSubjects.includes(s.id) ? "selected" : ""}" data-action="goals-toggle-subject" data-subject-id="${s.id}" data-learner-id="${learner.id}">${escapeHtml(subjectLabel(s))}</button>`,
                 )
                 .join("")}
             </div>`
