@@ -112,6 +112,7 @@ const translations = {
 
     generating: "Leuro is thinking...",
     yourAnswerLabel: "Type your answer here",
+    enterAnswer: "Please enter an answer",
     btnSubmitAnswer: "Submit Answer",
     supportResources: "Support Resources",
     errorRetryContent: "Unable to generate content. Please try again in 30 seconds.",
@@ -191,6 +192,8 @@ const translations = {
     btnStartExam: "Start Mock Exam",
     premiumOnlyTitle: "Premium Feature",
     premiumOnlyMsg: "Mock exams are part of the Premium plan.",
+    studyGuidePremiumMsg: "Study Guides are part of the Premium plan.",
+    refresherPremiumMsg: "The Exam Refresher is part of the Premium plan.",
     btnUpgradeToPremium: "Upgrade to Premium",
     mediumHighPremiumNote: "🔒 Medium and High difficulty exams are a Premium feature.",
     completedExams: "Completed Exams",
@@ -404,6 +407,7 @@ const translations = {
 
     generating: "Leuro dink...",
     yourAnswerLabel: "Tik jou antwoord hier",
+    enterAnswer: "Voer asseblief 'n antwoord in",
     btnSubmitAnswer: "Dien Antwoord In",
     supportResources: "Ondersteuningshulpbronne",
     errorRetryContent: "Kon nie inhoud genereer nie. Probeer asseblief weer oor 30 sekondes.",
@@ -483,6 +487,8 @@ const translations = {
     btnStartExam: "Begin Toetseksamen",
     premiumOnlyTitle: "Premium-funksie",
     premiumOnlyMsg: "Toetseksamens is deel van die Premium-plan.",
+    studyGuidePremiumMsg: "Studiegidse is deel van die Premium-plan.",
+    refresherPremiumMsg: "Die Eksamenopfrisser is deel van die Premium-plan.",
     btnUpgradeToPremium: "Gradeer op na Premium",
     mediumHighPremiumNote: "🔒 Medium- en Hoë-moeilikheidsgraad-eksamens is 'n Premium-funksie.",
     completedExams: "Voltooide Eksamens",
@@ -2908,7 +2914,7 @@ async function sessionSubmitAnswer(index) {
   const textarea = document.getElementById(`session-answer-${index}`);
   const answer = textarea ? textarea.value.trim() : "";
   if (!answer) {
-    showToast(t("yourAnswerLabel"), "error");
+    showToast(t("enterAnswer"), "error");
     return;
   }
 
@@ -3099,7 +3105,26 @@ function renderExamsTab() {
   `;
 }
 
+// Renders a "Premium feature" lock card with an upgrade CTA, mirroring how the
+// Mock Exam tab steers free/basic learners to the Account tab to upgrade.
+function renderPremiumGate(messageKey) {
+  return `
+    <div class="card">
+      <div class="empty-state">
+        <div class="empty-icon">🔒</div>
+        <p><strong>${t("premiumOnlyTitle")}</strong></p>
+        <p>${t(messageKey)}</p>
+      </div>
+      <button class="btn btn-gold btn-block" data-action="switch-tab" data-tab="account">${t("btnUpgradeToPremium")}</button>
+    </div>
+  `;
+}
+
 function renderStudyGuideSection() {
+  if (state.profile.subscription_tier !== "premium") {
+    return renderPremiumGate("studyGuidePremiumMsg");
+  }
+
   const sg = state.studyGuide;
 
   return `
@@ -3234,6 +3259,11 @@ function examsSwitchView(view) {
 }
 
 async function generateStudyGuide() {
+  if (state.profile.subscription_tier !== "premium") {
+    showToast(t("studyGuidePremiumMsg"), "error");
+    return;
+  }
+
   const subjectSelect = document.getElementById("study-guide-subject");
   const topicInput = document.getElementById("study-guide-topic");
   if (!subjectSelect || !topicInput) return;
@@ -3305,6 +3335,10 @@ async function saveStudyGuide() {
 let refresherTimerId = null;
 
 function renderRefresherSection() {
+  if (state.profile.subscription_tier !== "premium") {
+    return renderPremiumGate("refresherPremiumMsg");
+  }
+
   const r = state.refresher;
   if (r.step === "active") return renderRefresherActive();
   if (r.step === "complete") return renderRefresherComplete();
@@ -3426,6 +3460,11 @@ function refresherSetLevel(level) {
 }
 
 async function refresherStart() {
+  if (state.profile.subscription_tier !== "premium") {
+    showToast(t("refresherPremiumMsg"), "error");
+    return;
+  }
+
   const r = state.refresher;
   if (!r.selectedTopics.length) {
     showToast(t("selectAtLeastOneTopic"), "error");
@@ -3562,7 +3601,7 @@ async function refresherSubmitAnswer(sectionIndex, questionIndex) {
   const textarea = document.getElementById(`refresher-answer-${sectionIndex}-${questionIndex}`);
   const answer = textarea ? textarea.value.trim() : "";
   if (!answer) {
-    showToast(t("yourAnswerLabel"), "error");
+    showToast(t("enterAnswer"), "error");
     return;
   }
 
