@@ -15,8 +15,11 @@ const FN_URL = `${SUPABASE_URL}/functions/v1`;
 const PAYFAST_CONFIG = {
   merchantId: "10000100",
   merchantKey: "46f0cd694581a",
+  passphrase: "jt7NOE43FZPn",
   processUrl: "https://sandbox.payfast.co.za/eng/process",
-  notifyUrl: "https://leuro-app.netlify.app/.netlify/functions/payfast-webhook",
+  notifyUrl: "https://izyrizwudvalrbqgbhgl.supabase.co/functions/v1/payfast-webhook",
+  returnUrl: "https://leuro-app.vercel.app/?payment=success",
+  cancelUrl: "https://leuro-app.vercel.app/?payment=cancelled",
 };
 
 const TIER_PRICES = { basic: 99, premium: 199 };
@@ -281,6 +284,18 @@ const translations = {
     premium: "Premium",
     perMonth: "/month",
     yourCurrentPlan: "Your current plan",
+    upgradeModalTitle: "Choose your plan",
+    upgradeModalIntro: "Pick the plan that suits you. Cancel anytime.",
+    btnSubscribe: "Subscribe",
+    featBasicUnlimited: "Unlimited sessions",
+    featBasic4Step: "Full 4-step loop",
+    featBasicAfrikaans: "Afrikaans",
+    featPremiumEverything: "Everything in Basic",
+    featPremiumStudyGuide: "Study Guide",
+    featPremiumMockExam: "Mock Exam",
+    featPremiumRefresher: "Exam Refresher",
+    paymentSuccessMsg: "Payment successful! Your plan is being activated.",
+    paymentCancelledMsg: "Payment cancelled.",
 
     loading: "Loading...",
     errorGeneric: "Something went wrong. Please try again.",
@@ -561,6 +576,18 @@ const translations = {
     premium: "Premium",
     perMonth: "/maand",
     yourCurrentPlan: "Jou huidige plan",
+    upgradeModalTitle: "Kies jou plan",
+    upgradeModalIntro: "Kies die plan wat by jou pas. Kanselleer enige tyd.",
+    btnSubscribe: "Teken in",
+    featBasicUnlimited: "Onbeperkte sessies",
+    featBasic4Step: "Volledige 4-stap-lus",
+    featBasicAfrikaans: "Afrikaans",
+    featPremiumEverything: "Alles in Basies",
+    featPremiumStudyGuide: "Studiegids",
+    featPremiumMockExam: "Toetseksamen",
+    featPremiumRefresher: "Eksamenopfrisser",
+    paymentSuccessMsg: "Betaling suksesvol! Jou plan word geaktiveer.",
+    paymentCancelledMsg: "Betaling gekanselleer.",
 
     loading: "Laai...",
     errorGeneric: "Iets het verkeerd geloop. Probeer asseblief weer.",
@@ -607,6 +634,7 @@ const state = {
   selectedLearnerId: null,
   showLinkChildScreen: false,
   linkChildModalOpen: false,
+  upgradeModalOpen: false,
   expandedSessionIds: {},
   expandedDateGroups: new Set(),
   admin: {
@@ -1179,13 +1207,28 @@ function handlePayfastReturn() {
   if (params.has("payment")) {
     const status = params.get("payment");
     if (status === "success") {
-      showToast(state.lang === "af" ? "Betaling ontvang! Jou plan word binnekort opgedateer." : "Payment received! Your plan will update shortly.", "success");
+      showToast(t("paymentSuccessMsg"), "success");
+      // The PayFast webhook updates subscription_tier asynchronously. Give it a
+      // few seconds, then re-fetch the profile so the new tier shows up.
+      setTimeout(() => {
+        refreshProfileAfterPayment();
+      }, 5000);
     } else if (status === "cancelled") {
-      showToast(state.lang === "af" ? "Betaling gekanselleer." : "Payment cancelled.", "info");
+      showToast(t("paymentCancelledMsg"), "info");
     }
     params.delete("payment");
     const newUrl = window.location.pathname + (params.toString() ? `?${params}` : "");
     window.history.replaceState({}, "", newUrl);
+  }
+}
+
+async function refreshProfileAfterPayment() {
+  if (!state.user) return;
+  try {
+    await loadUserData();
+    render();
+  } catch (err) {
+    console.error("Failed to refresh profile after payment:", err);
   }
 }
 
@@ -4434,6 +4477,58 @@ function renderAccountTab() {
 
     <!-- 5. Logout -->
     <button class="btn btn-danger btn-block" data-action="logout" style="margin-top:6px;">${t("btnLogout")}</button>
+
+    ${isLearner && state.upgradeModalOpen ? renderUpgradeModal() : ""}
+  `;
+}
+
+// ---------------------------------------------------------------------
+// UPGRADE MODAL (learner) - PayFast subscription plans
+// ---------------------------------------------------------------------
+function renderUpgradeModal() {
+  const plans = [
+    {
+      id: "basic",
+      name: t("basic"),
+      price: TIER_PRICES.basic,
+      features: [t("featBasicUnlimited"), t("featBasic4Step"), t("featBasicAfrikaans")],
+    },
+    {
+      id: "premium",
+      name: t("premium"),
+      price: TIER_PRICES.premium,
+      features: [
+        t("featPremiumEverything"),
+        t("featPremiumStudyGuide"),
+        t("featPremiumMockExam"),
+        t("featPremiumRefresher"),
+      ],
+    },
+  ];
+
+  return `
+    <div class="modal-overlay">
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3>${t("upgradeModalTitle")}</h3>
+          <button class="modal-close" data-action="close-upgrade-modal">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="muted">${t("upgradeModalIntro")}</p>
+          ${plans
+            .map(
+              (plan) => `
+            <div class="tier-card">
+              <div class="tier-name">${plan.name}</div>
+              <div class="tier-price">R${plan.price}<span>${t("perMonth")}</span></div>
+              <ul class="tier-features">${plan.features.map((f) => `<li>${f}</li>`).join("")}</ul>
+              <button class="btn btn-gold btn-block" data-action="subscribe" data-tier="${plan.id}">${t("btnSubscribe")}</button>
+            </div>`,
+            )
+            .join("")}
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -4607,19 +4702,35 @@ function handleUpgrade(tier) {
   const amount = TIER_PRICES[tier];
   if (!amount) return;
 
+  // Split full name into first/last for PayFast's buyer fields.
+  const nameParts = (state.profile.full_name || "").trim().split(/\s+/).filter(Boolean);
+  const nameFirst = nameParts[0] || "Leuro";
+  const nameLast = nameParts.slice(1).join(" ") || "Learner";
+
+  const amountStr = amount.toFixed(2);
+  const itemName = `Leuro ${capitalize(tier)} Monthly`;
+  const billingDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+  // Recurring subscription fields (PayFast subscription_type 1, monthly).
   const fields = {
     merchant_id: PAYFAST_CONFIG.merchantId,
     merchant_key: PAYFAST_CONFIG.merchantKey,
-    return_url: `${window.location.origin}${window.location.pathname}?payment=success`,
-    cancel_url: `${window.location.origin}${window.location.pathname}?payment=cancelled`,
+    return_url: PAYFAST_CONFIG.returnUrl,
+    cancel_url: PAYFAST_CONFIG.cancelUrl,
     notify_url: PAYFAST_CONFIG.notifyUrl,
-    name_first: state.profile.full_name || "Leuro Learner",
+    name_first: nameFirst,
+    name_last: nameLast,
     email_address: state.profile.email,
-    m_payment_id: `${state.user.id}-${Date.now()}`,
-    amount: amount.toFixed(2),
-    item_name: `Leuro ${capitalize(tier)} Subscription`,
-    custom_str1: state.user.id,
-    custom_str2: tier,
+    m_payment_id: `LEURO-${state.user.id}-${Date.now()}`,
+    amount: amountStr,
+    item_name: itemName,
+    subscription_type: "1",
+    billing_date: billingDate,
+    recurring_amount: amountStr,
+    frequency: "3", // 3 = monthly
+    cycles: "0", // 0 = until cancelled
+    subscription_notify_email: "true",
+    subscription_notify_buyer: "true",
   };
 
   const form = document.createElement("form");
@@ -4637,6 +4748,9 @@ function handleUpgrade(tier) {
 
   document.body.appendChild(form);
   form.submit();
+  // Submitting navigates away; remove the form so it can't be re-submitted if
+  // the navigation is somehow blocked.
+  form.remove();
 }
 
 // ---------------------------------------------------------------------
@@ -4672,7 +4786,16 @@ function attachGlobalListeners() {
         setLanguage(target.dataset.lang);
         break;
       case "account-upgrade":
-        showToast(t("comingSoon"), "info");
+        state.upgradeModalOpen = true;
+        render();
+        break;
+      case "close-upgrade-modal":
+        state.upgradeModalOpen = false;
+        render();
+        break;
+      case "subscribe":
+        state.upgradeModalOpen = false;
+        handleUpgrade(target.dataset.tier);
         break;
       case "logout":
         handleLogout();
