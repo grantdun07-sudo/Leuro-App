@@ -2549,6 +2549,21 @@ async function saveDiagnosticResult(d) {
       .eq("user_id", state.user.id);
     if (updateErr) throw updateErr;
 
+    // Reflect the saved level locally immediately, so the diagnostic gate in
+    // render() passes on the first pass. This is the write that controls the
+    // gate; it must not depend on the (non-critical) attempt-history insert
+    // below succeeding.
+    state.learner.diagnostic_level = d.level;
+  } catch (err) {
+    console.error("Failed to save diagnostic level", err);
+    showToast(t("errorGeneric"), "error");
+    return;
+  }
+
+  // Attempt history is a non-critical record. A failure here (e.g. a missing
+  // column on an un-migrated database) must not re-gate the learner into the
+  // diagnostic or block them from entering the app.
+  try {
     const { error: insertErr } = await sbClient.from("diagnostic_attempts").insert({
       learner_id: state.learner.id,
       grade: state.learner.grade,
@@ -2559,11 +2574,8 @@ async function saveDiagnosticResult(d) {
       score: d.score,
     });
     if (insertErr) throw insertErr;
-
-    state.learner.diagnostic_level = d.level;
   } catch (err) {
-    console.error("Failed to save diagnostic", err);
-    showToast(t("errorGeneric"), "error");
+    console.error("Failed to record diagnostic attempt history", err);
   }
 }
 
