@@ -15,8 +15,11 @@ const FN_URL = `${SUPABASE_URL}/functions/v1`;
 const PAYFAST_CONFIG = {
   merchantId: "10000100",
   merchantKey: "46f0cd694581a",
+  passphrase: "jt7NOE43FZPn",
   processUrl: "https://sandbox.payfast.co.za/eng/process",
-  notifyUrl: "https://leuro-app.netlify.app/.netlify/functions/payfast-webhook",
+  notifyUrl: "https://izyrizwudvalrbqgbhgl.supabase.co/functions/v1/payfast-webhook",
+  returnUrl: "https://leuro-app.vercel.app/?payment=success",
+  cancelUrl: "https://leuro-app.vercel.app/?payment=cancelled",
 };
 
 const TIER_PRICES = { basic: 99, premium: 199 };
@@ -252,6 +255,7 @@ const translations = {
     weeklySessionTargetHelp: "How many study sessions should {name} aim for each week?",
     focusSubjectsLabel: "Focus subjects",
     focusSubjectsHelp: "Suggest subjects for {name} to focus on this week.",
+    noSubjectsForGrade: "No subjects available for this grade yet.",
     btnSaveGoals: "Save Goals",
     goalsSaved: "Goals saved!",
     goalsVisibleNote: "{name} will see these as suggested goals.",
@@ -280,6 +284,18 @@ const translations = {
     premium: "Premium",
     perMonth: "/month",
     yourCurrentPlan: "Your current plan",
+    upgradeModalTitle: "Choose your plan",
+    upgradeModalIntro: "Pick the plan that suits you. Cancel anytime.",
+    btnSubscribe: "Subscribe",
+    featBasicUnlimited: "Unlimited sessions",
+    featBasic4Step: "Full 4-step loop",
+    featBasicAfrikaans: "Afrikaans",
+    featPremiumEverything: "Everything in Basic",
+    featPremiumStudyGuide: "Study Guide",
+    featPremiumMockExam: "Mock Exam",
+    featPremiumRefresher: "Exam Refresher",
+    paymentSuccessMsg: "Payment successful! Your plan is being activated.",
+    paymentCancelledMsg: "Payment cancelled.",
 
     loading: "Loading...",
     errorGeneric: "Something went wrong. Please try again.",
@@ -531,6 +547,7 @@ const translations = {
     weeklySessionTargetHelp: "Hoeveel studiesessies moet {name} elke week nastreef?",
     focusSubjectsLabel: "Fokusvakke",
     focusSubjectsHelp: "Stel vakke voor waarop {name} hierdie week kan fokus.",
+    noSubjectsForGrade: "Nog geen vakke beskikbaar vir hierdie graad nie.",
     btnSaveGoals: "Stoor Doelwitte",
     goalsSaved: "Doelwitte gestoor!",
     goalsVisibleNote: "{name} sal dit as voorgestelde doelwitte sien.",
@@ -559,6 +576,18 @@ const translations = {
     premium: "Premium",
     perMonth: "/maand",
     yourCurrentPlan: "Jou huidige plan",
+    upgradeModalTitle: "Kies jou plan",
+    upgradeModalIntro: "Kies die plan wat by jou pas. Kanselleer enige tyd.",
+    btnSubscribe: "Teken in",
+    featBasicUnlimited: "Onbeperkte sessies",
+    featBasic4Step: "Volledige 4-stap-lus",
+    featBasicAfrikaans: "Afrikaans",
+    featPremiumEverything: "Alles in Basies",
+    featPremiumStudyGuide: "Studiegids",
+    featPremiumMockExam: "Toetseksamen",
+    featPremiumRefresher: "Eksamenopfrisser",
+    paymentSuccessMsg: "Betaling suksesvol! Jou plan word geaktiveer.",
+    paymentCancelledMsg: "Betaling gekanselleer.",
 
     loading: "Laai...",
     errorGeneric: "Iets het verkeerd geloop. Probeer asseblief weer.",
@@ -605,6 +634,7 @@ const state = {
   selectedLearnerId: null,
   showLinkChildScreen: false,
   linkChildModalOpen: false,
+  upgradeModalOpen: false,
   expandedSessionIds: {},
   expandedDateGroups: new Set(),
   admin: {
@@ -625,6 +655,7 @@ const state = {
   currentTab: "home",
   lang: "en",
   loading: true,
+  returningFromPayment: false,
   showDiagnostic: false,
   showProgressSummary: false,
   safetyOverlay: null,
@@ -1092,6 +1123,7 @@ async function init() {
 
   state.loading = false;
   render();
+  state.returningFromPayment = false;
 }
 
 // ---------------------------------------------------------------------
@@ -1176,14 +1208,33 @@ function handlePayfastReturn() {
   const params = new URLSearchParams(window.location.search);
   if (params.has("payment")) {
     const status = params.get("payment");
+    // Set before any data loading begins so the diagnostic gate (which runs
+    // during the initial render) doesn't see a not-yet-loaded
+    // diagnostic_level and show the diagnostic on top of the payment return.
+    state.returningFromPayment = true;
     if (status === "success") {
-      showToast(state.lang === "af" ? "Betaling ontvang! Jou plan word binnekort opgedateer." : "Payment received! Your plan will update shortly.", "success");
+      showToast(t("paymentSuccessMsg"), "success");
+      // The PayFast webhook updates subscription_tier asynchronously. Give it a
+      // few seconds, then re-fetch the profile so the new tier shows up.
+      setTimeout(() => {
+        refreshProfileAfterPayment();
+      }, 5000);
     } else if (status === "cancelled") {
-      showToast(state.lang === "af" ? "Betaling gekanselleer." : "Payment cancelled.", "info");
+      showToast(t("paymentCancelledMsg"), "info");
     }
     params.delete("payment");
     const newUrl = window.location.pathname + (params.toString() ? `?${params}` : "");
     window.history.replaceState({}, "", newUrl);
+  }
+}
+
+async function refreshProfileAfterPayment() {
+  if (!state.user) return;
+  try {
+    await loadUserData();
+    render();
+  } catch (err) {
+    console.error("Failed to refresh profile after payment:", err);
   }
 }
 
@@ -1752,9 +1803,13 @@ function render() {
   // Diagnostic gate: a non-dismissable full-screen overlay shown on top of
   // the app whenever a learner has not completed their diagnostic
   // (diagnostic_level null or 0), or has chosen to retake it.
+  // Skipped entirely when returning from a PayFast redirect, since the
+  // learner record may not have finished loading yet and diagnostic_level
+  // would incorrectly read as null.
   if (
     state.profile.role === "learner" &&
     state.learner &&
+    !state.returningFromPayment &&
     (!state.learner.diagnostic_level || state.showDiagnostic)
   ) {
     app.insertAdjacentHTML("beforeend", renderDiagnosticScreen());
@@ -2474,7 +2529,8 @@ async function diagnosticNext() {
 
     // Persist the result now so the completion button can simply dismiss
     // the modal and navigate home with no pending async work.
-    await saveDiagnosticResult(d);
+    d.savePromise = saveDiagnosticResult(d);
+    await d.savePromise;
   }
 }
 
@@ -2504,9 +2560,14 @@ async function saveDiagnosticResult(d) {
   }
 }
 
-function diagnosticFinish() {
-  // The diagnostic result was already persisted before the results screen
-  // was shown, so this is a plain synchronous UI dismissal.
+async function diagnosticFinish() {
+  // If the result save is still in flight (e.g. the learner tapped Finish
+  // immediately), wait for it so state.learner.diagnostic_level is set
+  // before the gate below re-evaluates - otherwise render() would treat
+  // this as an incomplete diagnostic and show it again from the start.
+  if (state.diagnostic?.savePromise) {
+    await state.diagnostic.savePromise;
+  }
   document.getElementById("diagnostic-modal")?.remove();
   state.showDiagnostic = false;
   state.diagnostic = null;
@@ -4046,7 +4107,7 @@ function renderParentActivityTab() {
     <div class="section-title">${t("mockExamsHeading")}</div>
     ${
       learner.exams.length === 0
-        ? `<p class="muted">${t("noMockExams")}</p>`
+        ? `<div class="empty-state"><div class="empty-icon">📝</div><p>${t("noMockExams")}</p></div>`
         : learner.exams.map((exam) => renderParentExamItem(exam)).join("")
     }
 
@@ -4057,7 +4118,7 @@ function renderParentActivityTab() {
 
 function renderSessionHistory(sessions) {
   if (!sessions || sessions.length === 0) {
-    return `<p class="muted">${t("noSessionsRecorded")}</p>`;
+    return `<div class="empty-state"><div class="empty-icon">📅</div><p>${t("noSessionsRecorded")}</p></div>`;
   }
 
   const groups = [];
@@ -4193,13 +4254,17 @@ function renderParentGoalsTab() {
     <div class="card">
       <div class="section-title" style="margin-top:0;">${t("focusSubjectsLabel")}</div>
       <p class="muted">${t("focusSubjectsHelp").replace("{name}", escapeHtml(firstName))}</p>
-      <div class="chip-row" style="margin-top:var(--spacing-12);">
-        ${learner.gradeSubjects
-          .map(
-            (s) => `<button type="button" class="topic-chip ${draft.focusSubjects.includes(s.id) ? "selected" : ""}" data-action="goals-toggle-subject" data-subject-id="${s.id}" data-learner-id="${learner.id}">${escapeHtml(s.name)}</button>`,
-          )
-          .join("")}
-      </div>
+      ${
+        learner.gradeSubjects.length === 0
+          ? `<div class="empty-state"><div class="empty-icon">📚</div><p>${t("noSubjectsForGrade")}</p></div>`
+          : `<div class="chip-row" style="margin-top:var(--spacing-12);">
+              ${learner.gradeSubjects
+                .map(
+                  (s) => `<button type="button" class="topic-chip ${draft.focusSubjects.includes(s.id) ? "selected" : ""}" data-action="goals-toggle-subject" data-subject-id="${s.id}" data-learner-id="${learner.id}">${escapeHtml(s.name)}</button>`,
+                )
+                .join("")}
+            </div>`
+      }
     </div>
 
     <p class="muted">${t("goalsVisibleNote").replace("{name}", escapeHtml(firstName))}</p>
@@ -4428,6 +4493,58 @@ function renderAccountTab() {
 
     <!-- 5. Logout -->
     <button class="btn btn-danger btn-block" data-action="logout" style="margin-top:6px;">${t("btnLogout")}</button>
+
+    ${isLearner && state.upgradeModalOpen ? renderUpgradeModal() : ""}
+  `;
+}
+
+// ---------------------------------------------------------------------
+// UPGRADE MODAL (learner) - PayFast subscription plans
+// ---------------------------------------------------------------------
+function renderUpgradeModal() {
+  const plans = [
+    {
+      id: "basic",
+      name: t("basic"),
+      price: TIER_PRICES.basic,
+      features: [t("featBasicUnlimited"), t("featBasic4Step"), t("featBasicAfrikaans")],
+    },
+    {
+      id: "premium",
+      name: t("premium"),
+      price: TIER_PRICES.premium,
+      features: [
+        t("featPremiumEverything"),
+        t("featPremiumStudyGuide"),
+        t("featPremiumMockExam"),
+        t("featPremiumRefresher"),
+      ],
+    },
+  ];
+
+  return `
+    <div class="modal-overlay">
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3>${t("upgradeModalTitle")}</h3>
+          <button class="modal-close" data-action="close-upgrade-modal">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="muted">${t("upgradeModalIntro")}</p>
+          ${plans
+            .map(
+              (plan) => `
+            <div class="tier-card">
+              <div class="tier-name">${plan.name}</div>
+              <div class="tier-price">R${plan.price}<span>${t("perMonth")}</span></div>
+              <ul class="tier-features">${plan.features.map((f) => `<li>${f}</li>`).join("")}</ul>
+              <button class="btn btn-gold btn-block" data-action="subscribe" data-tier="${plan.id}">${t("btnSubscribe")}</button>
+            </div>`,
+            )
+            .join("")}
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -4601,19 +4718,35 @@ function handleUpgrade(tier) {
   const amount = TIER_PRICES[tier];
   if (!amount) return;
 
+  // Split full name into first/last for PayFast's buyer fields.
+  const nameParts = (state.profile.full_name || "").trim().split(/\s+/).filter(Boolean);
+  const nameFirst = nameParts[0] || "Leuro";
+  const nameLast = nameParts.slice(1).join(" ") || "Learner";
+
+  const amountStr = amount.toFixed(2);
+  const itemName = `Leuro ${capitalize(tier)} Monthly`;
+  const billingDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+  // Recurring subscription fields (PayFast subscription_type 1, monthly).
   const fields = {
     merchant_id: PAYFAST_CONFIG.merchantId,
     merchant_key: PAYFAST_CONFIG.merchantKey,
-    return_url: `${window.location.origin}${window.location.pathname}?payment=success`,
-    cancel_url: `${window.location.origin}${window.location.pathname}?payment=cancelled`,
+    return_url: PAYFAST_CONFIG.returnUrl,
+    cancel_url: PAYFAST_CONFIG.cancelUrl,
     notify_url: PAYFAST_CONFIG.notifyUrl,
-    name_first: state.profile.full_name || "Leuro Learner",
+    name_first: nameFirst,
+    name_last: nameLast,
     email_address: state.profile.email,
-    m_payment_id: `${state.user.id}-${Date.now()}`,
-    amount: amount.toFixed(2),
-    item_name: `Leuro ${capitalize(tier)} Subscription`,
-    custom_str1: state.user.id,
-    custom_str2: tier,
+    m_payment_id: `LEURO-${state.user.id}-${Date.now()}`,
+    amount: amountStr,
+    item_name: itemName,
+    subscription_type: "1",
+    billing_date: billingDate,
+    recurring_amount: amountStr,
+    frequency: "3", // 3 = monthly
+    cycles: "0", // 0 = until cancelled
+    subscription_notify_email: "true",
+    subscription_notify_buyer: "true",
   };
 
   const form = document.createElement("form");
@@ -4631,6 +4764,9 @@ function handleUpgrade(tier) {
 
   document.body.appendChild(form);
   form.submit();
+  // Submitting navigates away; remove the form so it can't be re-submitted if
+  // the navigation is somehow blocked.
+  form.remove();
 }
 
 // ---------------------------------------------------------------------
@@ -4666,7 +4802,16 @@ function attachGlobalListeners() {
         setLanguage(target.dataset.lang);
         break;
       case "account-upgrade":
-        showToast(t("comingSoon"), "info");
+        state.upgradeModalOpen = true;
+        render();
+        break;
+      case "close-upgrade-modal":
+        state.upgradeModalOpen = false;
+        render();
+        break;
+      case "subscribe":
+        state.upgradeModalOpen = false;
+        handleUpgrade(target.dataset.tier);
         break;
       case "logout":
         handleLogout();
