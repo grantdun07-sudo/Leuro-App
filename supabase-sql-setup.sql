@@ -66,6 +66,11 @@ create table if not exists public.subjects (
   unique (name, grade, curriculum)
 );
 
+-- Afrikaans display name, used when the learner's language is set to "af".
+-- Falls back to `name` (English) when null.
+alter table public.subjects
+  add column if not exists name_af text;
+
 create table if not exists public.topics (
   id uuid primary key default gen_random_uuid(),
   learner_id uuid not null references public.learners(id) on delete cascade,
@@ -767,6 +772,32 @@ from (values
 ) as s(name, code)
 cross join (select generate_series(10, 12) as grade) as g
 on conflict (name, grade, curriculum) do nothing;
+
+-- ---------------------------------------------------------------------
+-- AFRIKAANS SUBJECT NAMES (name_af)
+-- ---------------------------------------------------------------------
+-- Keyed by code so a single statement updates the subject across every
+-- grade it appears in.
+update public.subjects set name_af = 'Wiskunde'                          where code = 'MATH';
+update public.subjects set name_af = 'Wiskundige Geletterdheid'          where code = 'MATH_LIT';
+update public.subjects set name_af = 'Engels Huistaal'                   where code = 'ENG_HL';
+update public.subjects set name_af = 'Afrikaans Huistaal'                where code = 'AFR_HL';
+update public.subjects set name_af = 'Afrikaans Eerste Addisionele Taal' where code = 'AFR_FAL';
+update public.subjects set name_af = 'Natuurwetenskappe en Tegnologie'   where code = 'NST';
+update public.subjects set name_af = 'Natuurwetenskappe'                 where code = 'NS';
+update public.subjects set name_af = 'Sosiale Wetenskappe'               where code = 'SS';
+update public.subjects set name_af = 'Lewensvaardighede'                 where code = 'LS';
+update public.subjects set name_af = 'Lewensoriëntering'                 where code = 'LO';
+update public.subjects set name_af = 'Tegnologie'                        where code = 'TECH';
+update public.subjects set name_af = 'Ekonomiese en Bestuurswetenskappe' where code = 'EMS';
+update public.subjects set name_af = 'Skeppende Kunste'                  where code = 'ARTS';
+update public.subjects set name_af = 'Fisiese Wetenskappe'               where code = 'PHYS_SCI';
+update public.subjects set name_af = 'Lewenswetenskappe'                 where code = 'LIFE_SCI';
+update public.subjects set name_af = 'Geografie'                         where code = 'GEO';
+update public.subjects set name_af = 'Geskiedenis'                       where code = 'HIST';
+update public.subjects set name_af = 'Rekeningkunde'                     where code = 'ACC';
+update public.subjects set name_af = 'Besigheidstudies'                  where code = 'BUS';
+update public.subjects set name_af = 'Ekonomie'                          where code = 'ECON';
 
 -- =====================================================================
 -- Done. Verify under Table Editor that all tables + seed subjects exist.
