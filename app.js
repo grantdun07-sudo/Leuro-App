@@ -655,6 +655,7 @@ const state = {
   currentTab: "home",
   lang: "en",
   loading: true,
+  returningFromPayment: false,
   showDiagnostic: false,
   showProgressSummary: false,
   safetyOverlay: null,
@@ -1122,6 +1123,7 @@ async function init() {
 
   state.loading = false;
   render();
+  state.returningFromPayment = false;
 }
 
 // ---------------------------------------------------------------------
@@ -1206,6 +1208,10 @@ function handlePayfastReturn() {
   const params = new URLSearchParams(window.location.search);
   if (params.has("payment")) {
     const status = params.get("payment");
+    // Set before any data loading begins so the diagnostic gate (which runs
+    // during the initial render) doesn't see a not-yet-loaded
+    // diagnostic_level and show the diagnostic on top of the payment return.
+    state.returningFromPayment = true;
     if (status === "success") {
       showToast(t("paymentSuccessMsg"), "success");
       // The PayFast webhook updates subscription_tier asynchronously. Give it a
@@ -1797,9 +1803,13 @@ function render() {
   // Diagnostic gate: a non-dismissable full-screen overlay shown on top of
   // the app whenever a learner has not completed their diagnostic
   // (diagnostic_level null or 0), or has chosen to retake it.
+  // Skipped entirely when returning from a PayFast redirect, since the
+  // learner record may not have finished loading yet and diagnostic_level
+  // would incorrectly read as null.
   if (
     state.profile.role === "learner" &&
     state.learner &&
+    !state.returningFromPayment &&
     (!state.learner.diagnostic_level || state.showDiagnostic)
   ) {
     app.insertAdjacentHTML("beforeend", renderDiagnosticScreen());
