@@ -8,21 +8,24 @@
 // (supabase functions deploy payfast-webhook --no-verify-jwt, or toggle
 // "Enforce JWT Verification" off in the dashboard).
 //
-// STANDALONE: no shared imports and no SDK. All Supabase access is done with
-// plain Deno fetch() calls against the PostgREST REST API, authorized with
-// the service role key (which bypasses RLS). This keeps the file copy-paste
-// deployable straight into the Supabase dashboard editor.
+// DB access uses the Supabase JS client created with the service role key,
+// which bypasses Row Level Security (this avoids the 403 seen when updating
+// profiles via the raw REST endpoint).
 //
 // Flow:
 //   1. Parse the IPN form body with URLSearchParams.
 //   2. Read m_payment_id (LEURO-{uuid}-{timestamp}) -> user_id.
 //   3. Read item_name -> tier ('premium' if it contains "remium", else 'basic').
-//   4. PATCH profiles.subscription_tier for that user.
-//   5. POST a row to subscription_history.
+//   4. Update profiles.subscription_tier for that user.
+//   5. Insert a row to subscription_history.
 //   6. Always return 200 OK so PayFast does not retry-storm us.
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const supabase = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+);
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,17 +33,6 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-
-// Headers for every PostgREST request. The service role key is sent both as
-// apikey and as the Bearer token so it bypasses Row Level Security.
-function restHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  return {
-    apikey: SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    "Content-Type": "application/json",
-    ...extra,
-  };
-}
 
 // Extract the learner's user_id (a UUID, which itself contains hyphens) from
 // an m_payment_id of the form "LEURO-{uuid}-{timestamp}". Strip the prefix,
@@ -100,39 +92,31 @@ Deno.serve(async (req: Request) => {
     }
     const tier = tierFromItemName(itemName);
 
-    // Read the current tier first (for history's tier_from) via REST.
+    // Read the current tier first (for history's tier_from).
     let tierFrom: string | null = null;
-    try {
-      const readRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=subscription_tier`,
-        { headers: restHeaders() },
-      );
-      if (readRes.ok) {
-        const rows = await readRes.json();
-        tierFrom = Array.isArray(rows) && rows[0] ? rows[0].subscription_tier ?? null : null;
-      } else {
-        console.error("payfast-webhook: profile read failed:", readRes.status, await readRes.text());
-      }
-    } catch (e) {
-      console.error("payfast-webhook: profile read error:", e);
+    const { data: existing, error: readErr } = await supabase
+      .from("profiles")
+      .select("subscription_tier")
+      .eq("id", userId)
+      .single();
+    if (readErr) {
+      console.error("payfast-webhook: profile read failed:", JSON.stringify(readErr));
+    } else {
+      tierFrom = existing?.subscription_tier ?? null;
     }
 
-    // 1) Activate the new tier (PATCH profiles).
-    const updateRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`,
-      {
-        method: "PATCH",
-        headers: restHeaders({ Prefer: "return=minimal" }),
-        body: JSON.stringify({ subscription_tier: tier }),
-      },
-    );
-    if (!updateRes.ok) {
-      console.error("payfast-webhook: tier update failed:", updateRes.status, await updateRes.text());
+    // 1) Activate the new tier.
+    const { error: updateErr } = await supabase
+      .from("profiles")
+      .update({ subscription_tier: tier })
+      .eq("id", userId);
+    if (updateErr) {
+      console.error("payfast-webhook: tier update failed:", JSON.stringify(updateErr));
       return new Response("OK", { status: 200, headers: corsHeaders });
     }
     console.log(`payfast-webhook: set ${userId} -> ${tier}`);
 
-    // 2) Record the subscription event (POST subscription_history).
+    // 2) Record the subscription event.
     const historyRow = {
       user_id: userId,
       tier_from: tierFrom,
@@ -142,14 +126,12 @@ Deno.serve(async (req: Request) => {
       payment_ref: pfPaymentId,
       source: "payfast",
     };
-    const historyRes = await fetch(`${SUPABASE_URL}/rest/v1/subscription_history`, {
-      method: "POST",
-      headers: restHeaders({ Prefer: "return=minimal" }),
-      body: JSON.stringify(historyRow),
-    });
-    if (!historyRes.ok) {
+    const { error: historyErr } = await supabase
+      .from("subscription_history")
+      .insert(historyRow);
+    if (historyErr) {
       // Tier is already updated; don't fail the webhook over history logging.
-      console.error("payfast-webhook: history insert failed:", historyRes.status, await historyRes.text());
+      console.error("payfast-webhook: history insert failed:", JSON.stringify(historyErr));
     } else {
       console.log("payfast-webhook: recorded subscription_history for", userId);
     }
