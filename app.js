@@ -4745,32 +4745,43 @@ function copyReferralCode() {
     .catch(() => showToast(t("errorGeneric"), "error"));
 }
 
-async function toggleLanguage() {
-  state.lang = state.lang === "en" ? "af" : "en";
-  document.documentElement.lang = state.lang;
-  // Keep the choice in local state only. The frontend must never write to
-  // public.profiles directly - persisting language is the DB/trigger's job.
-  if (state.profile) state.profile.lang = state.lang;
-  render();
-}
-
-// Account-tab language selection: switch the UI immediately, then persist the
-// choice to profiles.lang (the "Users can update own profile" RLS policy
-// permits this for the authenticated user).
-async function setLanguage(lang) {
-  const next = lang === "af" ? "af" : "en";
-  state.lang = next;
-  document.documentElement.lang = next;
-  if (state.profile) state.profile.lang = next;
-  render();
-
+// Persist the learner's language preference to profiles.lang and update
+// local state/UI on success. Chained with .select() so the write is
+// verified - without it, an RLS-filtered update returns error=null with
+// zero rows affected (the same silent-failure pattern as the earlier
+// tier-change bug), leaving the DB language stale while the UI flips.
+// Edge functions (mock exam, study guide) read profiles.lang from the DB,
+// so a stale DB value causes AI content to keep generating in English.
+async function persistLanguage(next) {
   try {
-    const { error } = await sbClient.from("profiles").update({ lang: next }).eq("id", state.user.id);
+    const { error, data } = await sbClient
+      .from("profiles")
+      .update({ lang: next })
+      .eq("id", state.user.id)
+      .select("lang");
     if (error) throw error;
+    if (!data || data.length === 0) throw new Error("No profile row updated");
+
+    state.lang = next;
+    document.documentElement.lang = next;
+    if (state.profile) state.profile.lang = next;
+    render();
+    showToast(next === "af" ? "Taal verander na Afrikaans ✓" : "Language changed to English ✓", "success");
   } catch (err) {
     console.error("Failed to persist language preference", err);
-    showToast(t("errorGeneric"), "error");
+    showToast("Could not save language preference. Please try again.", "error");
   }
+}
+
+async function toggleLanguage() {
+  const next = state.lang === "en" ? "af" : "en";
+  await persistLanguage(next);
+}
+
+// Account-tab language selection.
+async function setLanguage(lang) {
+  const next = lang === "af" ? "af" : "en";
+  await persistLanguage(next);
 }
 
 // ---------------------------------------------------------------------
