@@ -13,6 +13,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
+import { langInstruction, JSON_KEYS_ENGLISH_NOTE } from "../_shared/prompts.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -106,7 +107,8 @@ Requirements:
 - Vary the difficulty so the quiz can place the learner at a level from 1 (beginner) to 5 (advanced).
 - Keep the language clear and age-appropriate for Grade ${grade}.
 - Use South African context and examples where relevant.
-${lang === "af" ? "- Write every question and option in Afrikaans (the JSON keys themselves stay in English)." : "- Write every question and option in English."}
+${langInstruction(lang)}
+${JSON_KEYS_ENGLISH_NOTE}
 
 Respond with ONLY a JSON array of ${QUESTION_COUNT} objects, no markdown fences, matching this exact shape:
 [
