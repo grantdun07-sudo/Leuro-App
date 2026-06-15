@@ -687,6 +687,7 @@ const state = {
     saved: false,
   },
   mockExamSetup: {
+    subjectId: null,
     term: 1,
     topics: "",
   },
@@ -3129,13 +3130,14 @@ function renderStudyGuideSection() {
   }
 
   const sg = state.studyGuide;
+  const selectedSubjectId = sg.subjectId ?? state.subjects[0]?.id;
 
   return `
     <div class="card">
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
-        <select id="study-guide-subject">
-          ${state.subjects.map((s) => `<option value="${s.id}" ${sg.subjectId === s.id ? "selected" : ""}>${escapeHtml(subjectLabel(s))}</option>`).join("")}
+        <select id="study-guide-subject" data-action="study-guide-subject-change">
+          ${state.subjects.map((s) => `<option value="${s.id}" ${selectedSubjectId === s.id ? "selected" : ""}>${escapeHtml(subjectLabel(s))}</option>`).join("")}
         </select>
       </div>
       <div class="field">
@@ -3187,13 +3189,14 @@ function renderMockExamSection() {
   const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
   const completedExams = state.exams.filter((e) => e.completed_at);
   const mx = state.mockExamSetup;
+  const selectedSubjectId = mx.subjectId ?? state.subjects[0]?.id;
 
   return `
     <div class="card">
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
-        <select id="exam-subject">
-          ${state.subjects.map((s) => `<option value="${s.id}">${escapeHtml(subjectLabel(s))}</option>`).join("")}
+        <select id="exam-subject" data-action="exam-subject-change">
+          ${state.subjects.map((s) => `<option value="${s.id}" ${selectedSubjectId === s.id ? "selected" : ""}>${escapeHtml(subjectLabel(s))}</option>`).join("")}
         </select>
       </div>
       <div class="field">
@@ -3798,6 +3801,8 @@ function renderRefresherComplete() {
 function examSetTerm(term) {
   const topicsTextarea = document.getElementById("exam-topics");
   if (topicsTextarea) state.mockExamSetup.topics = topicsTextarea.value;
+  const subjectSelect = document.getElementById("exam-subject");
+  if (subjectSelect) state.mockExamSetup.subjectId = subjectSelect.value;
   state.mockExamSetup.term = term;
   render();
 }
@@ -3815,6 +3820,7 @@ async function startMockExam() {
 
   const difficulty = difficultySelect.value;
   const term = state.mockExamSetup.term;
+  const subjectId = state.mockExamSetup.subjectId || subjectSelect.value || state.subjects[0]?.id;
   const topics = topicsText
     .split(/[,\n]/)
     .map((s) => s.trim())
@@ -3835,7 +3841,7 @@ async function startMockExam() {
       },
       body: JSON.stringify({
         learnerId: state.learner.id,
-        subjectId: subjectSelect.value,
+        subjectId,
         difficulty,
         term,
         topics,
@@ -3846,7 +3852,7 @@ async function startMockExam() {
 
     state.activeExam = {
       examId: data.examId,
-      subjectId: subjectSelect.value,
+      subjectId,
       difficulty,
       questions: data.questions,
       answers: {},
@@ -5098,6 +5104,12 @@ function attachGlobalListeners() {
         break;
       case "admin-change-tier":
         adminChangeTier(target.dataset.userId, target.value, target);
+        break;
+      case "exam-subject-change":
+        state.mockExamSetup.subjectId = target.value;
+        break;
+      case "study-guide-subject-change":
+        state.studyGuide.subjectId = target.value;
         break;
       default:
         break;
