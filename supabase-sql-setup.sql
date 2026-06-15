@@ -500,6 +500,30 @@ begin
 end;
 $$ language plpgsql security definer set search_path = public;
 
+-- Admin dashboard: set a user's subscription tier. SECURITY DEFINER so it
+-- bypasses RLS (the direct profiles UPDATE from the client was silently
+-- matching 0 rows when the admin UPDATE policy wasn't applying, so the change
+-- never persisted yet reported success). Gated by is_admin(), validates the
+-- tier value, and raises if the user does not exist so failures are loud.
+create or replace function public.admin_update_tier(p_user_id uuid, p_tier text)
+returns void as $$
+begin
+  if not public.is_admin() then
+    raise exception 'not authorized';
+  end if;
+
+  if p_tier not in ('free', 'basic', 'premium') then
+    raise exception 'invalid tier: %', p_tier;
+  end if;
+
+  update public.profiles set subscription_tier = p_tier where id = p_user_id;
+
+  if not found then
+    raise exception 'user not found: %', p_user_id;
+  end if;
+end;
+$$ language plpgsql security definer set search_path = public;
+
 -- ---------------------------------------------------------------------
 -- ROW LEVEL SECURITY
 -- ---------------------------------------------------------------------

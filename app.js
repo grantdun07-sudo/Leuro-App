@@ -2068,7 +2068,7 @@ function renderAdminUserCard(user) {
 async function adminChangeTier(userId, tier, selectEl) {
   if (selectEl) selectEl.disabled = true;
   try {
-    const { error } = await sbClient.from("profiles").update({ subscription_tier: tier }).eq("id", userId);
+    const { error } = await sbClient.rpc("admin_update_tier", { p_user_id: userId, p_tier: tier });
     if (error) throw error;
     const user = (state.admin.users || []).find((u) => u.id === userId);
     if (user) user.subscription_tier = tier;
@@ -2078,6 +2078,9 @@ async function adminChangeTier(userId, tier, selectEl) {
     console.error(err);
     if (selectEl) selectEl.disabled = false;
     showToast(err.message || t("errorGeneric"), "error");
+    // Re-render so the dropdown reverts to the tier actually stored, rather
+    // than leaving the failed selection visible (the write did not persist).
+    render();
   }
 }
 
