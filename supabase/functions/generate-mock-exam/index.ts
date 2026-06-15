@@ -18,6 +18,7 @@ import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const TOTAL_MARKS = 30;
 
@@ -177,6 +178,11 @@ Deno.serve(async (req: Request) => {
       global: { headers: { Authorization: authHeader } },
     });
 
+    // Service-role client, used only for the mock_exams / mock_exam_questions
+    // inserts below - those tables have no client-facing INSERT policy, so
+    // the anon+JWT client gets 42501 (RLS) on write.
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
     const { data: userData, error: userErr } = await supabase.auth.getUser();
     if (userErr || !userData?.user) {
       return jsonResponse({ error: "Invalid or expired session" }, 401);
@@ -302,7 +308,7 @@ marks).${requestedTopics.length > 0 ? " Every question must relate directly to t
       return jsonResponse({ error: "Failed to generate a valid exam. Please try again." }, 500);
     }
 
-    const { data: exam, error: examErr } = await supabase
+    const { data: exam, error: examErr } = await supabaseAdmin
       .from("mock_exams")
       .insert({
         learner_id: learner.id,
@@ -331,7 +337,7 @@ marks).${requestedTopics.length > 0 ? " Every question must relate directly to t
     }));
 
     // Select only learner-facing columns - correct_answer is kept server-side for grading.
-    const { data: insertedQuestions, error: insertErr } = await supabase
+    const { data: insertedQuestions, error: insertErr } = await supabaseAdmin
       .from("mock_exam_questions")
       .insert(rows)
       .select("id, question_text, question_type, options, blooms_level, marks, question_order");

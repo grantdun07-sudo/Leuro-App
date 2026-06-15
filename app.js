@@ -3213,9 +3213,9 @@ function renderMockExamSection() {
       <div class="field">
         <label>${t("selectDifficultyLabel")}</label>
         <select id="exam-difficulty">
-          <option value="low" selected>${t("diffLow")} ✅</option>
-          <option value="medium" ${isPremium ? "" : "disabled"}>${t("diffMedium")}${isPremium ? "" : " 🔒"}</option>
-          <option value="high" ${isPremium ? "" : "disabled"}>${t("diffHigh")}${isPremium ? "" : " 🔒"}</option>
+          <option value="low" selected>${t("diffLow")}</option>
+          <option value="medium" ${isPremium ? "" : "disabled"}>${t("diffMedium")}</option>
+          <option value="high" ${isPremium ? "" : "disabled"}>${t("diffHigh")}</option>
         </select>
       </div>
       <button class="btn btn-primary btn-block" data-action="start-exam">${t("btnStartExam")}</button>
@@ -3865,7 +3865,8 @@ async function startMockExam() {
   } catch (err) {
     const message = err && err.name === "AbortError" ? "Request timed out" : err && err.message;
     console.error("📋 Mock Exam API ERROR", message || err);
-    const toastMessage = err && err.error === "premium_required" ? err.message : t("errorExamGeneration");
+    console.error("MOCK EXAM FULL ERROR:", err, "status:", err?.status);
+    const toastMessage = (err && err.message) || (err && err.error) || t("errorExamGeneration");
     showToast(toastMessage, "error");
   } finally {
     setButtonLoading(btn, false);
