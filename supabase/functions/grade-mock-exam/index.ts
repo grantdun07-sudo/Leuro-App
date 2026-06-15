@@ -18,6 +18,7 @@ import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const SYSTEM_PROMPT = `You are Leuro™, an exam marker for South African school learners following
 the CAPS curriculum. You will be given a list of short-answer/extended exam
@@ -91,6 +92,12 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
     });
+
+    // Service-role client, used only for the mock_exam_responses insert,
+    // mock_exams update, and create_parent_alert RPC below - those tables
+    // have no client-facing INSERT/UPDATE policy, so the anon+JWT client
+    // gets 42501 (RLS) on write.
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const { data: userData, error: userErr } = await supabase.auth.getUser();
     if (userErr || !userData?.user) {
@@ -218,7 +225,7 @@ Deno.serve(async (req: Request) => {
       };
     });
 
-    const { data: insertedResponses, error: insertErr } = await supabase
+    const { data: insertedResponses, error: insertErr } = await supabaseAdmin
       .from("mock_exam_responses")
       .insert(responseRows)
       .select("question_id, marks_awarded, feedback");
@@ -230,14 +237,14 @@ Deno.serve(async (req: Request) => {
 
     const totalAwarded = responseRows.reduce((sum, r) => sum + r.marks_awarded, 0);
 
-    await supabase
+    await supabaseAdmin
       .from("mock_exams")
       .update({ learner_score: totalAwarded, completed_at: new Date().toISOString() })
       .eq("id", examId);
 
     // Notify parents if performance is low (< 50%)
     if (exam.total_marks > 0 && totalAwarded / exam.total_marks < 0.5) {
-      await supabase.rpc("create_parent_alert", {
+      await supabaseAdmin.rpc("create_parent_alert", {
         p_learner_id: learner.id,
         p_alert_type: "low_performance",
         p_message: `A mock exam was completed with a low score: ${totalAwarded}/${exam.total_marks}.`,
