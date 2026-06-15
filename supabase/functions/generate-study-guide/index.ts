@@ -41,6 +41,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { containsCrisisLanguage, SADAG_CRISIS_MESSAGE } from "../_shared/safety.ts";
 import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
+import { langInstruction, JSON_KEYS_ENGLISH_NOTE } from "../_shared/prompts.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -106,10 +107,8 @@ function buildUserPrompt(
   level: number,
   lang: string,
 ): string {
-  const langLine =
-    lang === "af" ? "Respond in Afrikaans." : "Respond in English.";
   const levelText = level > 0 ? `${level}/5` : "1/5 (not yet diagnosed, assume a beginner)";
-  const header = `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | Learner level: ${levelText}\n${langLine}\n\n`;
+  const header = `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | Learner level: ${levelText}\n${langInstruction(lang)}\n\n`;
 
   switch (body.phase) {
     case "explain":
@@ -185,10 +184,9 @@ function buildStudyGuidePrompt(
   level: number,
   lang: string,
 ): string {
-  const langLine = lang === "af" ? "Respond in Afrikaans." : "Respond in English.";
   const levelText = level > 0 ? `${level}/5` : "1/5 (not yet diagnosed, assume a beginner)";
   return (
-    `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | Learner level: ${levelText}\n${langLine}\n\n` +
+    `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | Learner level: ${levelText}\n${langInstruction(lang)}\n${JSON_KEYS_ENGLISH_NOTE}\n\n` +
     `Create a concise study guide for this topic. Respond with ONLY a raw ` +
     `JSON object (no markdown, no code fences, no extra text) with exactly ` +
     `these keys:\n` +
@@ -234,13 +232,12 @@ function buildRefresherPrompt(
   learnerLevel: number,
   lang: string,
 ): string {
-  const langLine = lang === "af" ? "Respond in Afrikaans." : "Respond in English.";
   const levelText = learnerLevel > 0 ? `${learnerLevel}/5` : "1/5 (not yet diagnosed, assume a beginner)";
   const info = REFRESHER_LEVEL_INFO[level] ?? REFRESHER_LEVEL_INFO.revising;
   const topicList = topicTitles.map((title) => `- "${title}"`).join("\n");
 
   return (
-    `Subject: ${subjectName} | Grade: ${grade} | Learner level: ${levelText}\n${langLine}\n\n` +
+    `Subject: ${subjectName} | Grade: ${grade} | Learner level: ${levelText}\n${langInstruction(lang)}\n${JSON_KEYS_ENGLISH_NOTE}\n\n` +
     `The learner is doing a ${duration}-minute Exam Refresher session at ` +
     `preparation level "${level}". ${info.depth}\n\n` +
     `Create refresher content for EACH of the following topics:\n${topicList}\n\n` +
@@ -267,10 +264,9 @@ function buildRefresherFeedbackPrompt(
   level: string,
   lang: string,
 ): string {
-  const langLine = lang === "af" ? "Respond in Afrikaans." : "Respond in English.";
   return (
     `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | ` +
-    `Exam Refresher preparation level: ${level}\n${langLine}\n\n` +
+    `Exam Refresher preparation level: ${level}\n${langInstruction(lang)}\n${JSON_KEYS_ENGLISH_NOTE}\n\n` +
     `The exam-refresher practice question was: """${question}"""\n` +
     `The learner's answer was: """${answer}"""\n\n` +
     `Evaluate the learner's answer. Respond with ONLY a raw JSON object (no ` +

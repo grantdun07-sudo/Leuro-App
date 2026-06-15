@@ -15,6 +15,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
+import { langInstruction, JSON_KEYS_ENGLISH_NOTE } from "../_shared/prompts.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -104,15 +105,16 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "Invalid or expired session" }, 401);
     }
 
-    const { data: learner } = await supabase
-      .from("learners")
-      .select("id")
-      .eq("user_id", userData.user.id)
-      .single();
+    const [{ data: learner }, { data: profile }] = await Promise.all([
+      supabase.from("learners").select("id").eq("user_id", userData.user.id).single(),
+      supabase.from("profiles").select("lang").eq("id", userData.user.id).single(),
+    ]);
 
     if (!learner) {
       return jsonResponse({ error: "Learner not found" }, 404);
     }
+
+    const lang = profile?.lang ?? "en";
 
     const { data: exam, error: examErr } = await supabase
       .from("mock_exams")
@@ -170,7 +172,7 @@ Deno.serve(async (req: Request) => {
     let aiGrades: { question_order: number; marks_awarded: number; feedback: string }[] = [];
 
     if (aiQuestions.length > 0) {
-      const userPrompt = `Mark the following exam responses against their model answers:\n\n${JSON.stringify(aiQuestions, null, 2)}`;
+      const userPrompt = `Mark the following exam responses against their model answers.\n${langInstruction(lang)}\n${JSON_KEYS_ENGLISH_NOTE}\n\n${JSON.stringify(aiQuestions, null, 2)}`;
 
       let responseText: string;
       try {

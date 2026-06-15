@@ -15,6 +15,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
+import { langInstruction, JSON_KEYS_ENGLISH_NOTE } from "../_shared/prompts.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -255,7 +256,8 @@ Bloom's level range for this difficulty: ${spec.bloomsRange} (cognitive load: ${
 Question mix: ${spec.questionMix}.
 Learner diagnostic level: ${level}/5.
 ${requestedTopics.length > 0 ? "Focus the exam specifically and only on these topics" : "Learner's recent study topics"}: ${topicList}.
-Language: ${lang === "af" ? "Afrikaans" : "English"}.
+${langInstruction(lang)}
+${JSON_KEYS_ENGLISH_NOTE}
 
 Produce exactly ${spec.count} questions, numbered 1 to ${spec.count}, each
 worth exactly ${spec.marksEach} marks (total ${spec.count * spec.marksEach}
