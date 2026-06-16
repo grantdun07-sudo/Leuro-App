@@ -714,6 +714,7 @@ const state = {
     saving: false,
     error: null,
   },
+  editingSubjects: false,   // Account tab inline edit mode for My Subjects
 };
 
 // ---------------------------------------------------------------------
@@ -4684,6 +4685,197 @@ async function toggleMonthlyRecap() {
 // ---------------------------------------------------------------------
 // ACCOUNT TAB
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// MY SUBJECTS CARD (Grade 10-12, Account tab)
+// ---------------------------------------------------------------------
+
+function renderMySubjectsCard() {
+  if (state.editingSubjects) return renderMySubjectsEditCard();
+
+  const lang = state.lang;
+  const af   = lang === "af";
+  const subjects = state.subjects;
+  const ids = state.learnerSubjects;
+
+  const compulsory = subjects.filter((s) => SUBSEL_COMPULSORY.has(s.name.toLowerCase()) && ids.includes(s.id));
+  const mathsChoice = subjects.find((s) => SUBSEL_MATHS.has(s.name.toLowerCase()) && ids.includes(s.id));
+  const electives = subjects
+    .filter((s) => !SUBSEL_COMPULSORY.has(s.name.toLowerCase()) && !SUBSEL_MATHS.has(s.name.toLowerCase()) && ids.includes(s.id))
+    .slice()
+    .sort((a, b) => subjectLabel(a).localeCompare(subjectLabel(b)));
+
+  return `
+    <div class="card">
+      <div class="account-section-row" style="margin-bottom:var(--spacing-16);">
+        <span class="account-section-label">${af ? "My Vakke" : "My Subjects"}</span>
+        <button class="btn btn-sm btn-outline" data-action="edit-subjects">${af ? "Wysig" : "Edit"}</button>
+      </div>
+
+      <div class="my-subjects-group">
+        <div class="my-subjects-group-label">${af ? "Verpligtend" : "Compulsory"}</div>
+        <div class="my-subjects-chips">
+          ${compulsory.map((s) => `<span class="subject-chip subject-chip-locked">${escapeHtml(subjectLabel(s))}</span>`).join("")}
+        </div>
+      </div>
+
+      ${mathsChoice ? `
+        <div class="my-subjects-group">
+          <div class="my-subjects-group-label">${af ? "Wiskunde" : "Mathematics"}</div>
+          <div class="my-subjects-chips">
+            <span class="subject-chip subject-chip-maths">${escapeHtml(subjectLabel(mathsChoice))}</span>
+          </div>
+        </div>
+      ` : ""}
+
+      <div class="my-subjects-group">
+        <div class="my-subjects-group-label">${af ? "Keusevakke" : "Electives"}</div>
+        <div class="my-subjects-chips">
+          ${electives.map((s) => `<span class="subject-chip">${escapeHtml(subjectLabel(s))}</span>`).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderMySubjectsEditCard() {
+  const lang = state.lang;
+  const ss   = state.subjectSelection;
+  const af   = lang === "af";
+  const subjects = state.subjects;
+
+  const compulsory   = subjects.filter((s) => SUBSEL_COMPULSORY.has(s.name.toLowerCase()));
+  const mathsOptions = subjects.filter((s) => SUBSEL_MATHS.has(s.name.toLowerCase()));
+  const electives    = subjects
+    .filter((s) => !SUBSEL_COMPULSORY.has(s.name.toLowerCase()) && !SUBSEL_MATHS.has(s.name.toLowerCase()))
+    .slice()
+    .sort((a, b) => subjectLabel(a).localeCompare(subjectLabel(b)));
+
+  const electiveCount = ss.selectedElectiveIds.length;
+
+  return `
+    <div class="card">
+      <div class="account-section-row" style="margin-bottom:var(--spacing-16);">
+        <span class="account-section-label">${af ? "My Vakke Wysig" : "Edit My Subjects"}</span>
+      </div>
+
+      <div class="subject-section">
+        <div class="subject-section-label">${af ? "Verpligte Vakke" : "Compulsory Subjects"}</div>
+        ${compulsory.map((s) => `
+          <label class="subject-row subject-row-locked">
+            <input type="checkbox" checked disabled class="subject-checkbox">
+            <span class="subject-name">${escapeHtml(subjectLabel(s))}</span>
+            <span class="subject-required-badge">${af ? "Verpligtend" : "Required"}</span>
+          </label>
+        `).join("")}
+      </div>
+
+      <div class="subject-section">
+        <div class="subject-section-label">${af ? "Wiskunde (kies een)" : "Mathematics (choose one)"}</div>
+        ${mathsOptions.map((s) => `
+          <label class="subject-row">
+            <input type="radio" name="subject-maths-edit"
+              class="subject-radio"
+              data-action="subject-maths-select"
+              data-subject-id="${escapeHtml(s.id)}"
+              ${ss.mathChoiceId === s.id ? "checked" : ""}>
+            <span class="subject-name">${escapeHtml(subjectLabel(s))}</span>
+          </label>
+        `).join("")}
+      </div>
+
+      <div class="subject-section">
+        <div class="subject-section-label">${af ? "Keusevakke (kies minstens 3)" : "Elective Subjects (choose at least 3)"}</div>
+        <div class="subject-elective-counter ${electiveCount >= 3 ? "counter-met" : ""}">
+          ${af ? `${electiveCount} van 3 minimum gekies` : `${electiveCount} of 3 minimum selected`}
+        </div>
+        ${electives.map((s) => `
+          <label class="subject-row">
+            <input type="checkbox"
+              class="subject-checkbox"
+              data-action="subject-elective-toggle"
+              data-subject-id="${escapeHtml(s.id)}"
+              ${ss.selectedElectiveIds.includes(s.id) ? "checked" : ""}>
+            <span class="subject-name">${escapeHtml(subjectLabel(s))}</span>
+          </label>
+        `).join("")}
+      </div>
+
+      ${ss.error ? `<p class="form-error">${escapeHtml(ss.error)}</p>` : ""}
+
+      <p class="muted" style="font-size:var(--font-size-caption); margin:var(--spacing-8) 0 var(--spacing-12);">
+        ${af
+          ? "Jou bestaande studieonderwerpe en eksamenrekord word nie geraak deur hierdie verandering nie."
+          : "Your existing study topics and exam history are not affected by this change."}
+      </p>
+
+      <div style="display:flex; gap:var(--spacing-8);">
+        <button class="btn btn-outline" data-action="cancel-edit-subjects" style="flex:1;" ${ss.saving ? "disabled" : ""}>
+          ${af ? "Kanselleer" : "Cancel"}
+        </button>
+        <button class="btn btn-gold" data-action="save-subjects" style="flex:2;" ${ss.saving ? "disabled" : ""}>
+          ${ss.saving ? `<span class="spinner"></span>` : escapeHtml(af ? "Stoor Veranderinge" : "Save Changes")}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveSubjectChanges() {
+  const lang = state.lang;
+  const ss   = state.subjectSelection;
+  const af   = lang === "af";
+
+  if (!ss.mathChoiceId) {
+    ss.error = af
+      ? "Kies asseblief Wiskunde of Wiskundige Geletterdheid."
+      : "Please select either Mathematics or Mathematical Literacy.";
+    render();
+    return;
+  }
+  if (ss.selectedElectiveIds.length < 3) {
+    ss.error = af
+      ? "Kies asseblief minstens 3 keusevakke."
+      : "Please select at least 3 elective subjects.";
+    render();
+    return;
+  }
+
+  ss.error = null;
+  ss.saving = true;
+  render();
+
+  try {
+    const compulsoryIds = state.subjects
+      .filter((s) => SUBSEL_COMPULSORY.has(s.name.toLowerCase()))
+      .map((s) => s.id);
+    const allSelected = [...compulsoryIds, ss.mathChoiceId, ...ss.selectedElectiveIds];
+
+    const { error: deleteErr } = await sbClient
+      .from("learner_subjects")
+      .delete()
+      .eq("learner_id", state.learner.id);
+    if (deleteErr) throw deleteErr;
+
+    const { error: insertErr } = await sbClient
+      .from("learner_subjects")
+      .insert(allSelected.map((subjectId) => ({ learner_id: state.learner.id, subject_id: subjectId })));
+    if (insertErr) throw insertErr;
+
+    state.learnerSubjects = allSelected;
+    state.editingSubjects = false;
+    ss.saving = false;
+    showToast(af ? "Vakke opgedateer ✓" : "Subjects updated ✓", "success");
+    render();
+  } catch (err) {
+    console.error("Save subjects error:", err);
+    ss.saving = false;
+    ss.error = af
+      ? "Kon nie vakke stoor nie. Probeer asseblief weer."
+      : "Failed to save subjects. Please try again.";
+    render();
+  }
+}
+
 function renderAccountTab() {
   const profile = state.profile;
   const learner = state.learner;
@@ -4727,7 +4919,10 @@ function renderAccountTab() {
       </div>
     </div>
 
-    <!-- 4. Stats -->
+    <!-- 4. My Subjects (Grade 10-12 only) -->
+    ${isLearner && learner && learner.grade >= 10 ? renderMySubjectsCard() : ""}
+
+    <!-- 5. Stats -->
     ${isLearner && learner ? renderAccountStats(learner) : ""}
 
     <!-- Referral rewards (existing feature, learners only) -->
@@ -5092,6 +5287,32 @@ function attachGlobalListeners() {
         break;
       case "subject-selection-submit":
         submitSubjectSelection();
+        break;
+      case "edit-subjects": {
+        const currentMaths = state.subjects.find(
+          (s) => SUBSEL_MATHS.has(s.name.toLowerCase()) && state.learnerSubjects.includes(s.id),
+        );
+        state.subjectSelection.mathChoiceId = currentMaths?.id ?? null;
+        state.subjectSelection.selectedElectiveIds = state.subjects
+          .filter(
+            (s) =>
+              !SUBSEL_COMPULSORY.has(s.name.toLowerCase()) &&
+              !SUBSEL_MATHS.has(s.name.toLowerCase()) &&
+              state.learnerSubjects.includes(s.id),
+          )
+          .map((s) => s.id);
+        state.subjectSelection.error = null;
+        state.editingSubjects = true;
+        render();
+        break;
+      }
+      case "cancel-edit-subjects":
+        state.editingSubjects = false;
+        state.subjectSelection.error = null;
+        render();
+        break;
+      case "save-subjects":
+        saveSubjectChanges();
         break;
       case "safety-tier1-close":
         state.safetyOverlay = null;
