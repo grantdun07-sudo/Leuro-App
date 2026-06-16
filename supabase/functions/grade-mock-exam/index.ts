@@ -1,4 +1,11 @@
 // Supabase Edge Function: grade-mock-exam
+//
+// NOTE: As of the MCQ-only redesign, mock exams are graded entirely
+// client-side and the app no longer calls this function. It is retained only
+// as legacy infrastructure for grading short-answer / extended-response
+// questions, should those question types ever be reintroduced. No functional
+// changes have been made here.
+//
 // POST { examId, responses: [{ questionId, answer }] }
 //
 // Returns: {

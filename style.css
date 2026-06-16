@@ -1765,6 +1765,25 @@ h1, h2, h3, h4 {
   font-weight: 800;
   color: var(--primary);
 }
+.result-pct {
+  font-size: 20px;
+  font-weight: 800;
+  margin-top: 2px;
+}
+.result-pct-good { color: #2e7d32; }
+.result-pct-mid { color: var(--warning); }
+.result-pct-bad { color: var(--danger); }
+
+/* Mock-exam question/marks breakdown under the difficulty selector */
+.mock-exam-stat { margin: var(--spacing-8) 0 0; }
+
+/* Per-question answer lines on the mock-exam results screen */
+.exam-answer-line {
+  font-size: var(--font-size-caption);
+  margin-bottom: var(--spacing-8);
+}
+.q-correct { color: #2e7d32; font-weight: 600; }
+.q-wrong { color: var(--danger); font-weight: 600; }
 
 /* ---------------------------------------------------------------------
    Misc

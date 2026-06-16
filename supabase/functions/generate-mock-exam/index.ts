@@ -5,12 +5,17 @@
 //   topics: string[] - learner-specified topics to examine (optional)
 //
 // Returns: { examId, questions: [{ id, question_text, question_type, marks,
-//             question_order, options?, blooms_level }], totalMarks, difficulty }
+//             question_order, options, blooms_level, correct_answer,
+//             explanation }], totalMarks, difficulty }
+//
+// All questions are multiple-choice (MCQ). Difficulty controls cognitive
+// complexity (Bloom's level / distractor subtlety), not question type.
+// Because grading is now done client-side, the correct option letter
+// ("A"-"D") and a short explanation are returned to the client (this is a
+// low-stakes practice tool). The answer key is also stored server-side.
 //
 // Auth: caller must be the learner identified by learnerId. "low" difficulty
-// is available on all tiers; "medium"/"high" are Premium-only. The model's
-// answer key is stored server-side (for grading) but never returned to the
-// client.
+// is available on all tiers; "medium"/"high" are Premium-only.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
@@ -29,14 +34,19 @@ learners (Grades 4-12).
 QUALITY RULES:
 - Every question must be ORIGINAL - never reproduce or closely paraphrase
   DBE/IEB past paper questions.
+- ALL questions are multiple-choice (MCQ). Each question must have EXACTLY 4
+  options with EXACTLY 1 correct answer. Difficulty controls the cognitive
+  complexity of the questions (Bloom's level), NOT the question format.
 - Questions must follow CAPS cognitive complexity standards for the
   specified grade and apply Bloom's Taxonomy. For "high" difficulty
   questions, also apply Barrett's critical-thinking taxonomy (analysis,
   evaluation, problem-solving, original creation).
-- For "mcq" questions: provide exactly 4 plausible options with exactly 1
-  correct answer.
-- For "shortanswer" and "extended" questions: provide a clear, original
-  model answer / mark scheme in the answer key.
+- The 3 distractors (incorrect options) must be plausible and
+  pedagogically meaningful - built on common misconceptions or typical
+  errors, never obviously wrong or filler.
+- For "high" difficulty, the distractors must require multi-step reasoning
+  to eliminate, and each question must genuinely test analysis, evaluation
+  or creation rather than simple recall.
 - Use South African context, examples, names and data where relevant.
 - Keep language age-appropriate for the grade.
 - If asked to respond in Afrikaans, write all question and option text in
@@ -49,61 +59,35 @@ matching this exact shape:
     {
       "number": 1,
       "text": "question text",
-      "type": "mcq" | "shortanswer" | "extended",
-      "marks": 5,
       "options": ["option A", "option B", "option C", "option D"],
-      "bloomsLevel": "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create"
+      "bloomsLevel": "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create",
+      "marks": 3
     }
   ],
   "answerKey": {
-    "1": { "answer": "model answer or correct option text", "explanation": "brief explanation of the mark scheme" }
+    "1": { "answer": "A", "explanation": "brief explanation of why this option is correct" }
   }
 }
-Omit "options" for non-mcq questions. The "answerKey" must have one entry
-per question, keyed by its "number" as a string.`;
+Every question must have exactly 4 options. The "answerKey" must have one
+entry per question, keyed by its "number" as a string, and "answer" must be
+exactly one of "A", "B", "C" or "D" indicating the correct option.`;
 
 interface DifficultySpec {
   count: number;
   marksEach: number;
   bloomsRange: string;
-  questionMix: string;
   cognitiveLoad: string;
 }
 
 const DIFFICULTY_SPECS: Record<string, DifficultySpec> = {
-  low: {
-    count: 6,
-    marksEach: 5,
-    bloomsRange: "Remember -> Understand",
-    questionMix:
-      "a mix of multiple-choice ('mcq', 4 options) and short-answer ('shortanswer', 1-2 sentence) questions: " +
-      "definitions, simple recall, and basic application",
-    cognitiveLoad: "Easy",
-  },
-  medium: {
-    count: 5,
-    marksEach: 6,
-    bloomsRange: "Understand -> Apply -> Analyze",
-    questionMix:
-      "a mix of multiple-choice ('mcq', 4 options), short-answer ('shortanswer', 2-3 sentence), and " +
-      "calculation questions (use 'shortanswer' type for calculations): application, simple analysis, and interpretation",
-    cognitiveLoad: "Moderate",
-  },
-  high: {
-    count: 3,
-    marksEach: 10,
-    bloomsRange: "Analyze -> Evaluate -> Create",
-    questionMix:
-      "extended-response ('extended') questions only: analysis, evaluation, problem-solving, case-study " +
-      "analysis, and design/critical-thinking tasks",
-    cognitiveLoad: "High",
-  },
+  low: { count: 10, marksEach: 3, bloomsRange: "Remember -> Understand", cognitiveLoad: "Easy" },
+  medium: { count: 6, marksEach: 5, bloomsRange: "Understand -> Apply -> Analyze", cognitiveLoad: "Moderate" },
+  high: { count: 5, marksEach: 6, bloomsRange: "Analyze -> Evaluate -> Create", cognitiveLoad: "High" },
 };
 
 interface RawQuestion {
   number?: number;
   text?: string;
-  type?: string;
   marks?: number;
   options?: string[];
   bloomsLevel?: string;
@@ -119,7 +103,7 @@ interface ParsedExam {
   answerKey: Record<string, RawAnswer | string>;
 }
 
-const QUESTION_TYPES = new Set(["mcq", "shortanswer", "extended"]);
+const VALID_LETTERS = new Set(["A", "B", "C", "D"]);
 
 function extractJsonObject(text: string): ParsedExam {
   let candidate = text.trim();
@@ -252,8 +236,9 @@ Deno.serve(async (req: Request) => {
     const termLine = termNum >= 1 && termNum <= 4 ? `\nCAPS Term: Term ${termNum}.` : "";
 
     const userPrompt = `Generate a ${difficulty}-difficulty CAPS mock exam for ${subject.name}, Grade ${subject.grade}.${termLine}
+All questions are multiple-choice (MCQ) with exactly 4 options each and exactly one correct answer.
 Bloom's level range for this difficulty: ${spec.bloomsRange} (cognitive load: ${spec.cognitiveLoad}).
-Question mix: ${spec.questionMix}.
+Difficulty controls the cognitive complexity of the questions and the subtlety of the distractors, not the question format.
 Learner diagnostic level: ${level}/5.
 ${requestedTopics.length > 0 ? "Focus the exam specifically and only on these topics" : "Learner's recent study topics"}: ${topicList}.
 ${langInstruction(lang)}
@@ -265,7 +250,7 @@ marks).${requestedTopics.length > 0 ? " Every question must relate directly to t
 
     let responseText: string;
     try {
-      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 3072);
+      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 4096);
       responseText = result.text;
     } catch (err) {
       if (err instanceof ClaudeTimeoutError) {
@@ -279,32 +264,34 @@ marks).${requestedTopics.length > 0 ? " Every question must relate directly to t
     let questions: {
       number: number;
       text: string;
-      type: string;
       marks: number;
-      options: string[] | null;
+      options: string[];
       bloomsLevel: string | null;
-      correctAnswer: string | null;
+      correctLetter: string;
+      explanation: string;
     }[];
     try {
       const parsed = extractJsonObject(responseText);
-      questions = parsed.questions.map((q, i) => {
-        const number = Number(q.number ?? i + 1);
-        const type = QUESTION_TYPES.has(String(q.type)) ? String(q.type) : "shortanswer";
-        const rawAnswer = parsed.answerKey[String(number)];
-        const answerObj =
-          typeof rawAnswer === "string" ? { answer: rawAnswer, explanation: "" } : rawAnswer ?? null;
+      questions = parsed.questions
+        .map((q, i) => {
+          const number = Number(q.number ?? i + 1);
+          const rawAnswer = parsed.answerKey[String(number)];
+          const answerObj: RawAnswer = typeof rawAnswer === "string" ? { answer: rawAnswer } : rawAnswer ?? {};
+          const letter = String(answerObj.answer ?? "").trim().toUpperCase();
 
-        return {
-          number,
-          text: String(q.text ?? `Question ${number}`),
-          type,
-          marks: Number(q.marks ?? spec.marksEach),
-          options: type === "mcq" && Array.isArray(q.options) ? q.options.map((o) => String(o)) : null,
-          bloomsLevel: q.bloomsLevel ? String(q.bloomsLevel) : null,
-          correctAnswer: answerObj ? JSON.stringify(answerObj) : null,
-        };
-      });
-      if (questions.length === 0) throw new Error("No questions returned");
+          return {
+            number,
+            text: String(q.text ?? `Question ${number}`),
+            marks: Number(q.marks ?? spec.marksEach),
+            options: Array.isArray(q.options) ? q.options.map((o) => String(o)) : [],
+            bloomsLevel: q.bloomsLevel ? String(q.bloomsLevel) : null,
+            correctLetter: VALID_LETTERS.has(letter) ? letter : "A",
+            explanation: answerObj.explanation ? String(answerObj.explanation) : "",
+          };
+        })
+        // All questions are MCQ - every question must have exactly 4 options.
+        .filter((q) => q.options.length === 4);
+      if (questions.length === 0) throw new Error("No valid MCQ questions returned");
     } catch (parseErr) {
       console.error("Failed to parse exam questions:", parseErr, responseText);
       return jsonResponse({ error: "Failed to generate a valid exam. Please try again." }, 500);
@@ -330,15 +317,16 @@ marks).${requestedTopics.length > 0 ? " Every question must relate directly to t
     const rows = questions.map((q) => ({
       exam_id: exam.id,
       question_text: q.text,
-      question_type: q.type,
+      question_type: "mcq",
       options: q.options,
       blooms_level: q.bloomsLevel,
-      correct_answer: q.correctAnswer,
+      // Stored as JSON ({ answer, explanation }) to stay compatible with the
+      // legacy grade-mock-exam answer-key parser.
+      correct_answer: JSON.stringify({ answer: q.correctLetter, explanation: q.explanation }),
       marks: q.marks,
       question_order: q.number,
     }));
 
-    // Select only learner-facing columns - correct_answer is kept server-side for grading.
     const { data: insertedQuestions, error: insertErr } = await supabaseAdmin
       .from("mock_exam_questions")
       .insert(rows)
@@ -349,9 +337,25 @@ marks).${requestedTopics.length > 0 ? " Every question must relate directly to t
       return jsonResponse({ error: "Failed to save exam questions" }, 500);
     }
 
+    // Grading is client-side, so attach the correct option letter and a short
+    // explanation to each returned question (matched by question_order).
+    const answerByOrder = new Map(
+      questions.map((q) => [q.number, { correct_answer: q.correctLetter, explanation: q.explanation }]),
+    );
+    const returnedQuestions = insertedQuestions
+      .sort((a, b) => (a.question_order ?? 0) - (b.question_order ?? 0))
+      .map((q) => {
+        const ans = answerByOrder.get(q.question_order ?? -1);
+        return {
+          ...q,
+          correct_answer: ans?.correct_answer ?? "A",
+          explanation: ans?.explanation ?? "",
+        };
+      });
+
     return jsonResponse({
       examId: exam.id,
-      questions: insertedQuestions.sort((a, b) => (a.question_order ?? 0) - (b.question_order ?? 0)),
+      questions: returnedQuestions,
       totalMarks: TOTAL_MARKS,
       difficulty,
     });
