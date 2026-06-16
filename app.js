@@ -48,6 +48,10 @@ const translations = {
     btnLogin: "Log In",
     welcomeBack: "Welcome back",
     createYourAccount: "Create your account",
+    pwTooShort: "Too short — at least 8 characters",
+    pwOk: "OK",
+    pwStrong: "Strong",
+    pwWeak: "Password is too weak or too common.",
 
     diagnosticTitle: "Quick Diagnostic",
     diagnosticIntro: "Let's find your starting level. Pick a subject and answer 5 short questions.",
@@ -351,6 +355,10 @@ const translations = {
     btnLogin: "Meld Aan",
     welcomeBack: "Welkom terug",
     createYourAccount: "Skep jou rekening",
+    pwTooShort: "Te kort — minstens 8 karakters",
+    pwOk: "Reg",
+    pwStrong: "Sterk",
+    pwWeak: "Wagwoord is te swak of te algemeen.",
 
     diagnosticTitle: "Vinnige Diagnose",
     diagnosticIntro: "Kom ons bepaal jou beginvlak. Kies 'n vak en beantwoord 5 kort vrae.",
@@ -1564,6 +1572,64 @@ function renderLoginForm() {
   `;
 }
 
+// Length-based password strength check for signup. NOT a composition rule —
+// we never force uppercase/number/special characters. Trim outer spaces
+// before measuring length, but spaces inside the password are allowed.
+const PW_MIN_LENGTH = 8;
+const PW_BLOCKLIST = [
+  "password",
+  "12345678",
+  "qwerty",
+  "leuro",
+  "abc12345",
+  "11111111",
+];
+
+// Returns { valid, level, messageKey } where level is one of
+// "short" | "ok" | "strong". `email` is optional — when present, the
+// email local-part is added to the blocklist (case-insensitive).
+function evaluatePassword(rawPassword, email) {
+  const pw = (rawPassword || "").trim();
+  const blocked = [...PW_BLOCKLIST];
+  const localPart = (email || "").split("@")[0].trim().toLowerCase();
+  if (localPart.length >= 4) blocked.push(localPart);
+
+  if (pw.length < PW_MIN_LENGTH) {
+    return { valid: false, level: "short", messageKey: "pwTooShort" };
+  }
+  if (blocked.includes(pw.toLowerCase())) {
+    return { valid: false, level: "short", messageKey: "pwWeak" };
+  }
+  if (pw.length >= 12) {
+    return { valid: true, level: "strong", messageKey: "pwStrong" };
+  }
+  return { valid: true, level: "ok", messageKey: "pwOk" };
+}
+
+// Live hint + submit-button gating for the signup password field. Wired up
+// after the auth screen renders (see render()). Reads the email field too so
+// the email local-part can be blocked.
+function updatePasswordHint(form) {
+  if (!form) return;
+  const input = form.password;
+  const hint = form.querySelector("[data-pw-hint]");
+  const submitBtn = form.querySelector("button[type=submit]");
+  if (!input || !hint) return;
+
+  const email = form.email ? form.email.value : "";
+  if (!input.value) {
+    hint.textContent = "";
+    hint.className = "pw-hint";
+    if (submitBtn) submitBtn.disabled = true;
+    return;
+  }
+
+  const result = evaluatePassword(input.value, email);
+  hint.textContent = t(result.messageKey);
+  hint.className = `pw-hint pw-hint-${result.level}`;
+  if (submitBtn) submitBtn.disabled = !result.valid;
+}
+
 function renderSignupForm() {
   return `
     <h3 class="mt-0">${t("createYourAccount")}</h3>
@@ -1578,7 +1644,8 @@ function renderSignupForm() {
       </div>
       <div class="field">
         <label>${t("labelPassword")}</label>
-        <input type="password" name="password" required minlength="6" autocomplete="new-password" />
+        <input type="password" name="password" required minlength="8" autocomplete="new-password" />
+        <p class="pw-hint" data-pw-hint></p>
       </div>
       <div class="field">
         <label>${t("labelRole")}</label>
@@ -1603,7 +1670,7 @@ function renderSignupForm() {
              </div>`
           : ""
       }
-      <button type="submit" class="btn btn-primary btn-block">${t("btnCreateAccount")}</button>
+      <button type="submit" class="btn btn-primary btn-block" disabled>${t("btnCreateAccount")}</button>
     </form>
   `;
 }
@@ -1657,6 +1724,14 @@ async function handleSignup(form) {
           : "Please enter your full name (at least 2 characters).",
         "error",
       );
+      return;
+    }
+
+    // Password strength gate — mirrors the live hint, in case the disabled
+    // submit button was bypassed (e.g. programmatic form submission).
+    const pwCheck = evaluatePassword(password, email);
+    if (!pwCheck.valid) {
+      showToast(t(pwCheck.messageKey), "error");
       return;
     }
 
@@ -5354,6 +5429,17 @@ function attachGlobalListeners() {
         break;
       default:
         break;
+    }
+  });
+
+  // Live password strength hint on the signup form. Updates as the learner
+  // types in either the password or the email field (email local-part is
+  // part of the weak-password blocklist).
+  document.body.addEventListener("input", (e) => {
+    const target = e.target;
+    if (target.name === "password" || target.name === "email") {
+      const form = target.closest('form[data-action="signup-form"]');
+      if (form) updatePasswordHint(form);
     }
   });
 }

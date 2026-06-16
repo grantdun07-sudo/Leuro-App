@@ -289,6 +289,19 @@ h1, h2, h3, h4 {
 
 .field textarea { resize: vertical; min-height: 90px; }
 
+/* Live password strength hint shown under the signup password field.
+   Colour signals length: red (too short / blocked), orange (ok),
+   green (strong). Empty hint collapses to nothing. */
+.pw-hint {
+  margin: var(--spacing-8) 0 0;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  min-height: 1em;
+}
+.pw-hint-short { color: #d92d20; }
+.pw-hint-ok { color: #e07b00; }
+.pw-hint-strong { color: #12805c; }
+
 .field-row { display: flex; gap: var(--spacing-12); }
 .field-row .field { flex: 1; }
 
