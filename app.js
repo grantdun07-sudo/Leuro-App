@@ -1160,9 +1160,11 @@ async function init() {
   handleRecoveryHash();
   attachGlobalListeners();
 
-  const { data } = await sbClient.auth.getSession();
-  state.session = data.session;
-
+  // Register onAuthStateChange BEFORE getSession so we never miss the
+  // PASSWORD_RECOVERY event. Supabase processes the recovery hash during
+  // the getSession() call below — if the listener is registered after, the
+  // event fires into the void and state.passwordRecovery stays false,
+  // allowing a logged-in admin to slip through to the admin panel.
   sbClient.auth.onAuthStateChange((event, session) => {
     state.session = session;
     if (event === "PASSWORD_RECOVERY") {
@@ -1180,7 +1182,13 @@ async function init() {
     }
   });
 
-  if (state.session) {
+  const { data } = await sbClient.auth.getSession();
+  state.session = data.session;
+
+  // Skip profile loading entirely when in recovery mode — the recovery
+  // screen does not need profile data, and loading it risks restoring an
+  // admin session that would short-circuit render() before the flag is read.
+  if (state.session && !state.passwordRecovery) {
     state.user = state.session.user;
     try {
       await loadUserData();
