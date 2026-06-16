@@ -704,6 +704,16 @@ const state = {
     remainingSeconds: 0,
     paused: false,
   },
+  // FET (Grade 10-12) subject selection, shown before the diagnostic.
+  showSubjectSelection: false,
+  subjectSelectionComplete: false,
+  learnerSubjects: [],      // subject IDs saved in learner_subjects table
+  subjectSelection: {
+    mathChoiceId: null,
+    selectedElectiveIds: [],
+    saving: false,
+    error: null,
+  },
 };
 
 // ---------------------------------------------------------------------
@@ -1304,7 +1314,7 @@ async function loadUserData() {
     state.learner = learner;
     if (!["home", "learn", "study", "account"].includes(state.currentTab)) state.currentTab = "home";
 
-    await Promise.all([loadSubjects(), loadTopics(), loadExams(), loadSessionsToday(), loadSavedGuides()]);
+    await Promise.all([loadSubjects(), loadTopics(), loadExams(), loadSessionsToday(), loadSavedGuides(), loadLearnerSubjects()]);
   } else if (profile.role === "parent") {
     if (!["home", "activity", "goals", "account"].includes(state.currentTab)) state.currentTab = "home";
     await loadParentData();
@@ -1354,6 +1364,19 @@ async function loadSavedGuides() {
     .order("created_at", { ascending: false });
   if (error) throw error;
   state.savedGuides = data || [];
+}
+
+async function loadLearnerSubjects() {
+  if (!state.learner || state.learner.grade < 10) return;
+  const { data, error } = await sbClient
+    .from("learner_subjects")
+    .select("subject_id")
+    .eq("learner_id", state.learner.id);
+  if (error) throw error;
+  state.learnerSubjects = (data || []).map((r) => r.subject_id);
+  if (state.learnerSubjects.length === 0) {
+    state.showSubjectSelection = true;
+  }
 }
 
 async function loadSessionsToday() {
@@ -1814,13 +1837,20 @@ function render() {
 
   app.innerHTML = renderMainScreen();
 
-  // Diagnostic gate: a non-dismissable full-screen overlay shown on top of
-  // the app whenever a learner has not completed their diagnostic
-  // (diagnostic_level null or 0), or has chosen to retake it.
-  // Skipped entirely when returning from a PayFast redirect, since the
-  // learner record may not have finished loading yet and diagnostic_level
-  // would incorrectly read as null.
+  // Subject-selection gate: Grade 10-12 learners who have not yet chosen
+  // their subjects see this overlay before the diagnostic. The two gates
+  // are mutually exclusive — subject selection takes priority.
   if (
+    state.profile.role === "learner" &&
+    state.learner &&
+    !state.returningFromPayment &&
+    state.showSubjectSelection
+  ) {
+    app.insertAdjacentHTML("beforeend", renderSubjectSelectionScreen());
+  } else if (
+    // Diagnostic gate: shown whenever a learner has not completed their
+    // diagnostic (diagnostic_level null or 0), or has chosen to retake it.
+    // Skipped when returning from a PayFast redirect.
     state.profile.role === "learner" &&
     state.learner &&
     !state.returningFromPayment &&
@@ -2329,6 +2359,138 @@ function normalizeAnswerLetter(correct, options) {
   return "";
 }
 
+// ---------------------------------------------------------------------
+// FET SUBJECT SELECTION (Grade 10-12 only)
+// ---------------------------------------------------------------------
+
+const SUBSEL_COMPULSORY = new Set(["english", "afrikaans", "life orientation"]);
+const SUBSEL_MATHS      = new Set(["mathematics", "mathematical literacy"]);
+
+function renderSubjectSelectionScreen() {
+  const lang = state.lang;
+  const ss   = state.subjectSelection;
+  const subjects = state.subjects;
+
+  const compulsory = subjects.filter((s) => SUBSEL_COMPULSORY.has(s.name.toLowerCase()));
+  const mathsOptions = subjects.filter((s) => SUBSEL_MATHS.has(s.name.toLowerCase()));
+  const electives = subjects
+    .filter((s) => !SUBSEL_COMPULSORY.has(s.name.toLowerCase()) && !SUBSEL_MATHS.has(s.name.toLowerCase()))
+    .slice()
+    .sort((a, b) => subjectLabel(a).localeCompare(subjectLabel(b)));
+
+  const electiveCount = ss.selectedElectiveIds.length;
+  const af = lang === "af";
+
+  return `
+    <div class="diagnostic-overlay" id="subject-selection-modal">
+      <div class="diagnostic-modal">
+        ${diagnosticHeaderBar()}
+        <div class="diagnostic-body">
+          <h2 class="diagnostic-title">${af ? "Kies Jou Vakke" : "Choose Your Subjects"}</h2>
+
+          <div class="subject-section">
+            <div class="subject-section-label">${af ? "Verpligte Vakke" : "Compulsory Subjects"}</div>
+            ${compulsory.map((s) => `
+              <label class="subject-row subject-row-locked">
+                <input type="checkbox" checked disabled class="subject-checkbox">
+                <span class="subject-name">${escapeHtml(subjectLabel(s))}</span>
+                <span class="subject-required-badge">${af ? "Verpligtend" : "Required"}</span>
+              </label>
+            `).join("")}
+          </div>
+
+          <div class="subject-section">
+            <div class="subject-section-label">${af ? "Wiskunde (kies een)" : "Mathematics (choose one)"}</div>
+            ${mathsOptions.map((s) => `
+              <label class="subject-row">
+                <input type="radio" name="subject-maths"
+                  class="subject-radio"
+                  data-action="subject-maths-select"
+                  data-subject-id="${escapeHtml(s.id)}"
+                  ${ss.mathChoiceId === s.id ? "checked" : ""}>
+                <span class="subject-name">${escapeHtml(subjectLabel(s))}</span>
+              </label>
+            `).join("")}
+          </div>
+
+          <div class="subject-section">
+            <div class="subject-section-label">${af ? "Keusevakke (kies minstens 3)" : "Elective Subjects (choose at least 3)"}</div>
+            <div class="subject-elective-counter ${electiveCount >= 3 ? "counter-met" : ""}">
+              ${af ? `${electiveCount} van 3 minimum gekies` : `${electiveCount} of 3 minimum selected`}
+            </div>
+            ${electives.map((s) => `
+              <label class="subject-row">
+                <input type="checkbox"
+                  class="subject-checkbox"
+                  data-action="subject-elective-toggle"
+                  data-subject-id="${escapeHtml(s.id)}"
+                  ${ss.selectedElectiveIds.includes(s.id) ? "checked" : ""}>
+                <span class="subject-name">${escapeHtml(subjectLabel(s))}</span>
+              </label>
+            `).join("")}
+          </div>
+
+          ${ss.error ? `<p class="form-error">${escapeHtml(ss.error)}</p>` : ""}
+
+          <button class="btn btn-gold btn-block" data-action="subject-selection-submit" ${ss.saving ? "disabled" : ""}>
+            ${ss.saving ? `<span class="spinner"></span>` : escapeHtml(af ? "Begin My Diagnostiek →" : "Start My Diagnostic →")}
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function submitSubjectSelection() {
+  const lang = state.lang;
+  const ss   = state.subjectSelection;
+  const af   = lang === "af";
+
+  if (!ss.mathChoiceId) {
+    ss.error = af
+      ? "Kies asseblief Wiskunde of Wiskundige Geletterdheid."
+      : "Please select either Mathematics or Mathematical Literacy.";
+    render();
+    return;
+  }
+  if (ss.selectedElectiveIds.length < 3) {
+    ss.error = af
+      ? "Kies asseblief minstens 3 keusevakke."
+      : "Please select at least 3 elective subjects.";
+    render();
+    return;
+  }
+
+  ss.error = null;
+  ss.saving = true;
+  render();
+
+  try {
+    const compulsoryIds = state.subjects
+      .filter((s) => SUBSEL_COMPULSORY.has(s.name.toLowerCase()))
+      .map((s) => s.id);
+    const allSelected = [...compulsoryIds, ss.mathChoiceId, ...ss.selectedElectiveIds];
+
+    const { error } = await sbClient
+      .from("learner_subjects")
+      .insert(allSelected.map((subjectId) => ({ learner_id: state.learner.id, subject_id: subjectId })));
+    if (error) throw error;
+
+    state.learnerSubjects = allSelected;
+    state.subjectSelectionComplete = true;
+    state.showSubjectSelection = false;
+    ss.saving = false;
+    render();
+  } catch (err) {
+    console.error("Subject selection error:", err);
+    ss.saving = false;
+    ss.error = af
+      ? "Kon nie vakke stoor nie. Probeer asseblief weer."
+      : "Failed to save subjects. Please try again.";
+    render();
+  }
+}
+
 function ensureDiagnosticState() {
   if (!state.diagnostic) {
     state.diagnostic = {
@@ -2495,6 +2657,11 @@ async function loadDiagnosticQuestions() {
         grade: state.learner.grade,
         language: state.lang,
         learner_id: state.learner.id,
+        ...(state.learnerSubjects.length > 0 && {
+          subjectNames: state.subjects
+            .filter((s) => state.learnerSubjects.includes(s.id))
+            .map((s) => s.name),
+        }),
       }),
     });
     const data = await res.json();
@@ -4913,6 +5080,9 @@ function attachGlobalListeners() {
       case "retake-diagnostic":
         retakeDiagnostic();
         break;
+      case "subject-selection-submit":
+        submitSubjectSelection();
+        break;
       case "safety-tier1-close":
         state.safetyOverlay = null;
         state.currentTab = "home";
@@ -5096,6 +5266,23 @@ function attachGlobalListeners() {
     const action = target.dataset.action;
 
     switch (action) {
+      case "subject-maths-select":
+        state.subjectSelection.mathChoiceId = target.dataset.subjectId;
+        state.subjectSelection.error = null;
+        render();
+        break;
+      case "subject-elective-toggle": {
+        const subjectId = target.dataset.subjectId;
+        const idx = state.subjectSelection.selectedElectiveIds.indexOf(subjectId);
+        if (idx === -1) {
+          state.subjectSelection.selectedElectiveIds.push(subjectId);
+        } else {
+          state.subjectSelection.selectedElectiveIds.splice(idx, 1);
+        }
+        state.subjectSelection.error = null;
+        render();
+        break;
+      }
       case "refresher-subject-select":
         refresherSubjectChange(target.value);
         break;

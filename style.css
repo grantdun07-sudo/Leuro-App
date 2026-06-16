@@ -1312,6 +1312,91 @@ h1, h2, h3, h4 {
 }
 
 /* ---------------------------------------------------------------------
+   FET Subject Selection overlay
+   --------------------------------------------------------------------- */
+
+.subject-section {
+  margin-bottom: var(--spacing-20);
+}
+
+.subject-section-label {
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--primary);
+  margin-bottom: var(--spacing-8);
+}
+
+.subject-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-12);
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--white);
+  margin-bottom: var(--spacing-8);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.subject-row:has(input:checked):not(.subject-row-locked) {
+  border-color: var(--primary);
+  background: rgba(90, 62, 118, 0.07);
+}
+.subject-row-locked {
+  background: rgba(90, 62, 118, 0.04);
+  cursor: default;
+  opacity: 0.8;
+}
+
+.subject-checkbox,
+.subject-radio {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.subject-row-locked .subject-checkbox { cursor: default; }
+
+.subject-name {
+  flex: 1;
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.subject-required-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--primary);
+  background: rgba(90, 62, 118, 0.12);
+  padding: 2px 8px;
+  border-radius: var(--radius-tag);
+  white-space: nowrap;
+}
+
+.subject-elective-counter {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: var(--spacing-8);
+}
+.subject-elective-counter.counter-met {
+  color: var(--success);
+}
+
+.form-error {
+  color: var(--danger);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  margin: var(--spacing-4) 0 var(--spacing-12);
+}
+
+/* ---------------------------------------------------------------------
    Account screen
    --------------------------------------------------------------------- */
 

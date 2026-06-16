@@ -66,10 +66,11 @@ Deno.serve(async (req: Request) => {
     }
 
     const body = await req.json();
-    const { grade, language, learner_id } = body as {
+    const { grade, language, learner_id, subjectNames } = body as {
       grade?: number;
       language?: string;
       learner_id?: string;
+      subjectNames?: string[];
     };
 
     if (grade == null || !learner_id) {
@@ -99,10 +100,14 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "Learner not found" }, 404);
     }
 
+    const subjectConstraint = Array.isArray(subjectNames) && subjectNames.length > 0
+      ? `Generate questions ONLY from these subjects: ${subjectNames.join(", ")}. Spread the questions across as many of these subjects as possible.`
+      : `Spread the questions across a MIX of different subjects appropriate for Grade ${grade} (for example Mathematics, Natural Sciences / Life Sciences, English, History, Geography). Do not make them all from one subject.`;
+
     const userPrompt = `Generate exactly ${QUESTION_COUNT} CAPS-aligned multiple-choice diagnostic questions for a South African Grade ${grade} learner.
 
 Requirements:
-- Spread the questions across a MIX of different subjects appropriate for Grade ${grade} (for example Mathematics, Natural Sciences / Life Sciences, English, History, Geography). Do not make them all from one subject.
+- ${subjectConstraint}
 - Each question must have exactly four options labelled A, B, C and D, with exactly one correct answer.
 - Vary the difficulty so the quiz can place the learner at a level from 1 (beginner) to 5 (advanced).
 - Keep the language clear and age-appropriate for Grade ${grade}.
