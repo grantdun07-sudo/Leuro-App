@@ -52,6 +52,16 @@ const translations = {
     pwOk: "OK",
     pwStrong: "Strong",
     pwWeak: "Password is too weak or too common.",
+    forgotPassword: "Forgot password?",
+    resetPasswordHeading: "Reset your password",
+    btnSendResetLink: "Send reset link",
+    resetEmailSentMsg: "If that email is registered, a reset link has been sent.",
+    setNewPasswordHeading: "Set new password",
+    labelNewPassword: "New password",
+    labelConfirmPassword: "Confirm password",
+    btnUpdatePassword: "Update password",
+    pwMismatch: "Passwords do not match.",
+    pwUpdated: "Password updated! Please log in.",
 
     diagnosticTitle: "Quick Diagnostic",
     diagnosticIntro: "Let's find your starting level. Pick a subject and answer 5 short questions.",
@@ -359,6 +369,16 @@ const translations = {
     pwOk: "Reg",
     pwStrong: "Sterk",
     pwWeak: "Wagwoord is te swak of te algemeen.",
+    forgotPassword: "Wagwoord vergeet?",
+    resetPasswordHeading: "Herstel jou wagwoord",
+    btnSendResetLink: "Stuur herstelskakel",
+    resetEmailSentMsg: "As daardie e-pos geregistreer is, is 'n herstelskakel gestuur.",
+    setNewPasswordHeading: "Stel nuwe wagwoord",
+    labelNewPassword: "Nuwe wagwoord",
+    labelConfirmPassword: "Bevestig wagwoord",
+    btnUpdatePassword: "Dateer wagwoord op",
+    pwMismatch: "Wagwoorde stem nie ooreen nie.",
+    pwUpdated: "Wagwoord opgedateer! Meld asseblief aan.",
 
     diagnosticTitle: "Vinnige Diagnose",
     diagnosticIntro: "Kom ons bepaal jou beginvlak. Kies 'n vak en beantwoord 5 kort vrae.",
@@ -665,6 +685,7 @@ const state = {
   session: null,
   user: null,
   profile: null,
+  passwordRecovery: false,
   learner: null,
   parent: null,
   linkedLearners: [],
@@ -1136,13 +1157,20 @@ async function init() {
   registerServiceWorker();
   setupOfflineDetection();
   handlePayfastReturn();
+  handleRecoveryHash();
   attachGlobalListeners();
 
   const { data } = await sbClient.auth.getSession();
   state.session = data.session;
 
-  sbClient.auth.onAuthStateChange((_event, session) => {
+  sbClient.auth.onAuthStateChange((event, session) => {
     state.session = session;
+    if (event === "PASSWORD_RECOVERY") {
+      state.passwordRecovery = true;
+      state.user = session?.user ?? null;
+      render();
+      return;
+    }
     if (!session) {
       state.user = null;
       state.profile = null;
@@ -1251,6 +1279,17 @@ function renderAcknowledgeScreen(status) {
       </div>
     </div>
   `;
+}
+
+// Parses the URL hash Supabase appends to the recovery redirect URL.
+// Sets state.passwordRecovery early so the first render() shows the
+// set-new-password screen without waiting for onAuthStateChange.
+function handleRecoveryHash() {
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  if (hash.get("type") === "recovery") {
+    state.passwordRecovery = true;
+    window.history.replaceState({}, "", window.location.pathname + window.location.search);
+  }
 }
 
 function handlePayfastReturn() {
@@ -1538,18 +1577,22 @@ function getGoalsDraft(learner) {
 // ---------------------------------------------------------------------
 let authTab = "login";
 let authRole = "learner";
+let resetEmailSent = false;
 
 function renderAuthScreen() {
+  const showTabs = authTab !== "forgot";
   return `
     <div class="auth-wrap">
       <div class="auth-logo">${t("appName")}<span class="tm">™</span></div>
       <div class="auth-tagline">${t("tagline")}</div>
       <div class="auth-card">
-        <div class="auth-tabs">
-          <button class="auth-tab ${authTab === "login" ? "active" : ""}" data-action="auth-tab" data-tab="login">${t("tabLogin")}</button>
-          <button class="auth-tab ${authTab === "signup" ? "active" : ""}" data-action="auth-tab" data-tab="signup">${t("tabSignup")}</button>
-        </div>
-        ${authTab === "login" ? renderLoginForm() : renderSignupForm()}
+        ${showTabs ? `
+          <div class="auth-tabs">
+            <button class="auth-tab ${authTab === "login" ? "active" : ""}" data-action="auth-tab" data-tab="login">${t("tabLogin")}</button>
+            <button class="auth-tab ${authTab === "signup" ? "active" : ""}" data-action="auth-tab" data-tab="signup">${t("tabSignup")}</button>
+          </div>
+        ` : ""}
+        ${authTab === "login" ? renderLoginForm() : authTab === "signup" ? renderSignupForm() : renderForgotForm()}
       </div>
     </div>
   `;
@@ -1569,6 +1612,7 @@ function renderLoginForm() {
       </div>
       <button type="submit" class="btn btn-primary btn-block">${t("btnLogin")}</button>
     </form>
+    <p class="forgot-link"><button class="btn-link" data-action="show-forgot">${t("forgotPassword")}</button></p>
   `;
 }
 
@@ -1628,6 +1672,134 @@ function updatePasswordHint(form) {
   hint.textContent = t(result.messageKey);
   hint.className = `pw-hint pw-hint-${result.level}`;
   if (submitBtn) submitBtn.disabled = !result.valid;
+}
+
+function renderForgotForm() {
+  if (resetEmailSent) {
+    return `
+      <h3 class="mt-0">${t("resetPasswordHeading")}</h3>
+      <p class="auth-info-msg">${t("resetEmailSentMsg")}</p>
+      <button class="btn btn-outline btn-block" data-action="back-to-login">${t("tabLogin")}</button>
+    `;
+  }
+  return `
+    <h3 class="mt-0">${t("resetPasswordHeading")}</h3>
+    <form data-action="forgot-form">
+      <div class="field">
+        <label>${t("labelEmail")}</label>
+        <input type="email" name="email" required autocomplete="email" />
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">${t("btnSendResetLink")}</button>
+    </form>
+    <p class="forgot-link"><button class="btn-link" data-action="back-to-login">${t("tabLogin")}</button></p>
+  `;
+}
+
+async function handleResetPasswordRequest(form) {
+  const btn = form.querySelector("button[type=submit]");
+  setButtonLoading(btn, true);
+  try {
+    const email = form.email.value.trim();
+    await sbClient.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    });
+    // Always show the same neutral message — don't leak whether the email exists.
+    resetEmailSent = true;
+    render();
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || t("errorGeneric"), "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+function renderPasswordRecoveryScreen() {
+  return `
+    <div class="auth-wrap">
+      <div class="auth-logo">${t("appName")}<span class="tm">™</span></div>
+      <div class="auth-tagline">${t("tagline")}</div>
+      <div class="auth-card">
+        <h3 class="mt-0">${t("setNewPasswordHeading")}</h3>
+        <form data-action="set-new-password-form">
+          <div class="field">
+            <label>${t("labelNewPassword")}</label>
+            <input type="password" name="password" required minlength="8" autocomplete="new-password" />
+            <p class="pw-hint" data-pw-hint></p>
+          </div>
+          <div class="field">
+            <label>${t("labelConfirmPassword")}</label>
+            <input type="password" name="confirm" required autocomplete="new-password" />
+            <p class="pw-hint" data-confirm-hint></p>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block" disabled>${t("btnUpdatePassword")}</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+// Gates the submit button on the recovery form: new password must pass
+// evaluatePassword() AND the confirm field must match exactly.
+function updateRecoveryHints(form) {
+  if (!form) return;
+  const pwInput = form.password;
+  const confirmInput = form.confirm;
+  const pwHint = form.querySelector("[data-pw-hint]");
+  const confirmHint = form.querySelector("[data-confirm-hint]");
+  const submitBtn = form.querySelector("button[type=submit]");
+  if (!pwInput || !confirmInput || !pwHint || !confirmHint) return;
+
+  const pwResult = evaluatePassword(pwInput.value);
+  if (!pwInput.value) {
+    pwHint.textContent = "";
+    pwHint.className = "pw-hint";
+  } else {
+    pwHint.textContent = t(pwResult.messageKey);
+    pwHint.className = `pw-hint pw-hint-${pwResult.level}`;
+  }
+
+  const matches = confirmInput.value.length > 0 && confirmInput.value === pwInput.value;
+  if (!confirmInput.value) {
+    confirmHint.textContent = "";
+    confirmHint.className = "pw-hint";
+  } else {
+    confirmHint.textContent = matches ? "" : t("pwMismatch");
+    confirmHint.className = matches ? "pw-hint" : "pw-hint pw-hint-short";
+  }
+
+  if (submitBtn) submitBtn.disabled = !(pwResult.valid && matches);
+}
+
+async function handleUpdatePassword(form) {
+  const btn = form.querySelector("button[type=submit]");
+  setButtonLoading(btn, true);
+  try {
+    const password = form.password.value;
+    const check = evaluatePassword(password);
+    if (!check.valid) {
+      showToast(t(check.messageKey), "error");
+      return;
+    }
+    if (form.confirm.value !== password) {
+      showToast(t("pwMismatch"), "error");
+      return;
+    }
+    const { error } = await sbClient.auth.updateUser({ password });
+    if (error) throw error;
+    showToast(t("pwUpdated"), "success");
+    state.passwordRecovery = false;
+    await sbClient.auth.signOut();
+    state.session = null;
+    state.user = null;
+    authTab = "login";
+    render();
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || t("errorGeneric"), "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
 
 function renderSignupForm() {
@@ -1905,6 +2077,13 @@ function render() {
 
   if (state.loading) {
     app.innerHTML = `<div class="loading-row"><span class="spinner spinner-purple"></span> ${t("loading")}</div>`;
+    return;
+  }
+
+  // Password recovery: user arrived via a reset-link email. Show the
+  // set-new-password form regardless of profile state.
+  if (state.passwordRecovery) {
+    app.innerHTML = renderPasswordRecoveryScreen();
     return;
   }
 
@@ -5150,6 +5329,16 @@ function attachGlobalListeners() {
         authTab = target.dataset.tab;
         render();
         break;
+      case "show-forgot":
+        authTab = "forgot";
+        resetEmailSent = false;
+        render();
+        break;
+      case "back-to-login":
+        authTab = "login";
+        resetEmailSent = false;
+        render();
+        break;
       case "select-role":
         authRole = target.dataset.role;
         render();
@@ -5360,6 +5549,12 @@ function attachGlobalListeners() {
       case "signup-form":
         handleSignup(form);
         break;
+      case "forgot-form":
+        handleResetPasswordRequest(form);
+        break;
+      case "set-new-password-form":
+        handleUpdatePassword(form);
+        break;
       case "add-topic-form":
         handleAddTopic(form);
         break;
@@ -5432,14 +5627,18 @@ function attachGlobalListeners() {
     }
   });
 
-  // Live password strength hint on the signup form. Updates as the learner
-  // types in either the password or the email field (email local-part is
-  // part of the weak-password blocklist).
+  // Live password strength hints. Handles both the signup form (strength
+  // only, email field also triggers it) and the recovery form (strength +
+  // confirm-match).
   document.body.addEventListener("input", (e) => {
     const target = e.target;
     if (target.name === "password" || target.name === "email") {
-      const form = target.closest('form[data-action="signup-form"]');
-      if (form) updatePasswordHint(form);
+      const signupForm = target.closest('form[data-action="signup-form"]');
+      if (signupForm) { updatePasswordHint(signupForm); return; }
+    }
+    if (target.name === "password" || target.name === "confirm") {
+      const recoveryForm = target.closest('form[data-action="set-new-password-form"]');
+      if (recoveryForm) updateRecoveryHints(recoveryForm);
     }
   });
 }
