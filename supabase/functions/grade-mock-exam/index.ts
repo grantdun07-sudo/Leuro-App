@@ -144,12 +144,13 @@ Deno.serve(async (req: Request) => {
       questions.reduce((sum, q) => sum + (q.marks ?? 0), 0);
     const percentage = totalMarks > 0 ? Math.round((totalAwarded / totalMarks) * 100) : 0;
 
-    // Persist responses using existing schema columns.
-    // NOTE: When you add `correct_answer` (text) and `is_correct` (bool) columns
-    // to mock_exam_responses, include them in this INSERT and the .select() below.
+    // Persist responses. Requires the mock_exam_responses table to have
+    // `correct_answer` (text) and `is_correct` (bool) columns.
     const responseRows = gradedResults.map((r) => ({
       question_id: r.question_id,
       learner_response: r.learner_answer ?? "",
+      correct_answer: r.correct_answer,
+      is_correct: r.is_correct,
       marks_awarded: r.marks_awarded,
       feedback: r.is_correct
         ? (isAf ? "Korrek!" : "Correct!")
