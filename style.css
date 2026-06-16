@@ -363,6 +363,36 @@ h1, h2, h3, h4 {
 
 .btn .spinner { margin-right: var(--spacing-4); }
 
+/* Forgot-password link below the login form and back-link below forgot form */
+.forgot-link {
+  margin-top: var(--spacing-16);
+  text-align: center;
+  font-size: var(--font-size-caption);
+}
+
+/* Unstyled inline button that looks like a link */
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: inherit;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.btn-link:hover { opacity: 0.8; }
+
+/* Neutral confirmation message (e.g. reset-email-sent) */
+.auth-info-msg {
+  font-size: var(--font-size-body);
+  color: var(--text-muted);
+  margin: var(--spacing-16) 0 var(--spacing-24);
+  line-height: 1.6;
+  text-align: center;
+}
+
 /* ---------------------------------------------------------------------
    Header / top bar
    --------------------------------------------------------------------- */
