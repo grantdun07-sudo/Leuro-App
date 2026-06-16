@@ -2871,6 +2871,16 @@ function renderProgressSummary() {
 // ---------------------------------------------------------------------
 // LEARN TAB
 // ---------------------------------------------------------------------
+// Returns the subjects to display in learner-facing dropdowns. For Grade
+// 10-12 learners who have completed subject selection, only their chosen
+// subjects are shown. All other learners see the full grade subject list.
+function getAvailableSubjects() {
+  if (state.learner && state.learner.grade >= 10 && state.learnerSubjects.length > 0) {
+    return state.subjects.filter((s) => state.learnerSubjects.includes(s.id));
+  }
+  return state.subjects;
+}
+
 function renderLearnTab() {
   const tier = state.profile.subscription_tier;
   const limitReached = tier === "free" && state.sessionsToday >= 3;
@@ -2911,7 +2921,7 @@ function renderLearnTab() {
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
         <select id="topic-subject" required>
-          ${state.subjects.map((s) => `<option value="${s.id}">${escapeHtml(subjectLabel(s))}</option>`).join("")}
+          ${getAvailableSubjects().map((s) => `<option value="${s.id}">${escapeHtml(subjectLabel(s))}</option>`).join("")}
         </select>
       </div>
       <div class="field-row">
@@ -3297,14 +3307,14 @@ function renderStudyGuideSection() {
   }
 
   const sg = state.studyGuide;
-  const selectedSubjectId = sg.subjectId ?? state.subjects[0]?.id;
+  const selectedSubjectId = sg.subjectId ?? getAvailableSubjects()[0]?.id;
 
   return `
     <div class="card">
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
         <select id="study-guide-subject" data-action="study-guide-subject-change">
-          ${state.subjects.map((s) => `<option value="${s.id}" ${selectedSubjectId === s.id ? "selected" : ""}>${escapeHtml(subjectLabel(s))}</option>`).join("")}
+          ${getAvailableSubjects().map((s) => `<option value="${s.id}" ${selectedSubjectId === s.id ? "selected" : ""}>${escapeHtml(subjectLabel(s))}</option>`).join("")}
         </select>
       </div>
       <div class="field">
@@ -3356,14 +3366,14 @@ function renderMockExamSection() {
   const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
   const completedExams = state.exams.filter((e) => e.completed_at);
   const mx = state.mockExamSetup;
-  const selectedSubjectId = mx.subjectId ?? state.subjects[0]?.id;
+  const selectedSubjectId = mx.subjectId ?? getAvailableSubjects()[0]?.id;
 
   return `
     <div class="card">
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
         <select id="exam-subject" data-action="exam-subject-change">
-          ${state.subjects.map((s) => `<option value="${s.id}" ${selectedSubjectId === s.id ? "selected" : ""}>${escapeHtml(subjectLabel(s))}</option>`).join("")}
+          ${getAvailableSubjects().map((s) => `<option value="${s.id}" ${selectedSubjectId === s.id ? "selected" : ""}>${escapeHtml(subjectLabel(s))}</option>`).join("")}
         </select>
       </div>
       <div class="field">
