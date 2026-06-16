@@ -205,6 +205,14 @@ const translations = {
     examResultsHeading: "Your Results",
     yourScore: "Your Score",
     btnDone: "Done",
+    examStatLow: "10 Questions · 3 marks each",
+    examStatMedium: "6 Questions · 5 marks each",
+    examStatHigh: "5 Questions · 6 marks each",
+    examYourAnswer: "Your answer",
+    examCorrectAnswer: "Correct answer",
+    examNoAnswer: "Not answered",
+    marksLabel: "marks",
+    examGrading: "Grading…",
 
     sessionsCompletedLabel: "Sessions completed",
     activityHeading: "Recent Activity",
@@ -500,6 +508,14 @@ const translations = {
     examResultsHeading: "Jou Resultate",
     yourScore: "Jou Punt",
     btnDone: "Klaar",
+    examStatLow: "10 Vrae · 3 punte elk",
+    examStatMedium: "6 Vrae · 5 punte elk",
+    examStatHigh: "5 Vrae · 6 punte elk",
+    examYourAnswer: "Jou antwoord",
+    examCorrectAnswer: "Korrekte antwoord",
+    examNoAnswer: "Nie beantwoord nie",
+    marksLabel: "punte",
+    examGrading: "Nasien…",
 
     sessionsCompletedLabel: "Sessies voltooi",
     activityHeading: "Onlangse Aktiwiteit",
@@ -690,6 +706,7 @@ const state = {
     subjectId: null,
     term: 1,
     topics: "",
+    difficulty: "low",
   },
   refresher: {
     step: "setup",
@@ -3360,6 +3377,10 @@ function renderStudyGuideCard(sg) {
   `;
 }
 
+// Maps each mock-exam difficulty to its translation key for the question/marks
+// breakdown shown under the difficulty selector.
+const EXAM_DIFF_STAT = { low: "examStatLow", medium: "examStatMedium", high: "examStatHigh" };
+
 function renderMockExamSection() {
   const tier = state.profile.subscription_tier;
   const isPremium = tier === "premium";
@@ -3367,6 +3388,7 @@ function renderMockExamSection() {
   const completedExams = state.exams.filter((e) => e.completed_at);
   const mx = state.mockExamSetup;
   const selectedSubjectId = mx.subjectId ?? getAvailableSubjects()[0]?.id;
+  const selectedDifficulty = isPremium ? mx.difficulty || "low" : "low";
 
   return `
     <div class="card">
@@ -3392,11 +3414,12 @@ function renderMockExamSection() {
       </div>
       <div class="field">
         <label>${t("selectDifficultyLabel")}</label>
-        <select id="exam-difficulty">
-          <option value="low" selected>${t("diffLow")}</option>
-          <option value="medium" ${isPremium ? "" : "disabled"}>${t("diffMedium")}</option>
-          <option value="high" ${isPremium ? "" : "disabled"}>${t("diffHigh")}</option>
+        <select id="exam-difficulty" data-action="exam-difficulty-change">
+          <option value="low" ${selectedDifficulty === "low" ? "selected" : ""}>${t("diffLow")}</option>
+          <option value="medium" ${isPremium ? "" : "disabled"} ${selectedDifficulty === "medium" ? "selected" : ""}>${t("diffMedium")}</option>
+          <option value="high" ${isPremium ? "" : "disabled"} ${selectedDifficulty === "high" ? "selected" : ""}>${t("diffHigh")}</option>
         </select>
+        <p class="muted mock-exam-stat">${t(EXAM_DIFF_STAT[selectedDifficulty] || EXAM_DIFF_STAT.low)}</p>
       </div>
       <button class="btn btn-primary btn-block" data-action="start-exam">${t("btnStartExam")}</button>
       ${
@@ -4061,32 +4084,30 @@ function examCurrentQuestion() {
   return e.questions[e.currentIndex];
 }
 
-function examSelectOption(optionText) {
-  const e = state.activeExam;
-  const q = examCurrentQuestion();
-  e.answers[q.id] = optionText;
-  render();
+// Letters indexed to the position of each option (all questions are MCQ).
+const EXAM_OPTION_LETTERS = ["A", "B", "C", "D"];
+
+// Returns the option text for a given answer letter on a question.
+function examOptionText(q, letter) {
+  const idx = EXAM_OPTION_LETTERS.indexOf(letter);
+  return idx >= 0 && Array.isArray(q.options) && q.options[idx] != null ? String(q.options[idx]) : "";
 }
 
-function examSaveCurrentAnswer() {
+function examSelectOption(letter) {
   const e = state.activeExam;
   const q = examCurrentQuestion();
-  if (q.question_type !== "mcq") {
-    const textarea = document.getElementById(`exam-answer-${q.id}`);
-    if (textarea) e.answers[q.id] = textarea.value.trim();
-  }
+  e.answers[q.id] = letter;
+  render();
 }
 
 function examNextQuestion() {
   const e = state.activeExam;
-  examSaveCurrentAnswer();
   e.currentIndex++;
   render();
 }
 
 async function submitExam() {
   const e = state.activeExam;
-  examSaveCurrentAnswer();
 
   const responses = e.questions.map((q) => ({
     questionId: q.id,
@@ -4104,18 +4125,19 @@ async function submitExam() {
         Authorization: `Bearer ${state.session.access_token}`,
         apikey: SUPABASE_ANON_KEY,
       },
-      body: JSON.stringify({ examId: e.examId, responses }),
+      body: JSON.stringify({
+        examId: e.examId,
+        responses,
+        lang: state.profile?.lang ?? "en",
+      }),
     });
     const data = await res.json();
     if (!res.ok) throw data;
     e.results = data;
-
-    const percentage = data.totalMarks > 0 ? Math.round((data.totalAwarded / data.totalMarks) * 100) : 0;
-    console.log("💾 Exam submitted", { score: data.totalAwarded, total: data.totalMarks, percentage });
+    console.log("💾 Exam graded", { score: data.totalAwarded, total: data.totalMarks, pct: data.percentage });
   } catch (err) {
-    const message = err && err.name === "AbortError" ? "Request timed out" : err && err.message;
-    console.error("📋 Mock Exam API ERROR", message || err);
-    showToast(message || t("errorGeneric"), "error");
+    console.error("Exam grading error:", err);
+    showToast(err?.message || err?.error || t("errorGeneric"), "error");
   } finally {
     e.loading = false;
     render();
@@ -4127,13 +4149,13 @@ function examClose() {
   render();
 }
 
+// Close results screen and refresh the completed-exams list.
 async function examDone() {
   state.activeExam = null;
   try {
     await loadExams();
   } catch (err) {
-    console.error("Failed to refresh exams", err);
-    showToast(t("errorGeneric"), "error");
+    console.error("Failed to refresh exams:", err);
   }
   render();
 }
@@ -4143,7 +4165,9 @@ function renderExamModal() {
   const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
 
   if (e.results) {
-    const percentage = e.results.totalMarks > 0 ? Math.round((e.results.totalAwarded / e.results.totalMarks) * 100) : 0;
+    const { totalAwarded, totalMarks, percentage: pct } = e.results;
+    const percentage = pct ?? (totalMarks > 0 ? Math.round((totalAwarded / totalMarks) * 100) : 0);
+    const pctClass = percentage >= 70 ? "result-pct-good" : percentage >= 50 ? "result-pct-mid" : "result-pct-bad";
     return `
       <div class="modal-overlay">
         <div class="modal-sheet">
@@ -4153,23 +4177,36 @@ function renderExamModal() {
           </div>
           <div class="modal-body">
             <div class="result-bar">
-              <div class="result-score">${e.results.totalAwarded}/${e.results.totalMarks} (${percentage}%)</div>
+              <div class="result-score">${totalAwarded} / ${totalMarks}</div>
+              <div class="result-pct ${pctClass}">${percentage}%</div>
               <div class="muted">${t("yourScore")}</div>
             </div>
             ${e.questions
               .map((q, i) => {
                 const r = e.results.results.find((res) => res.question_id === q.id);
+                const given = r?.learner_answer || "";
+                const correct = r?.correct_answer || "";
+                const isCorrect = !!r?.is_correct;
+                const givenText = given
+                  ? `${given}. ${escapeHtml(examOptionText(q, given))}`
+                  : t("examNoAnswer");
+                const correctText = `${correct}. ${escapeHtml(examOptionText(q, correct))}`;
                 return `
                 <div class="exam-question">
-                  <div class="q-head"><span>${t("questionLabel")} ${i + 1}</span><span>${r?.marks_awarded ?? 0}/${q.marks}</span></div>
+                  <div class="q-head">
+                    <span>${t("questionLabel")} ${i + 1}</span>
+                    <span class="${isCorrect ? "q-correct" : "q-wrong"}">${isCorrect ? "✓" : "✗"} ${r?.marks_awarded ?? 0}/${q.marks}</span>
+                  </div>
                   <div class="q-text">${escapeHtml(q.question_text)}</div>
-                  <p class="muted">${escapeHtml(r?.feedback || "")}</p>
+                  <div class="exam-answer-line"><span class="muted">${t("examYourAnswer")}:</span> <span class="${isCorrect ? "q-correct" : "q-wrong"}">${givenText}</span></div>
+                  <div class="exam-answer-line"><span class="muted">${t("examCorrectAnswer")}:</span> <span class="q-correct">${correctText}</span></div>
+                  ${r?.explanation ? `<p class="muted">${escapeHtml(r.explanation)}</p>` : ""}
                 </div>`;
               })
               .join("")}
           </div>
           <div class="modal-footer">
-            <button class="btn btn-gold btn-block" data-action="exam-done">${t("btnDone")}</button>
+            <button class="btn btn-gold btn-block" data-action="exam-done">${t("btnTryAgain")}</button>
           </div>
         </div>
       </div>
@@ -4180,6 +4217,7 @@ function renderExamModal() {
   const isLast = e.currentIndex === e.questions.length - 1;
   const progress = ((e.currentIndex + 1) / e.questions.length) * 100;
   const selectedAnswer = e.answers[q.id] || "";
+  const hasAnswer = !!selectedAnswer;
 
   return `
     <div class="modal-overlay">
@@ -4192,29 +4230,27 @@ function renderExamModal() {
           <div class="progress-bar"><div class="progress-bar-fill" style="width:${progress}%"></div></div>
           <div class="section-title">${t("questionLabel")} ${e.currentIndex + 1} ${t("examOf").replace("{n}", e.questions.length)}</div>
           <div class="exam-question">
-            <div class="q-head"><span>${t("questionLabel")} ${e.currentIndex + 1}</span><span>${q.marks} marks</span></div>
+            <div class="q-head"><span>${t("questionLabel")} ${e.currentIndex + 1}</span><span>${q.marks} ${t("marksLabel")}</span></div>
             <div class="q-text">${escapeHtml(q.question_text)}</div>
-            ${
-              q.question_type === "mcq" && Array.isArray(q.options)
-                ? q.options
-                    .map(
-                      (opt) => `
-              <div class="option-btn ${selectedAnswer === opt ? "selected" : ""}" data-action="exam-select-option" data-option="${escapeHtml(opt)}">
-                ${escapeHtml(opt)}
-              </div>`,
-                    )
-                    .join("")
-                : `<textarea id="exam-answer-${q.id}" rows="4" ${e.loading ? "disabled" : ""}>${escapeHtml(e.answers[q.id] || "")}</textarea>`
-            }
+            ${(Array.isArray(q.options) ? q.options : [])
+              .map((opt, idx) => {
+                const L = EXAM_OPTION_LETTERS[idx];
+                if (!L) return "";
+                return `
+              <button class="option-btn ${selectedAnswer === L ? "selected" : ""}" data-action="exam-select-option" data-letter="${L}">
+                <span class="diagnostic-option-letter">${L}</span> ${escapeHtml(String(opt))}
+              </button>`;
+              })
+              .join("")}
           </div>
         </div>
         <div class="modal-footer">
           ${
             isLast
-              ? `<button class="btn btn-primary btn-block" data-action="submit-exam" ${e.loading ? "disabled" : ""}>
-                   ${e.loading ? `<span class="spinner"></span> ${t("loading")}` : t("btnSubmitExam")}
+              ? `<button class="btn btn-primary btn-block" data-action="submit-exam" ${hasAnswer && !e.loading ? "" : "disabled"}>
+                   ${e.loading ? `<span class="spinner"></span> ${t("examGrading")}` : t("btnSubmitExam")}
                  </button>`
-              : `<button class="btn btn-primary btn-block" data-action="exam-next-question">${t("btnNextExamQuestion")}</button>`
+              : `<button class="btn btn-primary btn-block" data-action="exam-next-question" ${hasAnswer ? "" : "disabled"}>${t("btnNextExamQuestion")}</button>`
           }
         </div>
       </div>
@@ -5165,7 +5201,7 @@ function attachGlobalListeners() {
         examDone();
         break;
       case "exam-select-option":
-        examSelectOption(target.dataset.option);
+        examSelectOption(target.dataset.letter);
         break;
       case "exam-next-question":
         examNextQuestion();
@@ -5305,6 +5341,14 @@ function attachGlobalListeners() {
       case "exam-subject-change":
         state.mockExamSetup.subjectId = target.value;
         break;
+      case "exam-difficulty-change": {
+        // Preserve any topics the learner has typed before re-rendering.
+        const examTopics = document.getElementById("exam-topics");
+        if (examTopics) state.mockExamSetup.topics = examTopics.value;
+        state.mockExamSetup.difficulty = target.value;
+        render();
+        break;
+      }
       case "study-guide-subject-change":
         state.studyGuide.subjectId = target.value;
         break;
