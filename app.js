@@ -211,6 +211,8 @@ const translations = {
     examYourAnswer: "Your answer",
     examCorrectAnswer: "Correct answer",
     examNoAnswer: "Not answered",
+    marksLabel: "marks",
+    examGrading: "Grading…",
 
     sessionsCompletedLabel: "Sessions completed",
     activityHeading: "Recent Activity",
@@ -512,6 +514,8 @@ const translations = {
     examYourAnswer: "Jou antwoord",
     examCorrectAnswer: "Korrekte antwoord",
     examNoAnswer: "Nie beantwoord nie",
+    marksLabel: "punte",
+    examGrading: "Nasien…",
 
     sessionsCompletedLabel: "Sessies voltooi",
     activityHeading: "Onlangse Aktiwiteit",
@@ -4102,38 +4106,57 @@ function examNextQuestion() {
   render();
 }
 
-// MCQ exams are graded entirely client-side: compare each chosen letter to the
-// question's correct_answer and sum the marks. No grading API call is made.
-function submitExam() {
+async function submitExam() {
   const e = state.activeExam;
 
-  const results = e.questions.map((q) => {
-    const given = e.answers[q.id] || "";
-    const correct = q.correct_answer || "A";
-    const isCorrect = given === correct;
-    return {
-      question_id: q.id,
-      given,
-      correct,
-      isCorrect,
-      marks_awarded: isCorrect ? q.marks : 0,
-      explanation: q.explanation || "",
-    };
-  });
+  const responses = e.questions.map((q) => ({
+    questionId: q.id,
+    answer: e.answers[q.id] || "",
+  }));
 
-  const totalAwarded = results.reduce((sum, r) => sum + r.marks_awarded, 0);
-  const totalMarks = e.questions.reduce((sum, q) => sum + (q.marks || 0), 0);
-
-  e.results = { totalAwarded, totalMarks, results };
-  state.examResult = e.results;
-
-  const percentage = totalMarks > 0 ? Math.round((totalAwarded / totalMarks) * 100) : 0;
-  console.log("💾 Exam graded (client-side)", { score: totalAwarded, total: totalMarks, percentage });
+  e.loading = true;
   render();
+
+  try {
+    const res = await fetchWithTimeout(`${FN_URL}/grade-mock-exam`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${state.session.access_token}`,
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({
+        examId: e.examId,
+        responses,
+        lang: state.profile?.lang ?? "en",
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw data;
+    e.results = data;
+    console.log("💾 Exam graded", { score: data.totalAwarded, total: data.totalMarks, pct: data.percentage });
+  } catch (err) {
+    console.error("Exam grading error:", err);
+    showToast(err?.message || err?.error || t("errorGeneric"), "error");
+  } finally {
+    e.loading = false;
+    render();
+  }
 }
 
 function examClose() {
   state.activeExam = null;
+  render();
+}
+
+// Close results screen and refresh the completed-exams list.
+async function examDone() {
+  state.activeExam = null;
+  try {
+    await loadExams();
+  } catch (err) {
+    console.error("Failed to refresh exams:", err);
+  }
   render();
 }
 
@@ -4142,15 +4165,15 @@ function renderExamModal() {
   const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
 
   if (e.results) {
-    const { totalAwarded, totalMarks } = e.results;
-    const percentage = totalMarks > 0 ? Math.round((totalAwarded / totalMarks) * 100) : 0;
+    const { totalAwarded, totalMarks, percentage: pct } = e.results;
+    const percentage = pct ?? (totalMarks > 0 ? Math.round((totalAwarded / totalMarks) * 100) : 0);
     const pctClass = percentage >= 70 ? "result-pct-good" : percentage >= 50 ? "result-pct-mid" : "result-pct-bad";
     return `
       <div class="modal-overlay">
         <div class="modal-sheet">
           <div class="modal-header">
             <h3>${t("examResultsHeading")}</h3>
-            <button class="modal-close" data-action="exam-close">✕</button>
+            <button class="modal-close" data-action="exam-done">✕</button>
           </div>
           <div class="modal-body">
             <div class="result-bar">
@@ -4161,9 +4184,9 @@ function renderExamModal() {
             ${e.questions
               .map((q, i) => {
                 const r = e.results.results.find((res) => res.question_id === q.id);
-                const given = r?.given || "";
-                const correct = r?.correct || "";
-                const isCorrect = !!r?.isCorrect;
+                const given = r?.learner_answer || "";
+                const correct = r?.correct_answer || "";
+                const isCorrect = !!r?.is_correct;
                 const givenText = given
                   ? `${given}. ${escapeHtml(examOptionText(q, given))}`
                   : t("examNoAnswer");
@@ -4176,18 +4199,14 @@ function renderExamModal() {
                   </div>
                   <div class="q-text">${escapeHtml(q.question_text)}</div>
                   <div class="exam-answer-line"><span class="muted">${t("examYourAnswer")}:</span> <span class="${isCorrect ? "q-correct" : "q-wrong"}">${givenText}</span></div>
-                  ${
-                    isCorrect
-                      ? ""
-                      : `<div class="exam-answer-line"><span class="muted">${t("examCorrectAnswer")}:</span> <span class="q-correct">${correctText}</span></div>`
-                  }
+                  <div class="exam-answer-line"><span class="muted">${t("examCorrectAnswer")}:</span> <span class="q-correct">${correctText}</span></div>
                   ${r?.explanation ? `<p class="muted">${escapeHtml(r.explanation)}</p>` : ""}
                 </div>`;
               })
               .join("")}
           </div>
           <div class="modal-footer">
-            <button class="btn btn-gold btn-block" data-action="exam-close">${t("btnTryAgain")}</button>
+            <button class="btn btn-gold btn-block" data-action="exam-done">${t("btnTryAgain")}</button>
           </div>
         </div>
       </div>
@@ -4211,7 +4230,7 @@ function renderExamModal() {
           <div class="progress-bar"><div class="progress-bar-fill" style="width:${progress}%"></div></div>
           <div class="section-title">${t("questionLabel")} ${e.currentIndex + 1} ${t("examOf").replace("{n}", e.questions.length)}</div>
           <div class="exam-question">
-            <div class="q-head"><span>${t("questionLabel")} ${e.currentIndex + 1}</span><span>${q.marks} marks</span></div>
+            <div class="q-head"><span>${t("questionLabel")} ${e.currentIndex + 1}</span><span>${q.marks} ${t("marksLabel")}</span></div>
             <div class="q-text">${escapeHtml(q.question_text)}</div>
             ${(Array.isArray(q.options) ? q.options : [])
               .map((opt, idx) => {
@@ -4228,7 +4247,9 @@ function renderExamModal() {
         <div class="modal-footer">
           ${
             isLast
-              ? `<button class="btn btn-primary btn-block" data-action="submit-exam" ${hasAnswer ? "" : "disabled"}>${t("btnSubmitExam")}</button>`
+              ? `<button class="btn btn-primary btn-block" data-action="submit-exam" ${hasAnswer && !e.loading ? "" : "disabled"}>
+                   ${e.loading ? `<span class="spinner"></span> ${t("examGrading")}` : t("btnSubmitExam")}
+                 </button>`
               : `<button class="btn btn-primary btn-block" data-action="exam-next-question" ${hasAnswer ? "" : "disabled"}>${t("btnNextExamQuestion")}</button>`
           }
         </div>
@@ -5175,6 +5196,9 @@ function attachGlobalListeners() {
         break;
       case "submit-exam":
         submitExam();
+        break;
+      case "exam-done":
+        examDone();
         break;
       case "exam-select-option":
         examSelectOption(target.dataset.letter);

@@ -1,75 +1,45 @@
 // Supabase Edge Function: grade-mock-exam
+// POST { examId, responses: [{ questionId, answer }], lang? }
+//   responses: one entry per question — answer is "A"|"B"|"C"|"D"
+//   lang: optional override ("en"|"af"); falls back to profile lang
 //
-// NOTE: As of the MCQ-only redesign, mock exams are graded entirely
-// client-side and the app no longer calls this function. It is retained only
-// as legacy infrastructure for grading short-answer / extended-response
-// questions, should those question types ever be reintroduced. No functional
-// changes have been made here.
+// Deterministic MCQ grader — NO AI call.
+// For each question: compare the submitted answer letter to the stored
+// correct_answer in the answer key. Binary scoring only:
+//   match   → marks_awarded = question.marks, is_correct = true
+//   no match → marks_awarded = 0,             is_correct = false
 //
-// POST { examId, responses: [{ questionId, answer }] }
+// Persists: INSERT mock_exam_responses (learner_response, marks_awarded,
+// feedback). UPDATE mock_exams (learner_score, completed_at).
 //
-// Returns: {
-//   totalAwarded: number, totalMarks: number,
-//   results: [{ question_id, marks_awarded, feedback }]
-// }
+// Returns: { totalAwarded, totalMarks, percentage,
+//   results: [{ question_id, learner_answer, correct_answer, is_correct,
+//               marks_awarded, explanation }] }
 //
-// Auth: caller must be the learner who owns the exam. MCQ questions are
-// graded by exact match against the stored answer key (no AI call needed).
-// Short-answer/extended questions are auto-graded in a single Claude Haiku
-// call (with prompt caching), using the stored model answer / mark scheme
-// as additional grading context.
+// Auth: caller must be the learner who owns the exam.
+// Writes use service-role (mock_exams / mock_exam_responses have no
+// client-facing INSERT/UPDATE RLS policy).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
-import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
-import { langInstruction, JSON_KEYS_ENGLISH_NOTE } from "../_shared/prompts.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-const SYSTEM_PROMPT = `You are Leuro™, an exam marker for South African school learners following
-the CAPS curriculum. You will be given a list of short-answer/extended exam
-questions, each with its mark allocation, a model answer / mark scheme, and
-the learner's written answer. Mark each answer fairly against the mark
-scheme: award full marks for fully correct answers, partial marks for
-partially correct reasoning/working, and zero for incorrect or blank
-answers. Provide brief, constructive feedback (1-2 sentences) per question.
-
-You MUST respond with ONLY a valid JSON array, no markdown fences, no
-commentary. Each element must be: { "question_order": number,
-"marks_awarded": number, "feedback": string }. marks_awarded must be an
-integer between 0 and the question's max marks (inclusive).`;
 
 interface AnswerKeyEntry {
   answer?: string;
   explanation?: string;
 }
 
-function parseAnswerKey(raw: string | null): AnswerKeyEntry | null {
-  if (!raw) return null;
+function parseAnswerKey(raw: string | null): AnswerKeyEntry {
+  if (!raw) return {};
   try {
     const parsed = JSON.parse(raw);
-    return typeof parsed === "object" && parsed ? parsed : null;
+    return typeof parsed === "object" && parsed ? parsed : {};
   } catch {
     return { answer: raw };
   }
-}
-
-function extractJsonArray(text: string): unknown[] {
-  let candidate = text.trim();
-  const fenceMatch = candidate.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenceMatch) candidate = fenceMatch[1].trim();
-
-  const start = candidate.indexOf("[");
-  const end = candidate.lastIndexOf("]");
-  if (start !== -1 && end !== -1 && end > start) {
-    candidate = candidate.slice(start, end + 1);
-  }
-
-  const parsed = JSON.parse(candidate);
-  if (!Array.isArray(parsed)) throw new Error("Response is not a JSON array");
-  return parsed;
 }
 
 Deno.serve(async (req: Request) => {
@@ -88,9 +58,10 @@ Deno.serve(async (req: Request) => {
     }
 
     const body = await req.json();
-    const { examId, responses } = body as {
+    const { examId, responses, lang: clientLang } = body as {
       examId?: string;
       responses?: { questionId: string; answer: string }[];
+      lang?: string;
     };
 
     if (!examId || !Array.isArray(responses) || responses.length === 0) {
@@ -101,10 +72,8 @@ Deno.serve(async (req: Request) => {
       global: { headers: { Authorization: authHeader } },
     });
 
-    // Service-role client, used only for the mock_exam_responses insert,
-    // mock_exams update, and create_parent_alert RPC below - those tables
-    // have no client-facing INSERT/UPDATE policy, so the anon+JWT client
-    // gets 42501 (RLS) on write.
+    // Service-role client for writes — mock_exams and mock_exam_responses
+    // have no client-facing INSERT/UPDATE policy.
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -121,11 +90,13 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "Learner not found" }, 404);
     }
 
-    const lang = profile?.lang ?? "en";
+    const lang = clientLang ?? profile?.lang ?? "en";
+    const isAf = lang === "af";
 
+    // Verify the exam belongs to this learner.
     const { data: exam, error: examErr } = await supabase
       .from("mock_exams")
-      .select("id, learner_id, subject_id, total_marks")
+      .select("id, learner_id, total_marks")
       .eq("id", examId)
       .eq("learner_id", learner.id)
       .single();
@@ -134,9 +105,10 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "Exam not found" }, 404);
     }
 
+    // Load stored answer keys — questions are readable by the learner via JWT.
     const { data: questions, error: questionsErr } = await supabase
       .from("mock_exam_questions")
-      .select("id, question_text, question_type, marks, question_order, correct_answer")
+      .select("id, question_order, marks, correct_answer")
       .eq("exam_id", examId)
       .order("question_order", { ascending: true });
 
@@ -144,127 +116,77 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "Exam questions not found" }, 404);
     }
 
-    const answerMap = new Map(responses.map((r) => [r.questionId, r.answer ?? ""]));
+    // Build answer lookup: questionId → submitted letter (uppercase).
+    const answerMap = new Map(
+      responses.map((r) => [r.questionId, String(r.answer ?? "").trim().toUpperCase()]),
+    );
 
-    // MCQ questions are graded by exact match against the stored answer key.
-    const mcqResults = new Map<string, { marks_awarded: number; feedback: string }>();
-    const aiQuestions = [];
-
-    for (const q of questions) {
-      const learnerAnswer = answerMap.get(q.id) ?? "";
+    // Grade deterministically — no AI call.
+    const gradedResults = questions.map((q) => {
       const key = parseAnswerKey(q.correct_answer);
+      const correctLetter = String(key.answer ?? "").trim().toUpperCase();
+      const givenLetter = answerMap.get(q.id) ?? "";
+      const isCorrect = correctLetter.length > 0 && givenLetter === correctLetter;
+      const marksAwarded = isCorrect ? (q.marks ?? 0) : 0;
 
-      if (q.question_type === "mcq") {
-        const correct = (key?.answer ?? "").trim().toLowerCase();
-        const given = learnerAnswer.trim().toLowerCase();
-        const isCorrect = correct.length > 0 && given === correct;
-        mcqResults.set(q.id, {
-          marks_awarded: isCorrect ? q.marks : 0,
-          feedback: isCorrect
-            ? `Correct! ${key?.explanation ?? ""}`.trim()
-            : `Incorrect. The correct answer was: ${key?.answer ?? "(unknown)"}. ${key?.explanation ?? ""}`.trim(),
-        });
-      } else {
-        aiQuestions.push({
-          question_order: q.question_order,
-          question_text: q.question_text,
-          max_marks: q.marks,
-          model_answer: key?.answer ?? "(no model answer available)",
-          mark_scheme_notes: key?.explanation ?? "",
-          learner_answer: learnerAnswer || "(no answer provided)",
-        });
-      }
-    }
-
-    let aiGrades: { question_order: number; marks_awarded: number; feedback: string }[] = [];
-
-    if (aiQuestions.length > 0) {
-      const userPrompt = `Mark the following exam responses against their model answers.\n${langInstruction(lang)}\n${JSON_KEYS_ENGLISH_NOTE}\n\n${JSON.stringify(aiQuestions, null, 2)}`;
-
-      let responseText: string;
-      try {
-        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 2048);
-        responseText = result.text;
-      } catch (err) {
-        if (err instanceof ClaudeTimeoutError) {
-          console.error("Anthropic request timed out:", err);
-          return jsonResponse({ error: "AI grading timed out. Please try again." }, 500);
-        }
-        console.error("Anthropic API error:", err);
-        return jsonResponse({ error: "Failed to grade exam" }, 500);
-      }
-
-      try {
-        const parsed = extractJsonArray(responseText) as Array<{
-          question_order?: number;
-          marks_awarded?: number;
-          feedback?: string;
-        }>;
-        aiGrades = parsed.map((g) => ({
-          question_order: Number(g.question_order ?? 0),
-          marks_awarded: Math.max(0, Math.round(Number(g.marks_awarded ?? 0))),
-          feedback: String(g.feedback ?? ""),
-        }));
-      } catch (parseErr) {
-        console.error("Failed to parse grading result:", parseErr, responseText);
-        return jsonResponse({ error: "Failed to grade exam. Please try again." }, 500);
-      }
-    }
-
-    const aiGradeByOrder = new Map(aiGrades.map((g) => [g.question_order, g]));
-
-    const responseRows = questions.map((q) => {
-      const learnerAnswer = answerMap.get(q.id) ?? "";
-      const mcq = mcqResults.get(q.id);
-      if (mcq) {
-        return {
-          question_id: q.id,
-          learner_response: learnerAnswer,
-          marks_awarded: mcq.marks_awarded,
-          feedback: mcq.feedback,
-        };
-      }
-      const grade = aiGradeByOrder.get(q.question_order ?? -1);
-      const marksAwarded = Math.min(grade?.marks_awarded ?? 0, q.marks);
       return {
         question_id: q.id,
-        learner_response: learnerAnswer,
+        learner_answer: givenLetter || null,
+        correct_answer: correctLetter,
+        is_correct: isCorrect,
         marks_awarded: marksAwarded,
-        feedback: grade?.feedback || "No feedback available.",
+        explanation: key.explanation ?? "",
       };
     });
 
-    const { data: insertedResponses, error: insertErr } = await supabaseAdmin
-      .from("mock_exam_responses")
-      .insert(responseRows)
-      .select("question_id, marks_awarded, feedback");
+    const totalAwarded = gradedResults.reduce((sum, r) => sum + r.marks_awarded, 0);
+    const totalMarks = (exam.total_marks ?? 0) ||
+      questions.reduce((sum, q) => sum + (q.marks ?? 0), 0);
+    const percentage = totalMarks > 0 ? Math.round((totalAwarded / totalMarks) * 100) : 0;
 
-    if (insertErr || !insertedResponses) {
+    // Persist responses using existing schema columns.
+    // NOTE: When you add `correct_answer` (text) and `is_correct` (bool) columns
+    // to mock_exam_responses, include them in this INSERT and the .select() below.
+    const responseRows = gradedResults.map((r) => ({
+      question_id: r.question_id,
+      learner_response: r.learner_answer ?? "",
+      marks_awarded: r.marks_awarded,
+      feedback: r.is_correct
+        ? (isAf ? "Korrek!" : "Correct!")
+        : isAf
+          ? `Verkeerd. Die korrekte antwoord was: ${r.correct_answer}.`
+          : `Incorrect. The correct answer was: ${r.correct_answer}.`,
+    }));
+
+    const { error: insertErr } = await supabaseAdmin
+      .from("mock_exam_responses")
+      .insert(responseRows);
+
+    if (insertErr) {
       console.error("Failed to insert exam responses:", insertErr);
       return jsonResponse({ error: "Failed to save exam results" }, 500);
     }
 
-    const totalAwarded = responseRows.reduce((sum, r) => sum + r.marks_awarded, 0);
-
-    await supabaseAdmin
+    const { error: updateErr } = await supabaseAdmin
       .from("mock_exams")
       .update({ learner_score: totalAwarded, completed_at: new Date().toISOString() })
       .eq("id", examId);
 
-    // Notify parents if performance is low (< 50%)
-    if (exam.total_marks > 0 && totalAwarded / exam.total_marks < 0.5) {
+    if (updateErr) {
+      console.error("Failed to update exam record:", updateErr);
+      // Non-fatal — grading data is already inserted; return results anyway.
+    }
+
+    // Alert parents when performance is below 50%.
+    if (totalMarks > 0 && totalAwarded / totalMarks < 0.5) {
       await supabaseAdmin.rpc("create_parent_alert", {
         p_learner_id: learner.id,
         p_alert_type: "low_performance",
-        p_message: `A mock exam was completed with a low score: ${totalAwarded}/${exam.total_marks}.`,
+        p_message: `A mock exam was completed with a low score: ${totalAwarded}/${totalMarks}.`,
       });
     }
 
-    return jsonResponse({
-      totalAwarded,
-      totalMarks: exam.total_marks,
-      results: insertedResponses,
-    });
+    return jsonResponse({ totalAwarded, totalMarks, percentage, results: gradedResults });
   } catch (err) {
     console.error("grade-mock-exam error:", err);
     return jsonResponse({ error: "Internal server error" }, 500);

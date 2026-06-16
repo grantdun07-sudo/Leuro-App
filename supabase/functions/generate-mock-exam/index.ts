@@ -49,8 +49,9 @@ QUALITY RULES:
   or creation rather than simple recall.
 - Use South African context, examples, names and data where relevant.
 - Keep language age-appropriate for the grade.
-- If asked to respond in Afrikaans, write all question and option text in
-  Afrikaans (the JSON keys themselves stay in English).
+- If asked to respond in Afrikaans, write all question text, option text, and
+  answer key explanations in Afrikaans. The explanation field in the answerKey
+  must also be in Afrikaans. JSON keys themselves stay in English.
 
 You MUST respond with ONLY valid JSON, no markdown fences, no commentary,
 matching this exact shape:
