@@ -393,6 +393,45 @@ h1, h2, h3, h4 {
   text-align: center;
 }
 
+/* Legal consent checkboxes on the signup form */
+.legal-checkboxes {
+  margin-bottom: var(--spacing-16);
+}
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-8);
+  font-size: var(--font-size-caption);
+  color: var(--text);
+  margin-bottom: var(--spacing-12);
+  cursor: pointer;
+  line-height: 1.5;
+}
+.checkbox-label:last-child { margin-bottom: 0; }
+.checkbox-label input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+/* Legal section links in Account tab */
+.legal-section-link {
+  display: block;
+  margin-bottom: var(--spacing-8);
+  font-size: var(--font-size-body);
+}
+.legal-section-link:last-child { margin-bottom: 0; }
+
+/* Legal modal body — slightly smaller text for dense policy content */
+.legal-modal-body h4 {
+  margin: var(--spacing-16) 0 var(--spacing-4);
+  font-size: var(--font-size-body);
+}
+.legal-modal-body p { margin: 0 0 var(--spacing-8); font-size: var(--font-size-caption); line-height: 1.6; }
+
 /* ---------------------------------------------------------------------
    Header / top bar
    --------------------------------------------------------------------- */

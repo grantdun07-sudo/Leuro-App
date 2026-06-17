@@ -62,6 +62,15 @@ const translations = {
     btnUpdatePassword: "Update password",
     pwMismatch: "Passwords do not match.",
     pwUpdated: "Password updated! Please log in.",
+    checkboxTcPrefix: "I agree to the ",
+    checkboxTcAnd: " and ",
+    linkTc: "Terms & Conditions",
+    linkPrivacy: "Privacy Policy",
+    checkboxConsent: "I am 18 or older, or I am the parent/guardian completing this registration on behalf of a minor.",
+    checkboxTcRequired: "Please accept the Terms & Conditions, Privacy Policy, and age confirmation to continue.",
+    legalHeading: "Legal",
+    tcModalTitle: "Terms & Conditions",
+    privacyModalTitle: "Privacy Policy",
 
     diagnosticTitle: "Quick Diagnostic",
     diagnosticIntro: "Let's find your starting level. Pick a subject and answer 5 short questions.",
@@ -379,6 +388,15 @@ const translations = {
     btnUpdatePassword: "Dateer wagwoord op",
     pwMismatch: "Wagwoorde stem nie ooreen nie.",
     pwUpdated: "Wagwoord opgedateer! Meld asseblief aan.",
+    checkboxTcPrefix: "Ek stem saam met die ",
+    checkboxTcAnd: " en ",
+    linkTc: "Bepalings en Voorwaardes",
+    linkPrivacy: "Privaatheidsbeleid",
+    checkboxConsent: "Ek is 18 jaar of ouer, of ek is die ouer/voog wat hierdie registrasie namens 'n minderjarige voltooi.",
+    checkboxTcRequired: "Aanvaar asseblief die Bepalings en Voorwaardes, Privaatheidsbeleid en ouderdomsbevestiging om voort te gaan.",
+    legalHeading: "Regsake",
+    tcModalTitle: "Bepalings en Voorwaardes",
+    privacyModalTitle: "Privaatheidsbeleid",
 
     diagnosticTitle: "Vinnige Diagnose",
     diagnosticIntro: "Kom ons bepaal jou beginvlak. Kies 'n vak en beantwoord 5 kort vrae.",
@@ -693,6 +711,8 @@ const state = {
   showLinkChildScreen: false,
   linkChildModalOpen: false,
   upgradeModalOpen: false,
+  tcModalOpen: false,
+  privacyModalOpen: false,
   expandedSessionIds: {},
   expandedDateGroups: new Set(),
   admin: {
@@ -1595,6 +1615,8 @@ function renderAuthScreen() {
         ${authTab === "login" ? renderLoginForm() : authTab === "signup" ? renderSignupForm() : renderForgotForm()}
       </div>
     </div>
+    ${state.tcModalOpen ? renderTcModal() : ""}
+    ${state.privacyModalOpen ? renderPrivacyModal() : ""}
   `;
 }
 
@@ -1671,7 +1693,9 @@ function updatePasswordHint(form) {
   const result = evaluatePassword(input.value, email);
   hint.textContent = t(result.messageKey);
   hint.className = `pw-hint pw-hint-${result.level}`;
-  if (submitBtn) submitBtn.disabled = !result.valid;
+  const tcChecked = form.querySelector('[name="tcAccepted"]')?.checked ?? false;
+  const ageChecked = form.querySelector('[name="ageConsent"]')?.checked ?? false;
+  if (submitBtn) submitBtn.disabled = !(result.valid && tcChecked && ageChecked);
 }
 
 function renderForgotForm() {
@@ -1802,6 +1826,82 @@ async function handleUpdatePassword(form) {
   }
 }
 
+function renderTcModal() {
+  return `
+    <div class="modal-overlay" data-action="close-tc-modal">
+      <div class="modal-sheet" onclick="event.stopPropagation()">
+        <div class="modal-header">
+          <h3>${t("tcModalTitle")}</h3>
+          <button class="modal-close" data-action="close-tc-modal">✕</button>
+        </div>
+        <div class="modal-body legal-modal-body">
+          <p><strong>Last updated: June 2026</strong></p>
+          <p>Welcome to Leuro™. By creating an account or using the Leuro™ platform ("Service"), you agree to these Terms &amp; Conditions. Please read them carefully.</p>
+          <h4>1. Eligibility</h4>
+          <p>The Service is intended for South African learners in Grades 4–12 and their parents or guardians. Users under the age of 18 must have a parent or guardian register on their behalf or provide explicit consent.</p>
+          <h4>2. Account Registration</h4>
+          <p>You agree to provide accurate, current, and complete information when creating an account. You are responsible for maintaining the confidentiality of your login credentials. You must notify us immediately if you suspect unauthorised access to your account.</p>
+          <h4>3. Acceptable Use</h4>
+          <p>You agree to use the Service only for its intended educational purposes. You must not: submit harmful, abusive, or inappropriate content; attempt to circumvent safety features; share your account with others; or use the Service for commercial purposes without our written consent.</p>
+          <h4>4. AI-Generated Content</h4>
+          <p>Leuro™ uses AI to generate study guides, mock exam questions, and tutoring responses. AI-generated content is provided for educational assistance only and may contain errors. You should verify important information with qualified educators or official curriculum materials.</p>
+          <h4>5. Subscriptions and Payments</h4>
+          <p>Certain features require a paid subscription. All prices are listed in South African Rand (ZAR) and are inclusive of applicable taxes. Payments are processed through PayFast. Subscriptions may be cancelled at any time; you retain access until the end of the current billing period.</p>
+          <h4>6. Intellectual Property</h4>
+          <p>All content, trademarks, and technology on the Leuro™ platform are owned by or licensed to Leuro™ and are protected by applicable intellectual property laws. You may not copy, distribute, or create derivative works without our prior written permission.</p>
+          <h4>7. Limitation of Liability</h4>
+          <p>To the maximum extent permitted by law, Leuro™ shall not be liable for any indirect, incidental, or consequential damages arising from your use of the Service. Our total liability shall not exceed the amount you paid for the Service in the preceding three months.</p>
+          <h4>8. Content Safety</h4>
+          <p>Leuro™ includes content-safety monitoring to protect learners. If harmful content is detected, the relevant account may be temporarily restricted and parents or guardians may be notified in line with our Child Safety Policy.</p>
+          <h4>9. Changes to Terms</h4>
+          <p>We may update these Terms from time to time. We will notify you of material changes by posting the updated Terms in the app. Continued use of the Service after changes constitutes acceptance of the revised Terms.</p>
+          <h4>10. Governing Law</h4>
+          <p>These Terms are governed by the laws of the Republic of South Africa. Any disputes shall be subject to the jurisdiction of the South African courts.</p>
+          <h4>11. Contact</h4>
+          <p>For questions about these Terms, contact us at <strong>legal@leuroai.co.za</strong>.</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPrivacyModal() {
+  return `
+    <div class="modal-overlay" data-action="close-privacy-modal">
+      <div class="modal-sheet" onclick="event.stopPropagation()">
+        <div class="modal-header">
+          <h3>${t("privacyModalTitle")}</h3>
+          <button class="modal-close" data-action="close-privacy-modal">✕</button>
+        </div>
+        <div class="modal-body legal-modal-body">
+          <p><strong>Last updated: June 2026</strong></p>
+          <p>Leuro™ ("we", "us", or "our") is committed to protecting your personal information in accordance with the Protection of Personal Information Act 4 of 2013 (POPIA) and other applicable South African privacy laws.</p>
+          <h4>1. Information We Collect</h4>
+          <p>We collect information you provide when registering (name, email address, role, grade) and information generated during use of the Service (study topics, session history, exam scores, diagnostic results). We may also collect technical information such as device type and usage analytics.</p>
+          <h4>2. How We Use Your Information</h4>
+          <p>We use your information to: provide and personalise the Service; generate AI-assisted study content relevant to your grade and level; monitor account safety and flag concerning content; send progress reports to linked parents or guardians; improve the Service through aggregated, anonymised analytics; and comply with legal obligations.</p>
+          <h4>3. Sharing of Information</h4>
+          <p>We do not sell your personal information. We may share information with: Supabase (our database and authentication provider); Anthropic (our AI partner, for generating educational content — no identifying information is sent); PayFast (for payment processing); and law enforcement or regulatory authorities where required by law.</p>
+          <h4>4. Children's Privacy</h4>
+          <p>We take the privacy of learners seriously. Accounts for users under 18 must be created or consented to by a parent or guardian. Parents and guardians may request access to, correction of, or deletion of their child's data by contacting us at <strong>privacy@leuroai.co.za</strong>.</p>
+          <h4>5. Data Retention</h4>
+          <p>We retain your personal information for as long as your account is active or as needed to provide the Service. You may request deletion of your account and associated data at any time. Some information may be retained for legal compliance purposes.</p>
+          <h4>6. Security</h4>
+          <p>We implement appropriate technical and organisational measures to protect your information, including encrypted data transmission and access controls. However, no method of transmission over the internet is 100% secure.</p>
+          <h4>7. Your Rights (POPIA)</h4>
+          <p>Under POPIA, you have the right to: access the personal information we hold about you; request correction of inaccurate information; object to the processing of your information; and lodge a complaint with the Information Regulator of South Africa.</p>
+          <h4>8. Cookies and Analytics</h4>
+          <p>Leuro™ is a Progressive Web App (PWA) and does not use third-party advertising cookies. We may use functional cookies or local storage to maintain your session and preferences.</p>
+          <h4>9. Changes to This Policy</h4>
+          <p>We may update this Privacy Policy from time to time. Material changes will be communicated via the app. Continued use of the Service after changes constitutes acceptance of the updated Policy.</p>
+          <h4>10. Contact the Information Officer</h4>
+          <p>For privacy enquiries or to exercise your rights, contact our Information Officer at <strong>privacy@leuroai.co.za</strong>.</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderSignupForm() {
   return `
     <h3 class="mt-0">${t("createYourAccount")}</h3>
@@ -1842,6 +1942,16 @@ function renderSignupForm() {
              </div>`
           : ""
       }
+      <div class="legal-checkboxes">
+        <label class="checkbox-label">
+          <input type="checkbox" name="tcAccepted" />
+          <span>${t("checkboxTcPrefix")}<button type="button" class="btn-link" data-action="open-tc-modal">${t("linkTc")}</button>${t("checkboxTcAnd")}<button type="button" class="btn-link" data-action="open-privacy-modal">${t("linkPrivacy")}</button></span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" name="ageConsent" />
+          <span>${t("checkboxConsent")}</span>
+        </label>
+      </div>
       <button type="submit" class="btn btn-primary btn-block" disabled>${t("btnCreateAccount")}</button>
     </form>
   `;
@@ -1904,6 +2014,14 @@ async function handleSignup(form) {
     const pwCheck = evaluatePassword(password, email);
     if (!pwCheck.valid) {
       showToast(t(pwCheck.messageKey), "error");
+      return;
+    }
+
+    // Legal consent guard — mirrors the checkbox gating on the button.
+    const tcAccepted = form.querySelector('[name="tcAccepted"]')?.checked;
+    const ageConsent = form.querySelector('[name="ageConsent"]')?.checked;
+    if (!tcAccepted || !ageConsent) {
+      showToast(t("checkboxTcRequired"), "error");
       return;
     }
 
@@ -5026,10 +5144,19 @@ function renderAccountTab() {
     <!-- Parent dashboard extras: linked children + notification preferences -->
     ${!isLearner ? renderParentAccountExtras() : ""}
 
+    <!-- Legal -->
+    <div class="section-title">${t("legalHeading")}</div>
+    <div class="card">
+      <button class="btn-link legal-section-link" data-action="open-tc-modal">${t("linkTc")}</button>
+      <button class="btn-link legal-section-link" data-action="open-privacy-modal">${t("linkPrivacy")}</button>
+    </div>
+
     <!-- 5. Logout -->
     <button class="btn btn-danger btn-block" data-action="logout" style="margin-top:6px;">${t("btnLogout")}</button>
 
     ${isLearner && state.upgradeModalOpen ? renderUpgradeModal() : ""}
+    ${state.tcModalOpen ? renderTcModal() : ""}
+    ${state.privacyModalOpen ? renderPrivacyModal() : ""}
   `;
 }
 
@@ -5365,6 +5492,22 @@ function attachGlobalListeners() {
         state.upgradeModalOpen = false;
         render();
         break;
+      case "open-tc-modal":
+        state.tcModalOpen = true;
+        render();
+        break;
+      case "close-tc-modal":
+        state.tcModalOpen = false;
+        render();
+        break;
+      case "open-privacy-modal":
+        state.privacyModalOpen = true;
+        render();
+        break;
+      case "close-privacy-modal":
+        state.privacyModalOpen = false;
+        render();
+        break;
       case "subscribe":
         state.upgradeModalOpen = false;
         handleUpgrade(target.dataset.tier);
@@ -5639,6 +5782,14 @@ function attachGlobalListeners() {
     if (target.name === "password" || target.name === "confirm") {
       const recoveryForm = target.closest('form[data-action="set-new-password-form"]');
       if (recoveryForm) updateRecoveryHints(recoveryForm);
+    }
+  });
+
+  // Re-evaluate the signup submit gate whenever either legal checkbox changes.
+  document.body.addEventListener("change", (e) => {
+    if (e.target.type === "checkbox") {
+      const signupForm = e.target.closest('form[data-action="signup-form"]');
+      if (signupForm) updatePasswordHint(signupForm);
     }
   });
 }
