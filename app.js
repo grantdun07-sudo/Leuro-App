@@ -22,6 +22,14 @@ const PAYFAST_CONFIG = {
   cancelUrl: "https://leuro-app.vercel.app/?payment=cancelled",
 };
 
+// Paystack test credentials (public key is safe to expose in the browser).
+// Store the secret key in Supabase:
+//   supabase secrets set PAYSTACK_TEST_SECRET=sk_test_a51aa1055986a6f82f5079095c4353d6c9e9f30d
+//   supabase secrets set PAYSTACK_TEST_PUBLIC=pk_test_243ec9c224153ee5679f251dba0f8459772525a1
+const PAYSTACK_CONFIG = {
+  publicKey: "pk_test_243ec9c224153ee5679f251dba0f8459772525a1",
+};
+
 const TIER_PRICES = { basic: 99, premium: 199 };
 
 const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -6103,65 +6111,53 @@ async function setLanguage(lang) {
 }
 
 // ---------------------------------------------------------------------
-// PAYFAST UPGRADE
+// PAYSTACK UPGRADE
 // ---------------------------------------------------------------------
+// Kobo amounts (1 kobo = R0.01). Full prices: basic=9900, premium=19900.
+// With 20% referral discount: basic=7920, premium=15920.
+const PAYSTACK_KOBO = {
+  basic:   { full: 9900,  discounted: 7920  },
+  premium: { full: 19900, discounted: 15920 },
+};
+
 function handleUpgrade(tier) {
-  const baseAmount = TIER_PRICES[tier];
-  if (!baseAmount) return;
+  if (!PAYSTACK_KOBO[tier]) return;
 
-  // Split full name into first/last for PayFast's buyer fields.
-  const nameParts = (state.profile.full_name || "").trim().split(/\s+/).filter(Boolean);
-  const nameFirst = nameParts[0] || "Leuro";
-  const nameLast = nameParts.slice(1).join(" ") || "Learner";
+  if (!window.PaystackPop) {
+    showToast(t("errorGeneric"), "error");
+    console.error("handleUpgrade: PaystackPop not loaded");
+    return;
+  }
 
-  // Apply 20% discount to first payment only if user signed up with a referral code.
   const hasReferral = !!(state.profile?.referral_code_used);
-  const firstAmount = hasReferral ? Math.round(baseAmount * 0.8 * 100) / 100 : baseAmount;
-  const amountStr = firstAmount.toFixed(2);
-  const recurringAmountStr = baseAmount.toFixed(2); // renewals always at full price
-  const itemName = `Leuro ${capitalize(tier)} Monthly`;
-  const billingDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const amountKobo = hasReferral
+    ? PAYSTACK_KOBO[tier].discounted
+    : PAYSTACK_KOBO[tier].full;
+  const reference = `LEURO-${state.user.id}-${Date.now()}`;
 
-  // Recurring subscription fields (PayFast subscription_type 1, monthly).
-  const fields = {
-    merchant_id: PAYFAST_CONFIG.merchantId,
-    merchant_key: PAYFAST_CONFIG.merchantKey,
-    return_url: PAYFAST_CONFIG.returnUrl,
-    cancel_url: PAYFAST_CONFIG.cancelUrl,
-    notify_url: PAYFAST_CONFIG.notifyUrl,
-    name_first: nameFirst,
-    name_last: nameLast,
-    email_address: state.profile.email,
-    m_payment_id: `LEURO-${state.user.id}-${Date.now()}`,
-    amount: amountStr,
-    item_name: itemName,
-    subscription_type: "1",
-    billing_date: billingDate,
-    recurring_amount: recurringAmountStr,
-    frequency: "3", // 3 = monthly
-    cycles: "0", // 0 = until cancelled
-    subscription_notify_email: "true",
-    subscription_notify_buyer: "true",
-  };
-
-  const form = document.createElement("form");
-  form.method = "POST";
-  form.action = PAYFAST_CONFIG.processUrl;
-  form.style.display = "none";
-
-  Object.entries(fields).forEach(([key, value]) => {
-    const input = document.createElement("input");
-    input.type = "hidden";
-    input.name = key;
-    input.value = value;
-    form.appendChild(input);
+  const handler = window.PaystackPop.setup({
+    key: PAYSTACK_CONFIG.publicKey,
+    email: state.profile.email,
+    amount: amountKobo,
+    currency: "ZAR",
+    ref: reference,
+    label: `Leuro ${capitalize(tier)} Monthly`,
+    metadata: {
+      tier,
+      user_id: state.user.id,
+      referral_code: state.profile.referral_code_used || "",
+    },
+    callback(response) {
+      console.log("Paystack success:", response.reference);
+      showToast(t("paymentSuccessMsg"), "success");
+      state.upgradeModalOpen = false;
+      render();
+    },
+    onClose() {
+      showToast(t("paymentCancelledMsg"), "info");
+    },
   });
-
-  document.body.appendChild(form);
-  form.submit();
-  // Submitting navigates away; remove the form so it can't be re-submitted if
-  // the navigation is somehow blocked.
-  form.remove();
+  handler.openIframe();
 }
 
 // ---------------------------------------------------------------------
