@@ -276,16 +276,6 @@ const translations = {
     navActivity: "Activity",
     navGoals: "Goals",
 
-    linkChildHeading: "Link Your Child",
-    linkChildIntro: "Enter your child's email address to connect their Leuro™ account to yours.",
-    linkChildEmailLabel: "Child's email",
-    linkChildPlaceholder: "child@example.com",
-    btnLinkChild: "Link Child",
-    btnSkipForNow: "Skip for now",
-    btnBack: "Back",
-    linkChildEmailNotFound: "No Leuro account found for that email. Ask your child to sign up first, then link them here.",
-    linkChildSuccess: "Child linked successfully!",
-    btnLinkAnotherChild: "Link another child",
     linkedChildrenHeading: "Linked Children",
     noChildrenLinked: "No children linked yet.",
     addChildHeading: "Add a Child",
@@ -648,16 +638,6 @@ const translations = {
     navActivity: "Aktiwiteit",
     navGoals: "Doelwitte",
 
-    linkChildHeading: "Skakel Jou Kind",
-    linkChildIntro: "Voer jou kind se e-posadres in om hul Leuro™-rekening aan joune te koppel.",
-    linkChildEmailLabel: "Kind se e-pos",
-    linkChildPlaceholder: "kind@voorbeeld.com",
-    btnLinkChild: "Skakel Kind",
-    btnSkipForNow: "Slaan oor vir nou",
-    btnBack: "Terug",
-    linkChildEmailNotFound: "Geen Leuro-rekening met daardie e-pos gevind nie. Vra jou kind om eers te registreer, en skakel hulle dan hier.",
-    linkChildSuccess: "Kind suksesvol geskakel!",
-    btnLinkAnotherChild: "Skakel nog 'n kind",
     linkedChildrenHeading: "Geskakelde Kinders",
     noChildrenLinked: "Nog geen kinders geskakel nie.",
     addChildHeading: "Voeg 'n Kind By",
@@ -808,8 +788,6 @@ const state = {
   parent: null,
   linkedLearners: [],
   selectedLearnerId: null,
-  showLinkChildScreen: false,
-  linkChildModalOpen: false,
   showAddChildModal: false,
   addChildMode: null,
   childForm: { name: "", grade: 4, email: "" },
@@ -2486,10 +2464,6 @@ async function handleSignup(form) {
 
     await loadUserData();
 
-    // New parent accounts see a one-time "Link Your Child" overlay right
-    // after signup, before the parent dashboard itself is shown.
-    state.showLinkChildScreen = true;
-
     render();
   } catch (err) {
     console.error(err);
@@ -2674,10 +2648,6 @@ function render() {
     app.insertAdjacentHTML("beforeend", renderSafetyTier1Overlay());
   }
 
-  // Post-signup "Link Your Child" overlay for new parent accounts.
-  if (state.profile.role === "parent" && state.showLinkChildScreen) {
-    app.insertAdjacentHTML("beforeend", renderLinkChildScreen());
-  }
 }
 
 function renderAccountFrozenScreen() {
@@ -5579,7 +5549,6 @@ function renderParentHomeTab() {
       </div>
     </div>
 
-    ${state.linkChildModalOpen ? renderLinkChildModal() : ""}
     ${state.showAddChildModal ? renderAddChildModal() : ""}
   `;
 }
@@ -5858,54 +5827,6 @@ async function markAlertRead(alertId) {
   }
 }
 
-// ---------------------------------------------------------------------
-// LINK CHILD (post-signup screen + account tab modal)
-// ---------------------------------------------------------------------
-function renderLinkChildScreen() {
-  return `
-    <div class="diagnostic-overlay" id="link-child-screen">
-      <div class="diagnostic-modal">
-        ${diagnosticHeaderBar()}
-        <div class="diagnostic-body diagnostic-center">
-          <h2 class="diagnostic-title">${t("linkChildHeading")}</h2>
-          <p class="diagnostic-lead">${t("linkChildIntro")}</p>
-          <form data-action="link-child-screen-form" style="width:100%;">
-            <div class="field">
-              <label>${t("linkChildEmailLabel")}</label>
-              <input type="email" name="childEmail" placeholder="${t("linkChildPlaceholder")}" required />
-            </div>
-            <button type="submit" class="btn btn-gold btn-block">${t("btnLinkChild")}</button>
-          </form>
-          <button class="link-btn" style="margin-top:var(--spacing-16);" data-action="skip-link-child">${t("btnSkipForNow")}</button>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderLinkChildModal() {
-  return `
-    <div class="modal-overlay">
-      <div class="modal-sheet">
-        <div class="modal-header">
-          <h3>${t("linkChildHeading")}</h3>
-          <button class="modal-close" data-action="close-link-child-modal">✕</button>
-        </div>
-        <div class="modal-body">
-          <p class="muted">${t("linkChildIntro")}</p>
-          <form data-action="link-child-form">
-            <div class="field">
-              <label>${t("linkChildEmailLabel")}</label>
-              <input type="email" name="childEmail" placeholder="${t("linkChildPlaceholder")}" required />
-            </div>
-            <button type="submit" class="btn btn-primary btn-block">${t("btnLinkChild")}</button>
-          </form>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 function renderAddChildModal() {
   const mode = state.addChildMode;
   const grades = Array.from({ length: 9 }, (_, i) => i + 4);
@@ -6040,32 +5961,6 @@ async function handleAddChild(form) {
   } finally {
     state.addChildLoading = false;
     render();
-  }
-}
-
-async function handleLinkChildByEmail(form, onSuccess) {
-  const email = form.childEmail.value.trim();
-  const btn = form.querySelector("button[type=submit]");
-  setButtonLoading(btn, true);
-
-  try {
-    const { data, error } = await sbClient.rpc("link_learner_by_email", { p_email: email });
-    if (error) throw error;
-
-    if (!data) {
-      showToast(t("linkChildEmailNotFound"), "error");
-      return;
-    }
-
-    await loadParentData();
-    showToast(t("linkChildSuccess"), "success");
-    if (onSuccess) onSuccess();
-    render();
-  } catch (err) {
-    console.error(err);
-    showToast(err.message || t("errorGeneric"), "error");
-  } finally {
-    setButtonLoading(btn, false);
   }
 }
 
@@ -6259,7 +6154,6 @@ function renderParentAccountExtras() {
       </div>
     </div>
 
-    ${state.linkChildModalOpen ? renderLinkChildModal() : ""}
     ${state.showAddChildModal ? renderAddChildModal() : ""}
   `;
 }
@@ -6703,14 +6597,6 @@ function attachGlobalListeners() {
       case "goals-save":
         saveGoals();
         break;
-      case "open-link-child-modal":
-        state.linkChildModalOpen = true;
-        render();
-        break;
-      case "close-link-child-modal":
-        state.linkChildModalOpen = false;
-        render();
-        break;
       case "open-add-child-modal":
         state.showAddChildModal = true;
         state.addChildMode = null;
@@ -6729,10 +6615,6 @@ function attachGlobalListeners() {
         state.acceptInviteToken = null;
         state.acceptInviteData = null;
         authTab = "login";
-        render();
-        break;
-      case "skip-link-child":
-        state.showLinkChildScreen = false;
         render();
         break;
       case "toggle-monthly-recap":
@@ -6786,16 +6668,6 @@ function attachGlobalListeners() {
         break;
       case "accept-invite-form":
         handleAcceptInvite(form);
-        break;
-      case "link-child-form":
-        handleLinkChildByEmail(form, () => {
-          state.linkChildModalOpen = false;
-        });
-        break;
-      case "link-child-screen-form":
-        handleLinkChildByEmail(form, () => {
-          state.showLinkChildScreen = false;
-        });
         break;
       case "admin-create-referral-code": {
         const schoolName = form.schoolName.value.trim();
