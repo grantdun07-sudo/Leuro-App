@@ -42,8 +42,10 @@ const translations = {
     roleLearner: "Learner",
     roleParent: "Parent",
     labelGrade: "Grade",
-    labelReferral: "Referral code (optional)",
-    placeholderReferral: "e.g. AB12CD34",
+    labelReferral: "School referral code (optional)",
+    placeholderReferral: "e.g. LEURO-SAHETI",
+    invalidReferralCode: "Invalid referral code. Please check and try again.",
+    referralApplied: "Referral code applied — 20% discount on your first payment!",
     btnCreateAccount: "Create Account",
     btnLogin: "Log In",
     welcomeBack: "Welcome back",
@@ -387,8 +389,10 @@ const translations = {
     roleLearner: "Leerder",
     roleParent: "Ouer",
     labelGrade: "Graad",
-    labelReferral: "Verwysingskode (opsioneel)",
-    placeholderReferral: "bv. AB12CD34",
+    labelReferral: "Skool-verwysingskode (opsioneel)",
+    placeholderReferral: "bv. LEURO-SAHETI",
+    invalidReferralCode: "Ongeldige verwysingskode. Kontroleer asseblief en probeer weer.",
+    referralApplied: "Verwysingskode toegepas — 20% afslag op jou eerste betaling!",
     btnCreateAccount: "Skep Rekening",
     btnLogin: "Meld Aan",
     welcomeBack: "Welkom terug",
@@ -761,6 +765,8 @@ const state = {
     flagsLoading: false,
     stats: null,
     statsLoading: false,
+    referralCodes: null,
+    referralCodesLoading: false,
   },
   goalsDraft: {},
   subjects: [],
@@ -2081,7 +2087,7 @@ function renderSignupForm() {
              </div>
              <div class="field">
                <label>${t("labelReferral")}</label>
-               <input type="text" name="referredBy" placeholder="${t("placeholderReferral")}" maxlength="8" />
+               <input type="text" name="referredBy" placeholder="${t("placeholderReferral")}" maxlength="32" style="text-transform:uppercase;" />
              </div>`
           : ""
       }
@@ -2173,10 +2179,23 @@ async function handleSignup(form) {
       full_name: fullName,
       lang: state.lang,
     };
+    let referredByCode = "";
     if (authRole === "learner") {
       metaData.grade = parseInt(form.grade.value, 10);
-      const referredBy = form.referredBy.value.trim().toUpperCase();
-      if (referredBy) metaData.referred_by = referredBy;
+      referredByCode = form.referredBy.value.trim().toUpperCase();
+      if (referredByCode) {
+        // Validate code exists before creating the account (public SELECT policy).
+        const { data: codeRow } = await sbClient
+          .from("referral_codes")
+          .select("code")
+          .eq("code", referredByCode)
+          .maybeSingle();
+        if (!codeRow) {
+          showToast(t("invalidReferralCode"), "error");
+          setButtonLoading(btn, false);
+          return;
+        }
+      }
     }
 
     // Log exactly what we send to Supabase Auth (the profile row is derived
@@ -2237,6 +2256,18 @@ async function handleSignup(form) {
       .eq("id", state.user.id);
     if (profileUpdateErr) {
       console.error("Failed to update profile after signup", profileUpdateErr);
+    }
+
+    // Apply institutional referral code if one was validated pre-signup.
+    if (referredByCode) {
+      const { data: applyResult, error: applyErr } = await sbClient.rpc("apply_referral_code", {
+        p_code: referredByCode,
+      });
+      if (applyErr || !applyResult?.valid) {
+        console.error("apply_referral_code failed:", applyErr || applyResult);
+      } else {
+        showToast(t("referralApplied"), "success");
+      }
     }
 
     await loadUserData();
@@ -2530,6 +2561,9 @@ function renderAdminScreen() {
     case "stats":
       tabContent = renderAdminStatsTab();
       break;
+    case "referral":
+      tabContent = renderAdminReferralCodesTab();
+      break;
     default:
       tabContent = renderAdminUsersTab();
   }
@@ -2547,6 +2581,7 @@ function renderAdminScreen() {
         <button type="button" class="admin-tab-btn ${tab === "users" ? "active" : ""}" data-action="admin-switch-tab" data-tab="users">Users</button>
         <button type="button" class="admin-tab-btn ${tab === "flags" ? "active" : ""}" data-action="admin-switch-tab" data-tab="flags">Flags</button>
         <button type="button" class="admin-tab-btn ${tab === "stats" ? "active" : ""}" data-action="admin-switch-tab" data-tab="stats">Stats</button>
+        <button type="button" class="admin-tab-btn ${tab === "referral" ? "active" : ""}" data-action="admin-switch-tab" data-tab="referral">Referral Codes</button>
       </div>
       <div class="container admin-container">${tabContent}</div>
     </div>
@@ -2613,6 +2648,7 @@ function renderAdminUserCard(user) {
             ? `<span class="status-badge status-frozen">Frozen</span>`
             : `<span class="status-badge status-active">Active</span>`
         }
+        ${user.referral_code_used ? `<span class="admin-referral-tag">Ref: ${escapeHtml(user.referral_code_used)}</span>` : ""}
       </div>
       <div class="admin-user-actions">
         <select class="admin-tier-select" data-action="admin-change-tier" data-user-id="${user.id}">
@@ -2855,6 +2891,89 @@ function renderAdminStatsTab() {
       <div class="account-row"><span class="label">Basic</span><span class="value">${stats.tierBreakdown.basic}</span></div>
       <div class="account-row"><span class="label">Premium</span><span class="value">${stats.tierBreakdown.premium}</span></div>
     </div>
+  `;
+}
+
+// ---- REFERRAL CODES TAB ----------------------------------------------
+async function loadAdminReferralCodes() {
+  state.admin.referralCodesLoading = true;
+  try {
+    const { data, error } = await sbClient.rpc("admin_get_referral_codes");
+    if (error) throw error;
+    state.admin.referralCodes = data || [];
+  } catch (err) {
+    console.error("loadAdminReferralCodes:", err);
+    state.admin.referralCodes = [];
+    showToast(err.message || t("errorGeneric"), "error");
+  } finally {
+    state.admin.referralCodesLoading = false;
+    render();
+  }
+}
+
+async function createAdminReferralCode(schoolName) {
+  const code = `LEURO-${schoolName.toUpperCase().replace(/[^A-Z0-9]/g, "")}`;
+  if (code.length < 7) {
+    showToast("Please enter a valid school name.", "error");
+    return;
+  }
+  try {
+    const { data, error } = await sbClient.rpc("admin_create_referral_code", {
+      p_code: code,
+      p_description: schoolName,
+    });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    showToast(`Code ${code} created.`, "success");
+    state.admin.referralCodes = null; // trigger reload
+    render();
+  } catch (err) {
+    console.error("createAdminReferralCode:", err);
+    showToast(err.message || t("errorGeneric"), "error");
+  }
+}
+
+function renderAdminReferralCodesTab() {
+  if (state.admin.referralCodes === null) {
+    if (!state.admin.referralCodesLoading) loadAdminReferralCodes();
+    return `<div class="loading-row"><span class="spinner spinner-purple"></span> ${t("loading")}</div>`;
+  }
+
+  const rows = state.admin.referralCodes.map(
+    (r) => `
+    <tr>
+      <td class="referral-code-cell">${escapeHtml(r.code)}</td>
+      <td>${escapeHtml(r.description || "—")}</td>
+      <td style="text-align:center;">${r.used_count}</td>
+      <td class="muted">${formatDate(r.created_at)}</td>
+    </tr>
+  `
+  ).join("");
+
+  return `
+    <h3 class="screen-title" style="margin:0 0 14px;">Referral Codes</h3>
+    <div class="card admin-referral-create-card">
+      <h4 style="margin:0 0 10px;">Generate New Code</h4>
+      <form data-action="admin-create-referral-code" class="admin-referral-form">
+        <div class="field" style="margin-bottom:0;">
+          <label>School name</label>
+          <div class="admin-referral-input-row">
+            <input type="text" name="schoolName" placeholder="e.g. SAHETI" maxlength="24" required style="text-transform:uppercase;" />
+            <button type="submit" class="btn btn-primary btn-sm">Generate &amp; Create</button>
+          </div>
+          <p class="field-hint">Code will be created as <strong>LEURO-SCHOOLNAME</strong></p>
+        </div>
+      </form>
+    </div>
+    ${state.admin.referralCodes.length === 0
+      ? `<div class="empty-state"><div class="empty-icon">🏫</div><p>No referral codes yet.</p></div>`
+      : `<div class="card" style="padding:0;overflow:auto;">
+           <table class="admin-referral-table">
+             <thead><tr><th>Code</th><th>School</th><th>Used</th><th>Created</th></tr></thead>
+             <tbody>${rows}</tbody>
+           </table>
+         </div>`
+    }
   `;
 }
 
@@ -5872,15 +5991,19 @@ async function setLanguage(lang) {
 // PAYFAST UPGRADE
 // ---------------------------------------------------------------------
 function handleUpgrade(tier) {
-  const amount = TIER_PRICES[tier];
-  if (!amount) return;
+  const baseAmount = TIER_PRICES[tier];
+  if (!baseAmount) return;
 
   // Split full name into first/last for PayFast's buyer fields.
   const nameParts = (state.profile.full_name || "").trim().split(/\s+/).filter(Boolean);
   const nameFirst = nameParts[0] || "Leuro";
   const nameLast = nameParts.slice(1).join(" ") || "Learner";
 
-  const amountStr = amount.toFixed(2);
+  // Apply 20% discount to first payment only if user signed up with a referral code.
+  const hasReferral = !!(state.profile?.referral_code_used);
+  const firstAmount = hasReferral ? Math.round(baseAmount * 0.8 * 100) / 100 : baseAmount;
+  const amountStr = firstAmount.toFixed(2);
+  const recurringAmountStr = baseAmount.toFixed(2); // renewals always at full price
   const itemName = `Leuro ${capitalize(tier)} Monthly`;
   const billingDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
@@ -5899,7 +6022,7 @@ function handleUpgrade(tier) {
     item_name: itemName,
     subscription_type: "1",
     billing_date: billingDate,
-    recurring_amount: amountStr,
+    recurring_amount: recurringAmountStr,
     frequency: "3", // 3 = monthly
     cycles: "0", // 0 = until cancelled
     subscription_notify_email: "true",
@@ -6223,6 +6346,11 @@ function attachGlobalListeners() {
           state.showLinkChildScreen = false;
         });
         break;
+      case "admin-create-referral-code": {
+        const schoolName = form.schoolName.value.trim();
+        if (schoolName) createAdminReferralCode(schoolName);
+        break;
+      }
       default:
         break;
     }

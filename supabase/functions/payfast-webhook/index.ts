@@ -116,7 +116,35 @@ Deno.serve(async (req: Request) => {
     }
     console.log(`payfast-webhook: set ${userId} -> ${tier}`);
 
-    // 2) Record the subscription event.
+    // 2) If user signed up with a referral code, record the discount applied.
+    if (amountGross !== null) {
+      const { data: profileFull } = await supabase
+        .from("profiles")
+        .select("referral_code_used")
+        .eq("id", userId)
+        .single();
+      if (profileFull?.referral_code_used) {
+        const baseAmount = tier === "premium" ? 199 : 99;
+        const paidAmount = Number(amountGross);
+        const discountAmount = Math.max(0, baseAmount - paidAmount);
+        if (discountAmount > 0) {
+          const { error: discountErr } = await supabase
+            .from("subscription_discounts")
+            .insert({
+              user_id: userId,
+              code: profileFull.referral_code_used,
+              discount_amount: discountAmount,
+            });
+          if (discountErr) {
+            console.error("payfast-webhook: discount insert failed:", JSON.stringify(discountErr));
+          } else {
+            console.log(`payfast-webhook: recorded discount R${discountAmount} for ${userId}`);
+          }
+        }
+      }
+    }
+
+    // 3) Record the subscription event.
     const historyRow = {
       user_id: userId,
       tier_from: tierFrom,

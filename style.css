@@ -2284,6 +2284,72 @@ h1, h2, h3, h4 {
   margin-top: var(--spacing-8);
 }
 
+/* ---- Admin Referral Codes Tab ---- */
+.admin-referral-create-card {
+  margin-bottom: var(--spacing-16);
+}
+
+.admin-referral-form .field-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: var(--spacing-4) 0 0;
+}
+
+.admin-referral-input-row {
+  display: flex;
+  gap: var(--spacing-8);
+  align-items: center;
+}
+
+.admin-referral-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-referral-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.admin-referral-table th,
+.admin-referral-table td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-referral-table th {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--primary);
+  background: rgba(90, 62, 118, 0.04);
+}
+
+.admin-referral-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.referral-code-cell {
+  font-family: monospace;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.admin-referral-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(230, 179, 71, 0.18);
+  color: var(--accent-dark);
+  border: 1px solid var(--accent);
+  margin-left: var(--spacing-8);
+}
+
 @media (min-width: 600px) {
   body { font-size: var(--font-size-body); }
   .container { padding: var(--spacing-24); }
