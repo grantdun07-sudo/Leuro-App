@@ -282,11 +282,33 @@ const translations = {
     linkChildPlaceholder: "child@example.com",
     btnLinkChild: "Link Child",
     btnSkipForNow: "Skip for now",
+    btnBack: "Back",
     linkChildEmailNotFound: "No Leuro account found for that email. Ask your child to sign up first, then link them here.",
     linkChildSuccess: "Child linked successfully!",
     btnLinkAnotherChild: "Link another child",
     linkedChildrenHeading: "Linked Children",
     noChildrenLinked: "No children linked yet.",
+    addChildHeading: "Add a Child",
+    addChildChooseMode: "How would you like to add your child?",
+    addChildDirectLabel: "I'll set the password",
+    addChildDirectDesc: "Create an account now — you'll receive login details to share with your child.",
+    addChildInviteLabel: "Send invite to child",
+    addChildInviteDesc: "Email your child a link so they can set their own password.",
+    addChildNameLabel: "Child's full name",
+    addChildEmailLabel: "Child's email address",
+    addChildPasswordLabel: "Login password (share this with your child)",
+    btnAddChildDirect: "Create Account",
+    btnAddChildInvite: "Send Invite",
+    addChildSuccessDirect: "Child account created!",
+    addChildSuccessInvite: "Invite sent to",
+    inviteStatusPending: "Invite sent",
+    btnAddChild: "Add Child",
+    acceptInviteHeading: "Welcome to Leuro™",
+    acceptInviteIntro: "Set a password to activate your learner account.",
+    acceptInvitePasswordLabel: "Choose a password",
+    btnActivateAccount: "Activate Account",
+    acceptInviteSuccess: "Account activated! You can now log in.",
+    acceptInviteInvalidToken: "This invite link is invalid or has already been used.",
 
     allLookingGood: "All looking good — no alerts right now.",
     alertsActiveBannerOne: "1 alert needs your attention",
@@ -632,11 +654,33 @@ const translations = {
     linkChildPlaceholder: "kind@voorbeeld.com",
     btnLinkChild: "Skakel Kind",
     btnSkipForNow: "Slaan oor vir nou",
+    btnBack: "Terug",
     linkChildEmailNotFound: "Geen Leuro-rekening met daardie e-pos gevind nie. Vra jou kind om eers te registreer, en skakel hulle dan hier.",
     linkChildSuccess: "Kind suksesvol geskakel!",
     btnLinkAnotherChild: "Skakel nog 'n kind",
     linkedChildrenHeading: "Geskakelde Kinders",
     noChildrenLinked: "Nog geen kinders geskakel nie.",
+    addChildHeading: "Voeg 'n Kind By",
+    addChildChooseMode: "Hoe wil jy jou kind byvoeg?",
+    addChildDirectLabel: "Ek sal die wagwoord stel",
+    addChildDirectDesc: "Skep nou 'n rekening — jy ontvang aanmeldbesonderhede om met jou kind te deel.",
+    addChildInviteLabel: "Stuur uitnodiging aan kind",
+    addChildInviteDesc: "Stuur jou kind 'n skakel per e-pos sodat hulle hul eie wagwoord kan stel.",
+    addChildNameLabel: "Kind se volle naam",
+    addChildEmailLabel: "Kind se e-posadres",
+    addChildPasswordLabel: "Aanmeldwagwoord (deel dit met jou kind)",
+    btnAddChildDirect: "Skep Rekening",
+    btnAddChildInvite: "Stuur Uitnodiging",
+    addChildSuccessDirect: "Kindrekening geskep!",
+    addChildSuccessInvite: "Uitnodiging gestuur aan",
+    inviteStatusPending: "Uitnodiging gestuur",
+    btnAddChild: "Voeg Kind By",
+    acceptInviteHeading: "Welkom by Leuro™",
+    acceptInviteIntro: "Stel 'n wagwoord om jou leerderrekening te aktiveer.",
+    acceptInvitePasswordLabel: "Kies 'n wagwoord",
+    btnActivateAccount: "Aktiveer Rekening",
+    acceptInviteSuccess: "Rekening geaktiveer! Jy kan nou aanmeld.",
+    acceptInviteInvalidToken: "Hierdie uitnodigingskakel is ongeldig of is reeds gebruik.",
 
     allLookingGood: "Alles lyk goed — geen kennisgewings op die oomblik nie.",
     alertsActiveBannerOne: "1 kennisgewing benodig jou aandag",
@@ -766,6 +810,12 @@ const state = {
   selectedLearnerId: null,
   showLinkChildScreen: false,
   linkChildModalOpen: false,
+  showAddChildModal: false,
+  addChildMode: null,
+  childForm: { name: "", grade: 4, email: "" },
+  addChildLoading: false,
+  acceptInviteToken: null,
+  acceptInviteData: null,
   upgradeModalOpen: false,
   tcModalOpen: false,
   privacyModalOpen: false,
@@ -1251,6 +1301,7 @@ async function init() {
   setupOfflineDetection();
   handlePayfastReturn();
   handleRecoveryHash();
+  handleInviteToken();
   attachGlobalListeners();
 
   const { data } = await sbClient.auth.getSession();
@@ -1295,6 +1346,11 @@ async function init() {
   state.loading = false;
   render();
   state.returningFromPayment = false;
+
+  // If the user arrived via an invite link, fetch the learner record by token.
+  if (state.acceptInviteToken) {
+    await loadInviteData();
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -1384,6 +1440,41 @@ function handleRecoveryHash() {
     state.passwordRecovery = true;
     window.history.replaceState({}, "", window.location.pathname + window.location.search);
   }
+}
+
+function handleInviteToken() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("token");
+  if (token && window.location.pathname.includes("accept-invite")) {
+    state.acceptInviteToken = token;
+    window.history.replaceState({}, "", window.location.pathname);
+  }
+}
+
+async function sha256Hex(text) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function generateToken(byteLength = 32) {
+  const array = new Uint8Array(byteLength);
+  crypto.getRandomValues(array);
+  return Array.from(array)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function generatePassword(length = 12) {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#";
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
+  return Array.from(array)
+    .map((b) => chars[b % chars.length])
+    .join("");
 }
 
 function handlePayfastReturn() {
@@ -1631,8 +1722,8 @@ async function loadParentData() {
 
       return {
         ...learner,
-        full_name: profile?.full_name || profile?.email || "Learner",
-        subscription_tier: profile?.subscription_tier || "free",
+        full_name: learner.full_name || profile?.full_name || profile?.email || "Learner",
+        subscription_tier: learner.subscription_tier || profile?.subscription_tier || "free",
         topicCount: (topics || []).length,
         activity: activity || [],
         alerts: (alerts || []).filter((a) => a.learner_id === learner.id),
@@ -1881,6 +1972,91 @@ function updateRecoveryHints(form) {
   }
 
   if (submitBtn) submitBtn.disabled = !(pwResult.valid && matches);
+}
+
+function renderAcceptInviteScreen() {
+  const learner = state.acceptInviteData;
+  return `
+    <div class="auth-wrap">
+      <div class="auth-logo">${t("appName")}<span class="tm">™</span></div>
+      <div class="auth-card">
+        <h3 class="mt-0">${t("acceptInviteHeading")}</h3>
+        <p class="muted" style="margin-top:0;">${t("acceptInviteIntro")}</p>
+        ${
+          learner
+            ? `<form data-action="accept-invite-form">
+                <div class="field">
+                  <label>${t("addChildNameLabel")}</label>
+                  <input type="text" name="fullName" value="${escapeHtml(learner.full_name || "")}" readonly style="background:var(--color-surface);opacity:.8;" />
+                </div>
+                <div class="field">
+                  <label>${t("acceptInvitePasswordLabel")}</label>
+                  <div class="pw-field-wrap">
+                    <input type="password" name="password" required minlength="8" autocomplete="new-password" />
+                    <button type="button" class="pw-visibility-btn" data-action="toggle-pw-visibility" aria-label="${t("showPassword")}">👁</button>
+                  </div>
+                  <p class="pw-hint" data-pw-hint></p>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">${t("btnActivateAccount")}</button>
+              </form>`
+            : state.acceptInviteToken === "loading"
+              ? `<div class="loading-row"><span class="spinner spinner-purple"></span> ${t("loading")}</div>`
+              : `<p class="muted" style="color:var(--danger);">${t("acceptInviteInvalidToken")}</p>
+                 <button class="btn btn-outline btn-block" data-action="back-to-login">${t("btnLogin")}</button>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+async function loadInviteData() {
+  const token = state.acceptInviteToken;
+  if (!token || token === "loading") return;
+  state.acceptInviteToken = "loading";
+  render();
+  const { data, error } = await sbClient
+    .from("learners")
+    .select("id, full_name, email, invite_status")
+    .eq("invite_token", token)
+    .maybeSingle();
+  if (error || !data || data.invite_status === "accepted") {
+    state.acceptInviteToken = "invalid";
+    state.acceptInviteData = null;
+  } else {
+    state.acceptInviteToken = token;
+    state.acceptInviteData = data;
+  }
+  render();
+}
+
+async function handleAcceptInvite(form) {
+  const btn = form.querySelector("button[type=submit]");
+  setButtonLoading(btn, true);
+  try {
+    const password = form.password.value;
+    const check = evaluatePassword(password);
+    if (!check.valid) {
+      showToast(t(check.messageKey), "error");
+      return;
+    }
+    const passwordHash = await sha256Hex(password);
+    const learner = state.acceptInviteData;
+    const { error } = await sbClient
+      .from("learners")
+      .update({ password_hash: passwordHash, invite_status: "accepted" })
+      .eq("id", learner.id);
+    if (error) throw error;
+    showToast(t("acceptInviteSuccess"), "success");
+    state.acceptInviteToken = null;
+    state.acceptInviteData = null;
+    authTab = "login";
+    render();
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || t("errorGeneric"), "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
 
 async function handleUpdatePassword(form) {
@@ -2432,6 +2608,12 @@ function render() {
   // set-new-password form regardless of profile state.
   if (state.passwordRecovery) {
     app.innerHTML = renderPasswordRecoveryScreen();
+    return;
+  }
+
+  // Accept-invite: child arrived via a parent-generated invite link.
+  if (state.acceptInviteToken !== null) {
+    app.innerHTML = renderAcceptInviteScreen();
     return;
   }
 
@@ -5346,9 +5528,9 @@ function renderParentHomeTab() {
       <div class="empty-state">
         <div class="empty-icon">👨‍👩‍👧</div>
         <p>${t("noChildrenLinked")}</p>
-        <button class="btn btn-primary" style="margin-top:14px;" data-action="open-link-child-modal">${t("btnLinkAnotherChild")}</button>
+        <button class="btn btn-primary" style="margin-top:14px;" data-action="open-add-child-modal">${t("btnAddChild")}</button>
       </div>
-      ${state.linkChildModalOpen ? renderLinkChildModal() : ""}
+      ${state.showAddChildModal ? renderAddChildModal() : ""}
     `;
   }
 
@@ -5357,7 +5539,10 @@ function renderParentHomeTab() {
 
   return `
     ${greetingCard}
-    ${renderChildSelector()}
+    <div class="child-selector-row">
+      ${renderChildSelector()}
+      <button class="btn btn-gold btn-sm" data-action="open-add-child-modal">${t("btnAddChild")}</button>
+    </div>
 
     ${
       unreadAlerts.length > 0
@@ -5395,6 +5580,7 @@ function renderParentHomeTab() {
     </div>
 
     ${state.linkChildModalOpen ? renderLinkChildModal() : ""}
+    ${state.showAddChildModal ? renderAddChildModal() : ""}
   `;
 }
 
@@ -5720,6 +5906,143 @@ function renderLinkChildModal() {
   `;
 }
 
+function renderAddChildModal() {
+  const mode = state.addChildMode;
+  const grades = Array.from({ length: 9 }, (_, i) => i + 4);
+  return `
+    <div class="modal-overlay">
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3>${t("addChildHeading")}</h3>
+          <button class="modal-close" data-action="close-add-child-modal">✕</button>
+        </div>
+        <div class="modal-body">
+          ${
+            mode === null
+              ? `<p class="muted" style="margin-top:0;">${t("addChildChooseMode")}</p>
+                 <div class="add-child-mode-cards">
+                   <button class="add-child-mode-card" data-action="set-child-mode" data-mode="direct">
+                     <div class="add-child-mode-icon">🔑</div>
+                     <div class="add-child-mode-label">${t("addChildDirectLabel")}</div>
+                     <div class="add-child-mode-desc muted">${t("addChildDirectDesc")}</div>
+                   </button>
+                   <button class="add-child-mode-card" data-action="set-child-mode" data-mode="invite">
+                     <div class="add-child-mode-icon">✉️</div>
+                     <div class="add-child-mode-label">${t("addChildInviteLabel")}</div>
+                     <div class="add-child-mode-desc muted">${t("addChildInviteDesc")}</div>
+                   </button>
+                 </div>`
+              : `<form data-action="add-child-form">
+                   <input type="hidden" name="mode" value="${mode}" />
+                   <div class="field">
+                     <label>${t("addChildNameLabel")}</label>
+                     <input type="text" name="childName" required minlength="2" autocomplete="off" />
+                   </div>
+                   <div class="field">
+                     <label>${t("labelGrade")}</label>
+                     <select name="childGrade" required>
+                       ${grades.map((g) => `<option value="${g}">${t("labelGrade")} ${g}</option>`).join("")}
+                     </select>
+                   </div>
+                   <div class="field">
+                     <label>${t("addChildEmailLabel")}</label>
+                     <input type="email" name="childEmail" required autocomplete="off" />
+                   </div>
+                   ${
+                     mode === "direct"
+                       ? `<div class="field">
+                            <label>${t("addChildPasswordLabel")}</label>
+                            <div class="pw-field-wrap">
+                              <input type="password" name="childPassword" required minlength="8" autocomplete="new-password" />
+                              <button type="button" class="pw-visibility-btn" data-action="toggle-pw-visibility" aria-label="${t("showPassword")}">👁</button>
+                            </div>
+                          </div>`
+                       : ""
+                   }
+                   <div style="display:flex;gap:8px;margin-top:4px;">
+                     <button type="button" class="btn btn-outline" style="flex:1;" data-action="set-child-mode" data-mode="null">${t("btnBack")}</button>
+                     <button type="submit" class="btn btn-primary" style="flex:2;" ${state.addChildLoading ? "disabled" : ""}>
+                       ${state.addChildLoading ? `<span class="spinner spinner-white"></span>` : mode === "direct" ? t("btnAddChildDirect") : t("btnAddChildInvite")}
+                     </button>
+                   </div>
+                 </form>`
+          }
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function handleAddChild(form) {
+  const mode = form.mode.value;
+  const name = form.childName.value.trim();
+  const grade = parseInt(form.childGrade.value, 10);
+  const email = form.childEmail.value.trim().toLowerCase();
+
+  state.addChildLoading = true;
+  render();
+
+  try {
+    const inviteToken = generateToken(32);
+
+    if (mode === "direct") {
+      const rawPassword = form.childPassword.value;
+      if (rawPassword.length < 8) {
+        showToast(t("pwTooShort"), "error");
+        return;
+      }
+      const passwordHash = await sha256Hex(rawPassword);
+
+      const { data: learner, error } = await sbClient.rpc("parent_add_child", {
+        p_full_name: name,
+        p_grade: grade,
+        p_email: email,
+        p_invite_token: inviteToken,
+        p_invite_status: "active",
+        p_password_hash: passwordHash,
+      });
+      if (error) throw error;
+
+      await loadParentData();
+      state.showAddChildModal = false;
+      state.addChildMode = null;
+      render();
+      showToast(`${t("addChildSuccessDirect")} ${t("labelEmail")}: ${email}`, "success");
+      // Show credentials in an alert so the parent can copy them
+      setTimeout(() => {
+        alert(`${t("addChildSuccessDirect")}\n\n${t("labelEmail")}: ${email}\n${t("labelPassword")}: ${rawPassword}`);
+      }, 300);
+    } else {
+      const { error } = await sbClient.rpc("parent_add_child", {
+        p_full_name: name,
+        p_grade: grade,
+        p_email: email,
+        p_invite_token: inviteToken,
+        p_invite_status: "pending",
+        p_password_hash: null,
+      });
+      if (error) throw error;
+
+      // Call edge function to send invite email via Resend
+      await sbClient.functions.invoke("send-invite-email", {
+        body: { email, name, token: inviteToken },
+      });
+
+      await loadParentData();
+      state.showAddChildModal = false;
+      state.addChildMode = null;
+      render();
+      showToast(`${t("addChildSuccessInvite")} ${email}`, "success");
+    }
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || t("errorGeneric"), "error");
+  } finally {
+    state.addChildLoading = false;
+    render();
+  }
+}
+
 async function handleLinkChildByEmail(form, onSuccess) {
   const email = form.childEmail.value.trim();
   const btn = form.querySelector("button[type=submit]");
@@ -5922,7 +6245,7 @@ function renderParentAccountExtras() {
         ? `<p class="muted">${t("noChildrenLinked")}</p>`
         : state.linkedLearners.map((l) => renderLinkedChildCard(l)).join("")
     }
-    <button class="btn btn-outline btn-block" style="margin-top:var(--spacing-8);" data-action="open-link-child-modal">${t("btnLinkAnotherChild")}</button>
+    <button class="btn btn-gold btn-block" style="margin-top:var(--spacing-8);" data-action="open-add-child-modal">${t("btnAddChild")}</button>
 
     <div class="section-title">${t("notificationPrefsHeading")}</div>
     <div class="card">
@@ -5937,19 +6260,24 @@ function renderParentAccountExtras() {
     </div>
 
     ${state.linkChildModalOpen ? renderLinkChildModal() : ""}
+    ${state.showAddChildModal ? renderAddChildModal() : ""}
   `;
 }
 
 function renderLinkedChildCard(learner) {
   const tier = learner.subscription_tier || "free";
   const tierBadgeClass = tier === "premium" ? "tier-badge-premium" : tier === "basic" ? "tier-badge-basic" : "tier-badge-free";
+  const isPending = learner.invite_status === "pending";
   return `
     <div class="linked-child-card">
       <div>
         <div style="font-weight:700;">${escapeHtml(learner.full_name)}</div>
         <div class="muted">${t("gradeLabel")} ${learner.grade}</div>
       </div>
-      <span class="tier-badge ${tierBadgeClass}">${t(tier)}</span>
+      ${isPending
+        ? `<span class="tier-badge" style="background:var(--border);color:var(--text-muted);">${t("inviteStatusPending")}</span>`
+        : `<span class="tier-badge ${tierBadgeClass}">${t(tier)}</span>`
+      }
     </div>
   `;
 }
@@ -6383,6 +6711,26 @@ function attachGlobalListeners() {
         state.linkChildModalOpen = false;
         render();
         break;
+      case "open-add-child-modal":
+        state.showAddChildModal = true;
+        state.addChildMode = null;
+        render();
+        break;
+      case "close-add-child-modal":
+        state.showAddChildModal = false;
+        state.addChildMode = null;
+        render();
+        break;
+      case "set-child-mode":
+        state.addChildMode = target.dataset.mode === "null" ? null : target.dataset.mode;
+        render();
+        break;
+      case "back-to-login":
+        state.acceptInviteToken = null;
+        state.acceptInviteData = null;
+        authTab = "login";
+        render();
+        break;
       case "skip-link-child":
         state.showLinkChildScreen = false;
         render();
@@ -6432,6 +6780,12 @@ function attachGlobalListeners() {
         break;
       case "session-chat-form":
         sessionSendChat(form);
+        break;
+      case "add-child-form":
+        handleAddChild(form);
+        break;
+      case "accept-invite-form":
+        handleAcceptInvite(form);
         break;
       case "link-child-form":
         handleLinkChildByEmail(form, () => {

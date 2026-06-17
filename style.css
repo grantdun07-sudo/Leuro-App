@@ -2454,6 +2454,63 @@ h1, h2, h3, h4 {
   margin-top: 2px;
 }
 
+/* ---- Child selector row with Add Child button ---- */
+.child-selector-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-8);
+  margin-bottom: var(--spacing-8);
+}
+
+.child-selector-row .child-selector {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+/* ---- Add Child modal mode cards ---- */
+.add-child-mode-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-12);
+  margin-top: var(--spacing-8);
+}
+
+.add-child-mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: var(--spacing-16);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--white);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.add-child-mode-card:hover {
+  border-color: var(--primary);
+  background: var(--bg);
+}
+
+.add-child-mode-icon {
+  font-size: 28px;
+  margin-bottom: 4px;
+}
+
+.add-child-mode-label {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.add-child-mode-desc {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+
 @media (min-width: 600px) {
   body { font-size: var(--font-size-body); }
   .container { padding: var(--spacing-24); }
