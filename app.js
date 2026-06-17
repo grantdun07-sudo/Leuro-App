@@ -46,6 +46,9 @@ const translations = {
     placeholderReferral: "e.g. LEURO-SAHETI",
     invalidReferralCode: "Invalid referral code. Please check and try again.",
     referralApplied: "Referral code applied — 20% discount on your first payment!",
+    keepMeSignedIn: "Keep me signed in",
+    showPassword: "Show password",
+    hidePassword: "Hide password",
     btnCreateAccount: "Create Account",
     btnLogin: "Log In",
     welcomeBack: "Welcome back",
@@ -393,6 +396,9 @@ const translations = {
     placeholderReferral: "bv. LEURO-SAHETI",
     invalidReferralCode: "Ongeldige verwysingskode. Kontroleer asseblief en probeer weer.",
     referralApplied: "Verwysingskode toegepas — 20% afslag op jou eerste betaling!",
+    keepMeSignedIn: "Bly aangemeld",
+    showPassword: "Wys wagwoord",
+    hidePassword: "Versteek wagwoord",
     btnCreateAccount: "Skep Rekening",
     btnLogin: "Meld Aan",
     welcomeBack: "Welkom terug",
@@ -1275,6 +1281,7 @@ async function init() {
       state.learner = null;
       state.parent = null;
     }
+    setupKeepSignedIn();
   }
 
   state.loading = false;
@@ -1680,6 +1687,7 @@ function renderAuthScreen() {
 }
 
 function renderLoginForm() {
+  const keepChecked = localStorage.getItem("leuro_keep_signed_in") !== "false";
   return `
     <h3 class="mt-0">${t("welcomeBack")}</h3>
     <form data-action="login-form">
@@ -1689,8 +1697,15 @@ function renderLoginForm() {
       </div>
       <div class="field">
         <label>${t("labelPassword")}</label>
-        <input type="password" name="password" required autocomplete="current-password" />
+        <div class="pw-field-wrap">
+          <input type="password" name="password" required autocomplete="current-password" />
+          <button type="button" class="pw-visibility-btn" data-action="toggle-pw-visibility" aria-label="${t("showPassword")}">👁</button>
+        </div>
       </div>
+      <label class="checkbox-label keep-signed-in-row">
+        <input type="checkbox" name="keepSignedIn" ${keepChecked ? "checked" : ""} />
+        <span>${t("keepMeSignedIn")}</span>
+      </label>
       <button type="submit" class="btn btn-primary btn-block">${t("btnLogin")}</button>
     </form>
     <p class="forgot-link"><button class="btn-link" data-action="show-forgot">${t("forgotPassword")}</button></p>
@@ -1807,12 +1822,18 @@ function renderPasswordRecoveryScreen() {
         <form data-action="set-new-password-form">
           <div class="field">
             <label>${t("labelNewPassword")}</label>
-            <input type="password" name="password" required minlength="8" autocomplete="new-password" />
+            <div class="pw-field-wrap">
+              <input type="password" name="password" required minlength="8" autocomplete="new-password" />
+              <button type="button" class="pw-visibility-btn" data-action="toggle-pw-visibility" aria-label="${t("showPassword")}">👁</button>
+            </div>
             <p class="pw-hint" data-pw-hint></p>
           </div>
           <div class="field">
             <label>${t("labelConfirmPassword")}</label>
-            <input type="password" name="confirm" required autocomplete="new-password" />
+            <div class="pw-field-wrap">
+              <input type="password" name="confirm" required autocomplete="new-password" />
+              <button type="button" class="pw-visibility-btn" data-action="toggle-pw-visibility" aria-label="${t("showPassword")}">👁</button>
+            </div>
             <p class="pw-hint" data-confirm-hint></p>
           </div>
           <button type="submit" class="btn btn-primary btn-block" disabled>${t("btnUpdatePassword")}</button>
@@ -2065,7 +2086,10 @@ function renderSignupForm() {
       </div>
       <div class="field">
         <label>${t("labelPassword")}</label>
-        <input type="password" name="password" required minlength="8" autocomplete="new-password" />
+        <div class="pw-field-wrap">
+          <input type="password" name="password" required minlength="8" autocomplete="new-password" />
+          <button type="button" class="pw-visibility-btn" data-action="toggle-pw-visibility" aria-label="${t("showPassword")}">👁</button>
+        </div>
         <p class="pw-hint" data-pw-hint></p>
       </div>
       <div class="field">
@@ -2112,6 +2136,9 @@ async function handleLogin(form) {
   try {
     const email = form.email.value.trim();
     const password = form.password.value;
+    const keep = form.querySelector('[name="keepSignedIn"]')?.checked ?? true;
+    localStorage.setItem("leuro_keep_signed_in", keep ? "true" : "false");
+
     const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
     if (error) throw error;
 
@@ -2149,6 +2176,7 @@ async function handleLogin(form) {
       }
     }
 
+    setupKeepSignedIn();
     render();
   } catch (err) {
     console.error(err);
@@ -2372,6 +2400,19 @@ async function ensureUserRecords(user, metaData) {
   }
 }
 
+// Registers a beforeunload handler that clears the Supabase session token
+// from localStorage when "Keep me signed in" is unchecked. Called once on
+// init (for returning users) and once after each login.
+function setupKeepSignedIn() {
+  const keep = localStorage.getItem("leuro_keep_signed_in") !== "false";
+  if (!keep) {
+    const projectRef = SUPABASE_URL.replace("https://", "").split(".")[0];
+    window.addEventListener("beforeunload", () => {
+      localStorage.removeItem(`sb-${projectRef}-auth-token`);
+    }, { once: true });
+  }
+}
+
 async function handleLogout() {
   await sbClient.auth.signOut();
   state.session = null;
@@ -2389,8 +2430,15 @@ async function handleLogout() {
 // ---------------------------------------------------------------------
 // MAIN RENDER / SHELL
 // ---------------------------------------------------------------------
+
+// Track which tab was active on the previous render so we can decide
+// whether to restore the scroll position after rebuilding the DOM.
+let _lastRenderedTab = null;
+
 function render() {
   const app = getApp();
+  const savedScrollY = window.scrollY;
+  const sameTab = state.currentTab === _lastRenderedTab;
 
   if (state.loading) {
     app.innerHTML = `<div class="loading-row"><span class="spinner spinner-purple"></span> ${t("loading")}</div>`;
@@ -2424,6 +2472,14 @@ function render() {
   }
 
   app.innerHTML = renderMainScreen();
+
+  // Preserve scroll position when the user is interacting within the same
+  // tab (e.g. answering a flashcard, submitting a form). On tab switches
+  // the browser naturally resets to the top when innerHTML is replaced.
+  if (sameTab) {
+    requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
+  }
+  _lastRenderedTab = state.currentTab;
 
   // Subject-selection gate: Grade 10-12 learners who have not yet chosen
   // their subjects see this overlay before the diagnostic. The two gates
@@ -2537,6 +2593,7 @@ function renderTopbar() {
       <div class="topbar-actions">
         ${showAvatar ? `<span class="avatar-circle">${escapeHtml(getInitials(state.profile.full_name))}</span>` : ""}
         <button class="lang-toggle" data-action="toggle-lang">${state.lang === "en" ? "AF" : "EN"}</button>
+        <button class="topbar-logout-btn" data-action="logout" title="${t("btnLogout")}">⏏</button>
       </div>
     </div>
   `;
@@ -6180,6 +6237,17 @@ function attachGlobalListeners() {
       case "logout":
         handleLogout();
         break;
+      case "toggle-pw-visibility": {
+        const wrap = target.closest(".pw-field-wrap");
+        if (!wrap) break;
+        const pwInput = wrap.querySelector("input");
+        if (!pwInput) break;
+        const nowVisible = pwInput.type === "text";
+        pwInput.type = nowVisible ? "password" : "text";
+        target.textContent = nowVisible ? "👁" : "🙈";
+        target.setAttribute("aria-label", nowVisible ? t("showPassword") : t("hidePassword"));
+        break;
+      }
       case "diagnostic-set-lang":
         diagnosticSetLang(target.dataset.lang);
         break;

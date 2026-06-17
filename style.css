@@ -2350,6 +2350,65 @@ h1, h2, h3, h4 {
   margin-left: var(--spacing-8);
 }
 
+/* ---- Password visibility toggle ---- */
+.pw-field-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pw-field-wrap input {
+  width: 100%;
+  padding-right: 44px;
+}
+
+.pw-visibility-btn {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  border-radius: var(--radius);
+}
+
+.pw-visibility-btn:hover {
+  color: var(--text);
+  background: rgba(90, 62, 118, 0.06);
+}
+
+/* ---- Keep me signed in ---- */
+.keep-signed-in-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-8);
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: var(--spacing-12);
+}
+
+/* ---- Topbar logout button ---- */
+.topbar-logout-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  line-height: 1;
+}
+
+.topbar-logout-btn:hover {
+  color: var(--danger);
+  background: rgba(217, 83, 79, 0.08);
+}
+
 /* ---- Referral discount price block ---- */
 .tier-price-block {
   display: flex;
