@@ -2131,6 +2131,24 @@ async function handleLogin(form) {
     state.user = state.session ? state.session.user : data.user;
 
     await loadUserData();
+
+    // If the user signed up with a referral code but needed email confirmation,
+    // apply_referral_code() was deferred to this first login.
+    const pendingCode = sessionStorage.getItem("pending_referral_code");
+    if (pendingCode) {
+      sessionStorage.removeItem("pending_referral_code");
+      const { data: applyResult, error: applyErr } = await sbClient.rpc("apply_referral_code", {
+        p_code: pendingCode,
+      });
+      if (applyErr || !applyResult?.valid) {
+        console.error("apply_referral_code (deferred) failed:", applyErr || applyResult);
+      } else {
+        // Refresh profile so state.profile.referral_code_used is set before render().
+        await loadUserData();
+        showToast(t("referralApplied"), "success");
+      }
+    }
+
     render();
   } catch (err) {
     console.error(err);
@@ -2214,6 +2232,13 @@ async function handleSignup(form) {
       // Email confirmation is enabled: there is no session yet, so the client
       // cannot insert its own rows (no auth.uid()). The handle_new_user()
       // trigger is responsible for creating the profile in this case.
+      //
+      // Stash the referral code so handleLogin() can apply it after the user
+      // confirms their email and signs in — apply_referral_code() needs a live
+      // auth session (auth.uid()) so we can't call it here.
+      if (referredByCode) {
+        sessionStorage.setItem("pending_referral_code", referredByCode);
+      }
       showToast(
         state.lang === "af"
           ? "Rekening geskep! Gaan jou e-pos na om te bevestig, dan kan jy aanmeld."
