@@ -955,6 +955,21 @@ h1, h2, h3, h4 {
   color: var(--white);
 }
 
+.study-guide-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-12);
+  margin-bottom: var(--spacing-4);
+}
+.study-guide-card-header h3 { margin: 0; flex: 1; }
+.study-guide-download-btn {
+  flex-shrink: 0;
+  font-family: 'Poppins', sans-serif;
+  font-size: 0.75rem;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
 .study-guide-list {
   margin: 0 0 var(--spacing-12);
   padding-left: var(--spacing-20);

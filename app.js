@@ -153,6 +153,7 @@ const translations = {
     selfCheckLabel: "Quick Self-Check",
     btnSaveGuide: "Save Guide",
     btnSaved: "Saved!",
+    btnDownloadPdf: "Download PDF",
     studyGuideSaved: "Study guide saved!",
     errorStudyGuideGeneration: "Unable to generate study guide. Please try again.",
     enterTopicFirst: "Please enter a topic first.",
@@ -479,6 +480,7 @@ const translations = {
     selfCheckLabel: "Vinnige Selftoets",
     btnSaveGuide: "Stoor Gids",
     btnSaved: "Gestoor!",
+    btnDownloadPdf: "Laai PDF af",
     studyGuideSaved: "Studiegids gestoor!",
     errorStudyGuideGeneration: "Kon nie studiegids genereer nie. Probeer asseblief weer.",
     enterTopicFirst: "Voer asseblief eers 'n onderwerp in.",
@@ -3816,7 +3818,10 @@ function renderStudyGuideCard(sg) {
 
   return `
     <div class="card study-guide-card">
-      <h3 class="mt-0">${escapeHtml(r.topicTitle || sg.topicTitle || "")}</h3>
+      <div class="study-guide-card-header">
+        <h3 class="mt-0">${escapeHtml(r.topicTitle || sg.topicTitle || "")}</h3>
+        <button class="btn btn-gold btn-sm study-guide-download-btn" data-action="download-study-guide">${t("btnDownloadPdf")}</button>
+      </div>
 
       <div class="section-title" style="margin-top:0;">${t("keyConceptsLabel")}</div>
       <ul class="study-guide-list">
@@ -3963,6 +3968,54 @@ async function generateStudyGuide() {
   } finally {
     sg.loading = false;
     render();
+  }
+}
+
+async function downloadStudyGuidePdf() {
+  const card = document.querySelector(".study-guide-card");
+  if (!card) return;
+
+  const sg = state.studyGuide;
+  const subjectSlug = (sg.topicTitle || "guide").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const filename = `leuro-study-guide-${subjectSlug}-${timestamp}.pdf`;
+
+  const btn = document.querySelector('[data-action="download-study-guide"]');
+  if (btn) { btn.disabled = true; btn.textContent = "Generating…"; }
+
+  try {
+    const canvas = await html2canvas(card, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit: "px", format: "a4", orientation: "portrait" });
+
+    const pdfW = pdf.internal.pageSize.getWidth();
+    const pdfH = pdf.internal.pageSize.getHeight();
+    const imgW = pdfW;
+    const imgH = (canvas.height * pdfW) / canvas.width;
+    let yOffset = 0;
+
+    while (yOffset < imgH) {
+      if (yOffset > 0) pdf.addPage();
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, -yOffset, imgW, imgH);
+
+      // Watermark centered on each page
+      pdf.saveGraphicsState();
+      pdf.setGState(new pdf.GState({ opacity: 0.08 }));
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(72);
+      pdf.setTextColor(90, 62, 118);
+      pdf.text("Leuro", pdfW / 2, pdfH / 2, { align: "center", angle: 45 });
+      pdf.restoreGraphicsState();
+
+      yOffset += pdfH;
+    }
+
+    pdf.save(filename);
+  } catch (err) {
+    console.error(err);
+    showToast(t("errorGeneric"), "error");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = t("btnDownloadPdf"); }
   }
 }
 
@@ -5651,6 +5704,9 @@ function attachGlobalListeners() {
         break;
       case "save-study-guide":
         saveStudyGuide();
+        break;
+      case "download-study-guide":
+        downloadStudyGuidePdf();
         break;
       case "refresher-toggle-topic":
         refresherToggleTopic(target.dataset.topicId);
