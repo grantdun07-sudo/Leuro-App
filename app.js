@@ -5539,8 +5539,8 @@ function renderParentHomeTab() {
 
   return `
     ${greetingCard}
-    <div class="child-selector-row">
-      ${renderChildSelector()}
+    ${renderChildSelector()}
+    <div style="text-align:right;margin-bottom:var(--spacing-8);">
       <button class="btn btn-gold btn-sm" data-action="open-add-child-modal">${t("btnAddChild")}</button>
     </div>
 
