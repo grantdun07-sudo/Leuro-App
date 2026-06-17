@@ -431,6 +431,11 @@ h1, h2, h3, h4 {
   font-size: var(--font-size-body);
 }
 .legal-modal-body p { margin: 0 0 var(--spacing-8); font-size: var(--font-size-caption); line-height: 1.6; }
+.legal-modal-body ul { margin: 0 0 var(--spacing-8); padding-left: var(--spacing-16); font-size: var(--font-size-caption); line-height: 1.7; }
+.legal-modal-body li { margin-bottom: var(--spacing-4); }
+.legal-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-caption); margin: 0 0 var(--spacing-8); }
+.legal-table th, .legal-table td { text-align: left; padding: var(--spacing-4) var(--spacing-8); border: 1px solid rgba(0,0,0,0.15); vertical-align: top; }
+.legal-table th { background: rgba(90,62,118,0.08); font-weight: 600; }
 
 /* ---------------------------------------------------------------------
    Header / top bar
