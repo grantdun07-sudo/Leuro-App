@@ -1670,7 +1670,7 @@ function getGoalsDraft(learner) {
 // AUTH
 // ---------------------------------------------------------------------
 let authTab = "login";
-let authRole = "learner";
+let authRole = "parent";
 let resetEmailSent = false;
 
 function renderAuthScreen() {
@@ -2101,28 +2101,9 @@ function renderSignupForm() {
         <p class="pw-hint" data-pw-hint></p>
       </div>
       <div class="field">
-        <label>${t("labelRole")}</label>
-        <div class="radio-group">
-          <div class="radio-option ${authRole === "learner" ? "selected" : ""}" data-action="select-role" data-role="learner">${t("roleLearner")}</div>
-          <div class="radio-option ${authRole === "parent" ? "selected" : ""}" data-action="select-role" data-role="parent">${t("roleParent")}</div>
-        </div>
+        <label>${t("labelReferral")}</label>
+        <input type="text" name="referredBy" placeholder="${t("placeholderReferral")}" maxlength="32" style="text-transform:uppercase;" />
       </div>
-      ${
-        authRole === "learner"
-          ? `<div class="field">
-               <label>${t("labelGrade")}</label>
-               <select name="grade" required>
-                 ${Array.from({ length: 9 }, (_, i) => i + 4)
-                   .map((g) => `<option value="${g}">${t("labelGrade")} ${g}</option>`)
-                   .join("")}
-               </select>
-             </div>
-             <div class="field">
-               <label>${t("labelReferral")}</label>
-               <input type="text" name="referredBy" placeholder="${t("placeholderReferral")}" maxlength="32" style="text-transform:uppercase;" />
-             </div>`
-          : ""
-      }
       <div class="legal-checkboxes">
         <label class="checkbox-label">
           <input type="checkbox" name="tcAccepted" />
@@ -2229,26 +2210,22 @@ async function handleSignup(form) {
     }
 
     const metaData = {
-      role: authRole,
+      role: "parent",
       full_name: fullName,
       lang: state.lang,
     };
-    let referredByCode = "";
-    if (authRole === "learner") {
-      metaData.grade = parseInt(form.grade.value, 10);
-      referredByCode = form.referredBy.value.trim().toUpperCase();
-      if (referredByCode) {
-        // Validate code exists before creating the account (public SELECT policy).
-        const { data: codeRow } = await sbClient
-          .from("referral_codes")
-          .select("code")
-          .eq("code", referredByCode)
-          .maybeSingle();
-        if (!codeRow) {
-          showToast(t("invalidReferralCode"), "error");
-          setButtonLoading(btn, false);
-          return;
-        }
+    let referredByCode = form.referredBy?.value.trim().toUpperCase() || "";
+    if (referredByCode) {
+      // Validate code exists before creating the account (public SELECT policy).
+      const { data: codeRow } = await sbClient
+        .from("referral_codes")
+        .select("code")
+        .eq("code", referredByCode)
+        .maybeSingle();
+      if (!codeRow) {
+        showToast(t("invalidReferralCode"), "error");
+        setButtonLoading(btn, false);
+        return;
       }
     }
 
@@ -2313,7 +2290,7 @@ async function handleSignup(form) {
     const referralCode = `LEURO-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
     const { error: profileUpdateErr } = await sbClient
       .from("profiles")
-      .update({ full_name: fullName, role: authRole, referral_code: referralCode })
+      .update({ full_name: fullName, role: "parent", referral_code: referralCode })
       .eq("id", state.user.id);
     if (profileUpdateErr) {
       console.error("Failed to update profile after signup", profileUpdateErr);
@@ -2335,9 +2312,7 @@ async function handleSignup(form) {
 
     // New parent accounts see a one-time "Link Your Child" overlay right
     // after signup, before the parent dashboard itself is shown.
-    if (authRole === "parent") {
-      state.showLinkChildScreen = true;
-    }
+    state.showLinkChildScreen = true;
 
     render();
   } catch (err) {
