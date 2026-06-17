@@ -159,14 +159,16 @@ const translations = {
     enterTopicFirst: "Please enter a topic first.",
 
     tabFlashcards: "Flashcards",
-    flashcardCountLabel: "Number of cards",
+    flashcardCountLabel: "Number of questions",
     btnStartFlashcards: "Start Game",
-    flashcardProgress: "Card {0} of {1}",
-    flashcardFrontLabel: "Concept",
-    flashcardBackLabel: "Answer",
-    flashcardTapHint: "Tap to reveal",
-    btnFlashcardGotIt: "Got it!",
-    btnFlashcardSkip: "Skip",
+    flashcardProgress: "Question {0} of {1}",
+    flashcardFrontLabel: "Question",
+    flashcardBackLabel: "Result",
+    flashcardCorrect: "✓ Correct!",
+    flashcardWrong: "✗ Incorrect",
+    flashcardTimeUp: "⏱ Time's up!",
+    flashcardExplanationLabel: "Explanation",
+    btnFlashcardNext: "Next Question",
     flashcardResultsHeading: "Results",
     flashcardMissedLabel: "Review these",
     flashcardPerfect: "Perfect score! You know them all.",
@@ -502,14 +504,16 @@ const translations = {
     enterTopicFirst: "Voer asseblief eers 'n onderwerp in.",
 
     tabFlashcards: "Flitskaarte",
-    flashcardCountLabel: "Aantal kaarte",
+    flashcardCountLabel: "Aantal vrae",
     btnStartFlashcards: "Begin Spel",
-    flashcardProgress: "Kaart {0} van {1}",
-    flashcardFrontLabel: "Konsep",
-    flashcardBackLabel: "Antwoord",
-    flashcardTapHint: "Tik om te wys",
-    btnFlashcardGotIt: "Het dit!",
-    btnFlashcardSkip: "Oorslaan",
+    flashcardProgress: "Vraag {0} van {1}",
+    flashcardFrontLabel: "Vraag",
+    flashcardBackLabel: "Resultaat",
+    flashcardCorrect: "✓ Korrek!",
+    flashcardWrong: "✗ Verkeerd",
+    flashcardTimeUp: "⏱ Tyd verstreke!",
+    flashcardExplanationLabel: "Verduideliking",
+    btnFlashcardNext: "Volgende Vraag",
     flashcardResultsHeading: "Resultate",
     flashcardMissedLabel: "Hersien hierdie",
     flashcardPerfect: "Perfekte punt! Jy ken almal.",
@@ -797,6 +801,8 @@ const state = {
     flipped: false,
     correct: [],
     secondsLeft: 10,
+    answered: false,
+    selectedAnswer: null,
   },
   mockExamSetup: {
     subjectId: null,
@@ -3933,32 +3939,51 @@ function renderFlashcardGame(fc) {
   const total = fc.cards.length;
   const current = fc.currentIndex + 1;
   const timerDanger = fc.secondsLeft < 3;
+  const { answered, selectedAnswer } = fc;
+  const isCorrect = answered && selectedAnswer === card.correct;
+  const isTimeUp = answered && !selectedAnswer;
+
+  const resultLabel = isTimeUp ? t("flashcardTimeUp") : isCorrect ? t("flashcardCorrect") : t("flashcardWrong");
 
   return `
     <div class="card flashcard-game-card">
       <div class="flashcard-progress">
         <span>${t("flashcardProgress").replace("{0}", current).replace("{1}", total)}</span>
-        <span id="flashcard-timer" class="flashcard-timer ${timerDanger ? "timer-danger" : ""}">${fc.secondsLeft}s</span>
+        ${answered
+          ? `<span class="flashcard-timer">&nbsp;</span>`
+          : `<span id="flashcard-timer" class="flashcard-timer ${timerDanger ? "timer-danger" : ""}">${fc.secondsLeft}s</span>`}
       </div>
 
-      <div class="flashcard-flip-container ${fc.flipped ? "flipped" : ""}" data-action="flashcard-flip">
+      <div class="flashcard-flip-container ${fc.flipped ? "flipped" : ""}">
         <div class="flashcard-inner">
           <div class="flashcard-face flashcard-front">
             <div class="flashcard-label">${t("flashcardFrontLabel")}</div>
-            <div class="flashcard-text">${escapeHtml(card.concept)}</div>
-            <div class="flashcard-tap-hint">${t("flashcardTapHint")}</div>
+            <div class="flashcard-text">${escapeHtml(card.question)}</div>
           </div>
           <div class="flashcard-face flashcard-back">
-            <div class="flashcard-label">${t("flashcardBackLabel")}</div>
-            <div class="flashcard-text">${escapeHtml(card.definition)}</div>
+            <div class="flashcard-result-label ${isCorrect ? "result-correct" : "result-wrong"}">${resultLabel}</div>
+            <div class="flashcard-label" style="margin-top:var(--spacing-8);">${t("flashcardExplanationLabel")}</div>
+            <div class="flashcard-explanation">${escapeHtml(card.explanation)}</div>
           </div>
         </div>
       </div>
 
-      <div class="flashcard-actions">
-        <button class="btn btn-danger flashcard-action-btn" data-action="flashcard-skip">${t("btnFlashcardSkip")}</button>
-        <button class="btn btn-primary flashcard-action-btn" data-action="flashcard-got-it">${t("btnFlashcardGotIt")}</button>
+      <div class="flashcard-options">
+        ${["A", "B", "C", "D"].map((key) => {
+          let cls = "flashcard-option-btn";
+          if (answered) {
+            if (key === card.correct) cls += " option-correct";
+            else if (key === selectedAnswer) cls += " option-wrong";
+            else cls += " option-dim";
+          }
+          return `<button class="${cls}" data-action="flashcard-answer" data-answer="${key}" ${answered ? "disabled" : ""}>
+            <span class="flashcard-option-key">${key}</span>
+            <span class="flashcard-option-text">${escapeHtml(card.options[key])}</span>
+          </button>`;
+        }).join("")}
       </div>
+
+      ${answered ? `<button class="btn btn-primary btn-block" style="margin-top:var(--spacing-12);" data-action="flashcard-next">${t("btnFlashcardNext")} →</button>` : ""}
     </div>
   `;
 }
@@ -3982,8 +4007,8 @@ function renderFlashcardResults(fc) {
            <div class="flashcard-missed-list">
              ${missed.map((c) => `
                <div class="flashcard-missed-item">
-                 <strong>${escapeHtml(c.concept)}</strong>
-                 <p>${escapeHtml(c.definition)}</p>
+                 <strong>${escapeHtml(c.question)}</strong>
+                 <p><span class="flashcard-option-key" style="font-size:0.7rem;">${c.correct}</span> ${escapeHtml(c.options[c.correct])}</p>
                </div>`).join("")}
            </div>`}
       <div class="flashcard-result-actions">
@@ -4220,10 +4245,20 @@ function startFlashcardTimer() {
   state.flashcard.secondsLeft = 10;
   flashcardTimerId = setInterval(() => {
     const fc = state.flashcard;
+    if (fc.answered) { clearFlashcardTimer(); return; }
     fc.secondsLeft = Math.max(0, fc.secondsLeft - 1);
     if (fc.secondsLeft <= 0) {
       clearFlashcardTimer();
-      advanceFlashcard(false);
+      // Time's up — mark wrong, flip to reveal answer.
+      fc.correct.push(false);
+      fc.answered = true;
+      fc.selectedAnswer = null;
+      fc.flipped = false;
+      render();
+      requestAnimationFrame(() => {
+        const container = document.querySelector(".flashcard-flip-container");
+        if (container) container.classList.add("flipped");
+      });
       return;
     }
     // Lightweight DOM update — avoids a full re-render each second.
@@ -4235,9 +4270,25 @@ function startFlashcardTimer() {
   }, 1000);
 }
 
-function advanceFlashcard(correct) {
+function handleFlashcardAnswer(answer) {
   const fc = state.flashcard;
-  fc.correct.push(correct);
+  if (fc.answered) return;
+  clearFlashcardTimer();
+  const isCorrect = answer === fc.cards[fc.currentIndex].correct;
+  fc.selectedAnswer = answer;
+  fc.answered = true;
+  fc.correct.push(isCorrect);
+  fc.flipped = false;
+  render();
+  // Animate flip in next frame so the newly rendered (unflipped) card transitions.
+  requestAnimationFrame(() => {
+    const container = document.querySelector(".flashcard-flip-container");
+    if (container) container.classList.add("flipped");
+  });
+}
+
+function flashcardNext() {
+  const fc = state.flashcard;
   clearFlashcardTimer();
   if (fc.currentIndex + 1 >= fc.cards.length) {
     fc.step = "results";
@@ -4246,6 +4297,9 @@ function advanceFlashcard(correct) {
   }
   fc.currentIndex++;
   fc.flipped = false;
+  fc.answered = false;
+  fc.selectedAnswer = null;
+  fc.secondsLeft = 10;
   render();
   startFlashcardTimer();
 }
@@ -4290,6 +4344,8 @@ async function generateFlashcards() {
     fc.flipped = false;
     fc.correct = [];
     fc.secondsLeft = 10;
+    fc.answered = false;
+    fc.selectedAnswer = null;
     fc.loading = false;
     render();
     startFlashcardTimer();
@@ -4301,23 +4357,6 @@ async function generateFlashcards() {
   }
 }
 
-function flashcardFlip() {
-  state.flashcard.flipped = !state.flashcard.flipped;
-  // Toggle CSS class directly — no full re-render, timer keeps running.
-  const container = document.querySelector(".flashcard-flip-container");
-  if (container) container.classList.toggle("flipped", state.flashcard.flipped);
-}
-
-function flashcardGotIt() {
-  clearFlashcardTimer();
-  advanceFlashcard(true);
-}
-
-function flashcardSkip() {
-  clearFlashcardTimer();
-  advanceFlashcard(false);
-}
-
 function flashcardPlayAgain() {
   const fc = state.flashcard;
   fc.step = "game";
@@ -4325,6 +4364,8 @@ function flashcardPlayAgain() {
   fc.flipped = false;
   fc.correct = [];
   fc.secondsLeft = 10;
+  fc.answered = false;
+  fc.selectedAnswer = null;
   render();
   startFlashcardTimer();
 }
@@ -4344,6 +4385,8 @@ function flashcardRestart() {
     flipped: false,
     correct: [],
     secondsLeft: 10,
+    answered: false,
+    selectedAnswer: null,
   };
   render();
 }
@@ -6009,14 +6052,11 @@ function attachGlobalListeners() {
       case "generate-flashcards":
         generateFlashcards();
         break;
-      case "flashcard-flip":
-        flashcardFlip();
+      case "flashcard-answer":
+        handleFlashcardAnswer(target.dataset.answer);
         break;
-      case "flashcard-got-it":
-        flashcardGotIt();
-        break;
-      case "flashcard-skip":
-        flashcardSkip();
+      case "flashcard-next":
+        flashcardNext();
         break;
       case "flashcard-play-again":
         flashcardPlayAgain();

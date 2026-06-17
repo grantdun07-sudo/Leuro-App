@@ -1027,9 +1027,8 @@ h1, h2, h3, h4 {
 
 .flashcard-flip-container {
   perspective: 900px;
-  height: 210px;
-  margin-bottom: var(--spacing-20);
-  cursor: pointer;
+  height: 160px;
+  margin-bottom: var(--spacing-16);
 }
 .flashcard-inner {
   position: relative;
@@ -1051,7 +1050,7 @@ h1, h2, h3, h4 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--spacing-20);
+  padding: var(--spacing-16);
   text-align: center;
 }
 .flashcard-front {
@@ -1059,17 +1058,17 @@ h1, h2, h3, h4 {
   border: 1.5px solid var(--primary-light);
 }
 .flashcard-back {
-  background: rgba(230, 179, 71, 0.12);
-  border: 1.5px solid var(--accent);
+  background: var(--white);
+  border: 1.5px solid var(--border);
   transform: rotateY(180deg);
 }
 .flashcard-label {
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
-  margin-bottom: var(--spacing-8);
+  margin-bottom: var(--spacing-4);
 }
 .flashcard-text {
   font-size: var(--font-size-body);
@@ -1077,17 +1076,75 @@ h1, h2, h3, h4 {
   line-height: 1.5;
   color: var(--text-primary);
 }
-.flashcard-tap-hint {
-  margin-top: var(--spacing-12);
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  font-style: italic;
+.flashcard-result-label {
+  font-size: 1rem;
+  font-weight: 800;
+  font-family: 'Poppins', sans-serif;
+  margin-bottom: var(--spacing-4);
 }
-.flashcard-actions {
+.flashcard-result-label.result-correct { color: #12805c; }
+.flashcard-result-label.result-wrong { color: var(--danger); }
+.flashcard-explanation {
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+/* MCQ option buttons */
+.flashcard-options {
   display: flex;
-  gap: var(--spacing-12);
+  flex-direction: column;
+  gap: var(--spacing-8);
+  margin-bottom: var(--spacing-4);
 }
-.flashcard-action-btn { flex: 1; }
+.flashcard-option-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-12);
+  width: 100%;
+  text-align: left;
+  padding: 12px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--white);
+  font-family: var(--font-inter);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.flashcard-option-btn:not([disabled]):hover {
+  border-color: var(--primary-light);
+  background: rgba(90, 62, 118, 0.04);
+}
+.flashcard-option-btn[disabled] { cursor: default; }
+.flashcard-option-btn.option-correct {
+  border-color: #12805c;
+  background: rgba(18, 128, 92, 0.08);
+  font-weight: 600;
+}
+.flashcard-option-btn.option-wrong {
+  border-color: var(--danger);
+  background: rgba(217, 83, 79, 0.08);
+  font-weight: 600;
+}
+.flashcard-option-btn.option-dim { opacity: 0.45; }
+.flashcard-option-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  border-radius: 50%;
+  background: rgba(90, 62, 118, 0.1);
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--primary);
+}
+.flashcard-option-btn.option-correct .flashcard-option-key { background: #12805c; color: var(--white); }
+.flashcard-option-btn.option-wrong .flashcard-option-key { background: var(--danger); color: var(--white); }
+.flashcard-option-text { flex: 1; line-height: 1.4; }
 
 .flashcard-score {
   display: flex;

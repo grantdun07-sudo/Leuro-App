@@ -81,15 +81,17 @@ Deno.serve(async (req: Request) => {
     const userPrompt =
       `Subject: ${subjectName} | Grade: ${learner.grade} | Topic: "${body.topicTitle.slice(0, 120)}"\n` +
       `${langInstruction(lang)}\n${JSON_KEYS_ENGLISH_NOTE}\n\n` +
-      `Create exactly ${cardCount} flashcards for this CAPS topic.\n` +
+      `Create exactly ${cardCount} multiple-choice flashcard questions for this CAPS topic.\n` +
       `Rules:\n` +
-      `- Each card: concept (front, ≤25 words) and definition (back, ≤35 words).\n` +
-      `- Cover the most important vocabulary, formulas, rules, and key facts.\n` +
-      `- Vary card types: definitions, formulas, examples, cause-and-effect.\n` +
-      `- Grade-appropriate difficulty. Never reproduce copyrighted exam content.\n` +
+      `- Each card: a clear question, four answer options (A/B/C/D), the letter of the correct answer, and a brief explanation.\n` +
+      `- Questions ≤30 words. Each option ≤20 words. Explanation ≤40 words.\n` +
+      `- Cover key vocabulary, concepts, formulas, and facts. Vary difficulty.\n` +
+      `- All four options must be plausible — avoid obviously wrong distractors.\n` +
+      `- Correct answer must be distributed roughly evenly across A/B/C/D.\n` +
+      `- Grade-appropriate. Never reproduce copyrighted exam content.\n` +
       `- Human-readable text values in ${lang === "af" ? "Afrikaans" : "English"}.\n\n` +
       `Respond with ONLY a raw JSON object (no markdown, no code fences):\n` +
-      `{"cards": [{"concept": string, "definition": string}]}`;
+      `{"cards": [{"question": string, "options": {"A": string, "B": string, "C": string, "D": string}, "correct": "A"|"B"|"C"|"D", "explanation": string}]}`;
 
     try {
       const result = await callClaude(SYSTEM_PROMPT, userPrompt, 2048);
