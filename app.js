@@ -158,6 +158,22 @@ const translations = {
     errorStudyGuideGeneration: "Unable to generate study guide. Please try again.",
     enterTopicFirst: "Please enter a topic first.",
 
+    tabFlashcards: "Flashcards",
+    flashcardCountLabel: "Number of cards",
+    btnStartFlashcards: "Start Game",
+    flashcardProgress: "Card {0} of {1}",
+    flashcardFrontLabel: "Concept",
+    flashcardBackLabel: "Answer",
+    flashcardTapHint: "Tap to reveal",
+    btnFlashcardGotIt: "Got it!",
+    btnFlashcardSkip: "Skip",
+    flashcardResultsHeading: "Results",
+    flashcardMissedLabel: "Review these",
+    flashcardPerfect: "Perfect score! You know them all.",
+    btnFlashcardPlayAgain: "Play Again",
+    btnFlashcardNew: "New Topic",
+    errorFlashcardGeneration: "Unable to generate flashcards. Please try again.",
+
     tabExamRefresher: "Exam Refresher",
     refresherSetupHeading: "Set up your refresher",
     selectTopicsLabel: "Select topics to revise",
@@ -485,6 +501,22 @@ const translations = {
     errorStudyGuideGeneration: "Kon nie studiegids genereer nie. Probeer asseblief weer.",
     enterTopicFirst: "Voer asseblief eers 'n onderwerp in.",
 
+    tabFlashcards: "Flitskaarte",
+    flashcardCountLabel: "Aantal kaarte",
+    btnStartFlashcards: "Begin Spel",
+    flashcardProgress: "Kaart {0} van {1}",
+    flashcardFrontLabel: "Konsep",
+    flashcardBackLabel: "Antwoord",
+    flashcardTapHint: "Tik om te wys",
+    btnFlashcardGotIt: "Het dit!",
+    btnFlashcardSkip: "Oorslaan",
+    flashcardResultsHeading: "Resultate",
+    flashcardMissedLabel: "Hersien hierdie",
+    flashcardPerfect: "Perfekte punt! Jy ken almal.",
+    btnFlashcardPlayAgain: "Speel Weer",
+    btnFlashcardNew: "Nuwe Onderwerp",
+    errorFlashcardGeneration: "Kon nie flitskaarte genereer nie. Probeer asseblief weer.",
+
     tabExamRefresher: "Eksamenopfrissing",
     refresherSetupHeading: "Stel jou opfrissing op",
     selectTopicsLabel: "Kies onderwerpe om te hersien",
@@ -752,6 +784,19 @@ const state = {
     answer: "",
     saving: false,
     saved: false,
+  },
+  flashcard: {
+    subjectId: null,
+    topicTitle: "",
+    cardCount: 10,
+    loading: false,
+    error: null,
+    cards: null,
+    step: "setup",
+    currentIndex: 0,
+    flipped: false,
+    correct: [],
+    secondsLeft: 10,
   },
   mockExamSetup: {
     subjectId: null,
@@ -3760,10 +3805,11 @@ function renderExamsTab() {
     <div class="exams-toggle">
       <button class="exams-toggle-btn ${view === "studyguide" ? "active" : ""}" data-action="exams-switch-view" data-view="studyguide">${t("tabStudyGuide")}</button>
       <button class="exams-toggle-btn ${view === "mockexam" ? "active" : ""}" data-action="exams-switch-view" data-view="mockexam">${t("tabMockExam")}</button>
+      <button class="exams-toggle-btn ${view === "flashcard" ? "active" : ""}" data-action="exams-switch-view" data-view="flashcard">${t("tabFlashcards")}</button>
       <button class="exams-toggle-btn ${view === "refresher" ? "active" : ""}" data-action="exams-switch-view" data-view="refresher">${t("tabExamRefresher")}</button>
     </div>
 
-    ${view === "studyguide" ? renderStudyGuideSection() : view === "mockexam" ? renderMockExamSection() : renderRefresherSection()}
+    ${view === "studyguide" ? renderStudyGuideSection() : view === "mockexam" ? renderMockExamSection() : view === "flashcard" ? renderFlashcardSection() : renderRefresherSection()}
   `;
 }
 
@@ -3844,6 +3890,110 @@ function renderStudyGuideCard(sg) {
   `;
 }
 
+// ---------------------------------------------------------------------
+// FLASHCARD GAME
+// ---------------------------------------------------------------------
+function renderFlashcardSection() {
+  const fc = state.flashcard;
+  if (fc.step === "game") return renderFlashcardGame(fc);
+  if (fc.step === "results") return renderFlashcardResults(fc);
+  return renderFlashcardSetup(fc);
+}
+
+function renderFlashcardSetup(fc) {
+  const selectedSubjectId = fc.subjectId ?? getAvailableSubjects()[0]?.id;
+  return `
+    <div class="card">
+      <div class="field">
+        <label>${t("selectSubjectLabel")}</label>
+        <select id="flashcard-subject" data-action="flashcard-subject-change">
+          ${getAvailableSubjects().map((s) => `<option value="${s.id}" ${selectedSubjectId === s.id ? "selected" : ""}>${escapeHtml(subjectLabel(s))}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>${t("topicLabel")}</label>
+        <input type="text" id="flashcard-topic" placeholder="${t("addTopicPlaceholder")}" maxlength="120" value="${escapeHtml(fc.topicTitle || "")}" />
+      </div>
+      <div class="field">
+        <label>${t("flashcardCountLabel")}</label>
+        <div class="flashcard-count-group">
+          ${[10, 15, 20].map((n) => `<button class="flashcard-count-btn ${fc.cardCount === n ? "active" : ""}" data-action="flashcard-count" data-count="${n}">${n}</button>`).join("")}
+        </div>
+      </div>
+      <button class="btn btn-gold btn-block" data-action="generate-flashcards" ${fc.loading ? "disabled" : ""}>
+        ${fc.loading ? `<span class="spinner"></span> ${t("generating")}` : t("btnStartFlashcards")}
+      </button>
+    </div>
+    ${fc.error ? `<div class="card" style="border-left:4px solid var(--danger);"><p>${escapeHtml(fc.error)}</p></div>` : ""}
+  `;
+}
+
+function renderFlashcardGame(fc) {
+  const card = fc.cards[fc.currentIndex];
+  const total = fc.cards.length;
+  const current = fc.currentIndex + 1;
+  const timerDanger = fc.secondsLeft < 3;
+
+  return `
+    <div class="card flashcard-game-card">
+      <div class="flashcard-progress">
+        <span>${t("flashcardProgress").replace("{0}", current).replace("{1}", total)}</span>
+        <span id="flashcard-timer" class="flashcard-timer ${timerDanger ? "timer-danger" : ""}">${fc.secondsLeft}s</span>
+      </div>
+
+      <div class="flashcard-flip-container ${fc.flipped ? "flipped" : ""}" data-action="flashcard-flip">
+        <div class="flashcard-inner">
+          <div class="flashcard-face flashcard-front">
+            <div class="flashcard-label">${t("flashcardFrontLabel")}</div>
+            <div class="flashcard-text">${escapeHtml(card.concept)}</div>
+            <div class="flashcard-tap-hint">${t("flashcardTapHint")}</div>
+          </div>
+          <div class="flashcard-face flashcard-back">
+            <div class="flashcard-label">${t("flashcardBackLabel")}</div>
+            <div class="flashcard-text">${escapeHtml(card.definition)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flashcard-actions">
+        <button class="btn btn-danger flashcard-action-btn" data-action="flashcard-skip">${t("btnFlashcardSkip")}</button>
+        <button class="btn btn-primary flashcard-action-btn" data-action="flashcard-got-it">${t("btnFlashcardGotIt")}</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderFlashcardResults(fc) {
+  const total = fc.cards.length;
+  const correctCount = fc.correct.filter(Boolean).length;
+  const pct = Math.round((correctCount / total) * 100);
+  const missed = fc.cards.filter((_, i) => !fc.correct[i]);
+
+  return `
+    <div class="card flashcard-results-card">
+      <h3 class="mt-0">${t("flashcardResultsHeading")}</h3>
+      <div class="flashcard-score">
+        <span class="flashcard-score-big">${correctCount}/${total}</span>
+        <span class="flashcard-score-pct">${pct}%</span>
+      </div>
+      ${missed.length === 0
+        ? `<p>${t("flashcardPerfect")}</p>`
+        : `<div class="section-title">${t("flashcardMissedLabel")}</div>
+           <div class="flashcard-missed-list">
+             ${missed.map((c) => `
+               <div class="flashcard-missed-item">
+                 <strong>${escapeHtml(c.concept)}</strong>
+                 <p>${escapeHtml(c.definition)}</p>
+               </div>`).join("")}
+           </div>`}
+      <div class="flashcard-result-actions">
+        <button class="btn btn-gold btn-block" data-action="flashcard-play-again">${t("btnFlashcardPlayAgain")}</button>
+        <button class="btn btn-outline btn-block" data-action="flashcard-restart">${t("btnFlashcardNew")}</button>
+      </div>
+    </div>
+  `;
+}
+
 // Maps each mock-exam difficulty to its translation key for the question/marks
 // breakdown shown under the difficulty selector.
 const EXAM_DIFF_STAT = { low: "examStatLow", medium: "examStatMedium", high: "examStatHigh" };
@@ -3920,6 +4070,9 @@ function renderMockExamSection() {
 }
 
 function examsSwitchView(view) {
+  if (state.examsView === "flashcard" && view !== "flashcard") {
+    clearFlashcardTimer();
+  }
   state.examsView = view;
   render();
   // Refresh saved guides so any guide saved earlier this session shows up in
@@ -4048,6 +4201,151 @@ async function saveStudyGuide() {
     sg.saving = false;
     render();
   }
+}
+
+// ---------------------------------------------------------------------
+// FLASHCARD GAME HANDLERS
+// ---------------------------------------------------------------------
+let flashcardTimerId = null;
+
+function clearFlashcardTimer() {
+  if (flashcardTimerId) {
+    clearInterval(flashcardTimerId);
+    flashcardTimerId = null;
+  }
+}
+
+function startFlashcardTimer() {
+  clearFlashcardTimer();
+  state.flashcard.secondsLeft = 10;
+  flashcardTimerId = setInterval(() => {
+    const fc = state.flashcard;
+    fc.secondsLeft = Math.max(0, fc.secondsLeft - 1);
+    if (fc.secondsLeft <= 0) {
+      clearFlashcardTimer();
+      advanceFlashcard(false);
+      return;
+    }
+    // Lightweight DOM update — avoids a full re-render each second.
+    const timerEl = document.getElementById("flashcard-timer");
+    if (timerEl) {
+      timerEl.textContent = `${fc.secondsLeft}s`;
+      timerEl.classList.toggle("timer-danger", fc.secondsLeft < 3);
+    }
+  }, 1000);
+}
+
+function advanceFlashcard(correct) {
+  const fc = state.flashcard;
+  fc.correct.push(correct);
+  clearFlashcardTimer();
+  if (fc.currentIndex + 1 >= fc.cards.length) {
+    fc.step = "results";
+    render();
+    return;
+  }
+  fc.currentIndex++;
+  fc.flipped = false;
+  render();
+  startFlashcardTimer();
+}
+
+async function generateFlashcards() {
+  const subjectSelect = document.getElementById("flashcard-subject");
+  const topicInput = document.getElementById("flashcard-topic");
+  const topicTitle = topicInput ? topicInput.value.trim() : state.flashcard.topicTitle;
+
+  if (!topicTitle) {
+    showToast(t("enterTopicFirst"), "error");
+    return;
+  }
+
+  const fc = state.flashcard;
+  if (subjectSelect) fc.subjectId = subjectSelect.value;
+  fc.topicTitle = topicTitle;
+  fc.loading = true;
+  fc.error = null;
+  render();
+
+  try {
+    const res = await fetchWithTimeout(`${FN_URL}/generate-flashcards`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${state.session.access_token}`,
+      },
+      body: JSON.stringify({
+        subjectId: fc.subjectId ?? getAvailableSubjects()[0]?.id,
+        topicTitle: fc.topicTitle,
+        cardCount: fc.cardCount,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || t("errorFlashcardGeneration"));
+
+    fc.cards = data.cards;
+    fc.step = "game";
+    fc.currentIndex = 0;
+    fc.flipped = false;
+    fc.correct = [];
+    fc.secondsLeft = 10;
+    fc.loading = false;
+    render();
+    startFlashcardTimer();
+  } catch (err) {
+    console.error(err);
+    fc.loading = false;
+    fc.error = err.message || t("errorFlashcardGeneration");
+    render();
+  }
+}
+
+function flashcardFlip() {
+  state.flashcard.flipped = !state.flashcard.flipped;
+  // Toggle CSS class directly — no full re-render, timer keeps running.
+  const container = document.querySelector(".flashcard-flip-container");
+  if (container) container.classList.toggle("flipped", state.flashcard.flipped);
+}
+
+function flashcardGotIt() {
+  clearFlashcardTimer();
+  advanceFlashcard(true);
+}
+
+function flashcardSkip() {
+  clearFlashcardTimer();
+  advanceFlashcard(false);
+}
+
+function flashcardPlayAgain() {
+  const fc = state.flashcard;
+  fc.step = "game";
+  fc.currentIndex = 0;
+  fc.flipped = false;
+  fc.correct = [];
+  fc.secondsLeft = 10;
+  render();
+  startFlashcardTimer();
+}
+
+function flashcardRestart() {
+  clearFlashcardTimer();
+  const prev = state.flashcard;
+  state.flashcard = {
+    subjectId: prev.subjectId,
+    topicTitle: "",
+    cardCount: 10,
+    loading: false,
+    error: null,
+    cards: null,
+    step: "setup",
+    currentIndex: 0,
+    flipped: false,
+    correct: [],
+    secondsLeft: 10,
+  };
+  render();
 }
 
 // ---------------------------------------------------------------------
@@ -5707,6 +6005,31 @@ function attachGlobalListeners() {
         break;
       case "download-study-guide":
         downloadStudyGuidePdf();
+        break;
+      case "generate-flashcards":
+        generateFlashcards();
+        break;
+      case "flashcard-flip":
+        flashcardFlip();
+        break;
+      case "flashcard-got-it":
+        flashcardGotIt();
+        break;
+      case "flashcard-skip":
+        flashcardSkip();
+        break;
+      case "flashcard-play-again":
+        flashcardPlayAgain();
+        break;
+      case "flashcard-restart":
+        flashcardRestart();
+        break;
+      case "flashcard-count":
+        state.flashcard.cardCount = parseInt(target.dataset.count, 10);
+        render();
+        break;
+      case "flashcard-subject-change":
+        state.flashcard.subjectId = target.value;
         break;
       case "refresher-toggle-topic":
         refresherToggleTopic(target.dataset.topicId);

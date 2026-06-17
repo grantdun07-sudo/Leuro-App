@@ -978,6 +978,158 @@ h1, h2, h3, h4 {
 }
 
 /* ---------------------------------------------------------------------
+   Flashcard Game
+   --------------------------------------------------------------------- */
+
+.flashcard-count-group {
+  display: flex;
+  gap: var(--spacing-8);
+}
+.flashcard-count-btn {
+  flex: 1;
+  padding: 10px;
+  border: 1.5px solid var(--primary-light);
+  border-radius: var(--radius-button);
+  background: transparent;
+  font-family: var(--font-inter);
+  font-weight: 700;
+  font-size: var(--font-size-body);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.flashcard-count-btn.active {
+  background: var(--primary);
+  color: var(--white);
+  border-color: var(--primary);
+}
+
+.flashcard-game-card { user-select: none; }
+
+.flashcard-progress {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-16);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.flashcard-timer {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--primary);
+  font-family: 'Poppins', sans-serif;
+  min-width: 2.5em;
+  text-align: right;
+}
+.flashcard-timer.timer-danger { color: var(--danger); }
+
+.flashcard-flip-container {
+  perspective: 900px;
+  height: 210px;
+  margin-bottom: var(--spacing-20);
+  cursor: pointer;
+}
+.flashcard-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.42s ease;
+  transform-style: preserve-3d;
+}
+.flashcard-flip-container.flipped .flashcard-inner {
+  transform: rotateY(180deg);
+}
+.flashcard-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: var(--radius-card);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-20);
+  text-align: center;
+}
+.flashcard-front {
+  background: rgba(90, 62, 118, 0.07);
+  border: 1.5px solid var(--primary-light);
+}
+.flashcard-back {
+  background: rgba(230, 179, 71, 0.12);
+  border: 1.5px solid var(--accent);
+  transform: rotateY(180deg);
+}
+.flashcard-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: var(--spacing-8);
+}
+.flashcard-text {
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.flashcard-tap-hint {
+  margin-top: var(--spacing-12);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.flashcard-actions {
+  display: flex;
+  gap: var(--spacing-12);
+}
+.flashcard-action-btn { flex: 1; }
+
+.flashcard-score {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-12);
+  margin: var(--spacing-16) 0;
+}
+.flashcard-score-big {
+  font-size: 2.4rem;
+  font-weight: 800;
+  color: var(--primary);
+  font-family: 'Poppins', sans-serif;
+}
+.flashcard-score-pct {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.flashcard-missed-list { margin-bottom: var(--spacing-16); }
+.flashcard-missed-item {
+  padding: var(--spacing-8) 0;
+  border-bottom: 1px solid var(--border);
+}
+.flashcard-missed-item:last-child { border-bottom: none; }
+.flashcard-missed-item strong {
+  display: block;
+  font-size: var(--font-size-caption);
+  color: var(--primary);
+}
+.flashcard-missed-item p {
+  margin: 2px 0 0;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+.flashcard-result-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-8);
+  margin-top: var(--spacing-16);
+}
+
+/* ---------------------------------------------------------------------
    Exam Refresher
    --------------------------------------------------------------------- */
 
