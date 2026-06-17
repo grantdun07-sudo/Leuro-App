@@ -3948,7 +3948,12 @@ function renderExamsTab() {
 
   return `
     <div class="card">
-      <h3 class="mt-0 screen-title">${t("examsHeading")}</h3>
+      <h3 class="mt-0 screen-title">${
+        view === "studyguide" ? t("tabStudyGuide") :
+        view === "mockexam"   ? t("tabMockExam") :
+        view === "flashcard"  ? t("tabFlashcards") :
+                                t("tabExamRefresher")
+      }</h3>
       <span class="badge badge-gold">${t("yourDiagnosticLevel")}: ${state.learner.diagnostic_level}/5</span>
     </div>
 
