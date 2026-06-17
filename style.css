@@ -2350,6 +2350,51 @@ h1, h2, h3, h4 {
   margin-left: var(--spacing-8);
 }
 
+/* ---- Referral discount price block ---- */
+.tier-price-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--spacing-8);
+}
+
+.tier-price-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-8);
+}
+
+.tier-price-original {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--danger);
+}
+
+.tier-discount-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.tier-price-discounted {
+  color: var(--accent-dark) !important;
+  margin-bottom: 0 !important;
+}
+
+.tier-discount-expiry {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
 @media (min-width: 600px) {
   body { font-size: var(--font-size-body); }
   .container { padding: var(--spacing-24); }

@@ -5766,6 +5766,37 @@ function renderAccountTab() {
 // ---------------------------------------------------------------------
 // UPGRADE MODAL (learner) - PayFast subscription plans
 // ---------------------------------------------------------------------
+
+// Returns a formatted date string 3 months from today (the expiry of the
+// referral first-month discount).
+function referralDiscountExpiry() {
+  const d = new Date();
+  d.setMonth(d.getMonth() + 3);
+  return d.toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" });
+}
+
+// Renders the price block for a tier card, with referral discount markup
+// when the signed-in user has a referral_code_used on their profile.
+function renderTierPriceBlock(price) {
+  if (price === 0) return `<div class="tier-price">${t("free")}</div>`;
+  const hasReferral = !!(state.profile?.referral_code_used);
+  if (!hasReferral) {
+    return `<div class="tier-price">R${price}<span>${t("perMonth")}</span></div>`;
+  }
+  const discounted = (Math.round(price * 0.8 * 100) / 100).toFixed(2);
+  const expiry = referralDiscountExpiry();
+  return `
+    <div class="tier-price-block">
+      <div class="tier-price-row">
+        <span class="tier-price-original">R${price}</span>
+        <span class="tier-discount-badge">20% OFF</span>
+      </div>
+      <div class="tier-price tier-price-discounted">R${discounted}<span>${t("perMonth")}</span></div>
+      <div class="tier-discount-expiry">Discount expires ${expiry} · renews at R${price}/mo</div>
+    </div>
+  `;
+}
+
 function renderUpgradeModal() {
   const plans = [
     {
@@ -5801,7 +5832,7 @@ function renderUpgradeModal() {
               (plan) => `
             <div class="tier-card">
               <div class="tier-name">${plan.name}</div>
-              <div class="tier-price">R${plan.price}<span>${t("perMonth")}</span></div>
+              ${renderTierPriceBlock(plan.price)}
               <ul class="tier-features">${plan.features.map((f) => `<li>${f}</li>`).join("")}</ul>
               <button class="btn btn-gold btn-block" data-action="subscribe" data-tier="${plan.id}">${t("btnSubscribe")}</button>
             </div>`,
@@ -5922,10 +5953,7 @@ function renderTierCards(currentTier) {
         return `
         <div class="tier-card ${isCurrent ? "current" : ""}">
           <div class="tier-name">${tier.name}</div>
-          <div class="tier-price">
-            ${tier.price === 0 ? t("free") : `R${tier.price}`}
-            ${tier.price > 0 ? `<span>${t("perMonth")}</span>` : ""}
-          </div>
+          ${renderTierPriceBlock(tier.price)}
           <ul class="tier-features">${tier.features.map((f) => `<li>${f}</li>`).join("")}</ul>
           ${
             isCurrent
