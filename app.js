@@ -3175,7 +3175,7 @@ function renderAdminReferralCodesTab() {
         <div class="field" style="margin-bottom:0;">
           <label>School name</label>
           <div class="admin-referral-input-row">
-            <input type="text" name="schoolName" placeholder="e.g. SAHETI" maxlength="24" required style="text-transform:uppercase;" />
+            <input type="text" name="schoolName" placeholder="e.g. YOURSCHOOL" maxlength="24" required style="text-transform:uppercase;" />
             <button type="submit" class="btn btn-primary btn-sm">Generate &amp; Create</button>
           </div>
           <p class="field-hint">Code will be created as <strong>LEURO-SCHOOLNAME</strong></p>
