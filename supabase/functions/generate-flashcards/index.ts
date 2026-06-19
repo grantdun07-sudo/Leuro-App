@@ -1,118 +1,110 @@
-// Supabase Edge Function: generate-flashcards
-// POST { subjectId, topicTitle, cardCount }
-//   subjectId   - UUID of the subject record
-//   topicTitle  - free-text topic name (max 120 chars)
-//   cardCount   - number of cards to generate: 10 | 15 | 20
-//
-// Returns: { cards: Array<{ concept: string; definition: string }>, tokensUsed: number }
-//
-// Auth: caller must be a registered learner (JWT enforced via RLS).
-// No persistence — cards are ephemeral and never written to the database.
-
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
-import { callClaude, ClaudeTimeoutError } from "../_shared/anthropic.ts";
-import { langInstruction, JSON_KEYS_ENGLISH_NOTE } from "../_shared/prompts.ts";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
-const SYSTEM_PROMPT =
-  `You are a CAPS-aligned academic tutor for South African learners Grade 4-12. ` +
-  `Your task is to generate flashcard sets for self-study. ` +
-  `Each flashcard has a concise concept (term, rule, or question) on the front ` +
-  `and a clear, accurate definition or answer on the back. ` +
-  `Respond ONLY with the requested JSON — no extra text, no markdown. ` +
-  `If asked to respond in Afrikaans, write all question text, all four option texts, and the explanation in Afrikaans. ` +
-  `The JSON keys themselves (question, options, A, B, C, D, correct, explanation) stay in English.`;
+const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY")!;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-interface RequestBody {
-  subjectId: string;
-  topicTitle: string;
-  cardCount: number;
+const MODEL = "claude-haiku-4-5-20251001";
+
+function langInstruction(lang: string): string {
+  return lang === "af"
+    ? "Generate ALL content in Afrikaans (questions, options, and explanations)."
+    : "Generate all content in English.";
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+function systemPrompt(lang: string): string {
+  const base =
+    "You are a CAPS-aligned academic tutor for South African learners Grade 4-12. " +
+    "You generate multiple-choice flashcards for self-study. " +
+    "Respond ONLY with the requested JSON — no extra text, no markdown.";
+  const afRule =
+    lang === "af"
+      ? " The learner's language is Afrikaans. Write ALL question text, all four option texts, " +
+        "and every explanation in Afrikaans. The JSON keys themselves (question, options, A, B, C, D, " +
+        "correct, explanation) stay in English, but every human-readable value must be in Afrikaans."
+      : "";
+  return base + afRule;
+}
+
+async function callClaude(system: string, prompt: string, maxTokens: number): Promise<string> {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": anthropicKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await res.json();
+  return data.content[0].text;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed" }, 405);
-    }
+    const authHeader = req.headers.get("Authorization") || "";
+    const token = authHeader.replace("Bearer ", "");
 
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return jsonResponse({ error: "Missing authorization header" }, 401);
-    }
+    const { data: user } = await supabase.auth.getUser(token);
+    if (!user?.user) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
 
-    const body: RequestBody = await req.json();
-    if (!body.subjectId || !body.topicTitle) {
-      return jsonResponse({ error: "subjectId and topicTitle are required" }, 400);
-    }
-    const cardCount = Math.min(20, Math.max(5, Number(body.cardCount) || 10));
+    const { subjectId, topicTitle, cardCount } = await req.json();
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-    });
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("lang")
+      .eq("id", user.user.id)
+      .single();
 
-    const { data: userData, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !userData?.user) {
-      return jsonResponse({ error: "Invalid or expired session" }, 401);
-    }
-
-    const [{ data: learner, error: learnerErr }, { data: profile }] = await Promise.all([
-      supabase.from("learners").select("grade, diagnostic_level").eq("user_id", userData.user.id).single(),
-      supabase.from("profiles").select("lang").eq("id", userData.user.id).single(),
-    ]);
-
-    if (learnerErr || !learner) {
-      return jsonResponse({ error: "Learner profile not found" }, 404);
-    }
-
-    const lang = profile?.lang ?? "en";
+    const lang = profile?.lang || "en";
 
     const { data: subject } = await supabase
       .from("subjects")
-      .select("name")
-      .eq("id", body.subjectId)
+      .select("name, name_af")
+      .eq("id", subjectId)
       .single();
-    const subjectName = subject?.name ?? "General";
 
-    const userPrompt =
-      `Subject: ${subjectName} | Grade: ${learner.grade} | Topic: "${body.topicTitle.slice(0, 120)}"\n` +
-      `${langInstruction(lang)}\n${JSON_KEYS_ENGLISH_NOTE}\n\n` +
-      `Create exactly ${cardCount} multiple-choice flashcard questions for this CAPS topic.\n` +
-      `Rules:\n` +
-      `- Each card: a clear question, four answer options (A/B/C/D), the letter of the correct answer, and a brief explanation.\n` +
-      `- Questions ≤30 words. Each option ≤20 words. Explanation ≤40 words.\n` +
-      `- Cover key vocabulary, concepts, formulas, and facts. Vary difficulty.\n` +
-      `- All four options must be plausible — avoid obviously wrong distractors.\n` +
-      `- Correct answer must be distributed roughly evenly across A/B/C/D.\n` +
-      `- Grade-appropriate. Never reproduce copyrighted exam content.\n` +
-      `- Human-readable text values in ${lang === "af" ? "Afrikaans" : "English"}.\n\n` +
-      `Respond with ONLY a raw JSON object (no markdown, no code fences):\n` +
-      `{"cards": [{"question": string, "options": {"A": string, "B": string, "C": string, "D": string}, "correct": "A"|"B"|"C"|"D", "explanation": string}]}`;
+    const subjectName = lang === "af" ? subject?.name_af : subject?.name;
 
-    try {
-      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 2048);
-      const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
-      const parsed = JSON.parse(cleaned);
-      if (!Array.isArray(parsed.cards)) {
-        throw new Error("Invalid response shape from AI");
-      }
-      return jsonResponse({ cards: parsed.cards, tokensUsed: result.tokensUsed });
-    } catch (err) {
-      if (err instanceof ClaudeTimeoutError) {
-        console.error("Anthropic request timed out:", err);
-        return jsonResponse({ error: "AI generation timed out. Please try again." }, 500);
-      }
-      console.error("generate-flashcards AI error:", err);
-      return jsonResponse({ error: "Failed to generate flashcards" }, 500);
-    }
+    const prompt = `Generate exactly ${cardCount} multiple-choice flashcards for Grade 7-12 CAPS curriculum learning.
+Subject: ${subjectName}
+Topic: ${topicTitle}
+
+${langInstruction(lang)}
+
+Each card: a question, 4 options (one correct), the correct option letter, and a short explanation.
+
+Return ONLY a valid JSON array with no markdown fences:
+[{"question":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"correct":"A","explanation":"..."},...]
+
+Make distractors plausible. Vary the correct letter across cards.`;
+
+    const response = await callClaude(systemPrompt(lang), prompt, 2048);
+    const cleaned = response.replace(/```json|```/g, "").trim();
+    const cards = JSON.parse(cleaned);
+
+    return new Response(JSON.stringify({ cards }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (err) {
-    console.error("generate-flashcards error:", err);
-    return jsonResponse({ error: "Internal server error" }, 500);
+    console.error(err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
