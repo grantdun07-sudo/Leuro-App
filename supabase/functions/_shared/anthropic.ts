@@ -4,7 +4,7 @@
 
 export const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 export const MODEL = "claude-haiku-4-5-20251001";
-export const ANTHROPIC_TIMEOUT_MS = 15000;
+export const ANTHROPIC_TIMEOUT_MS = 60000;
 
 export interface ClaudeResult {
   text: string;
