@@ -1181,9 +1181,9 @@ async function flagContent(text, severity, context, learnerId) {
 
 const API_TIMEOUT_MS = 15000;
 
-async function fetchWithTimeout(url, options) {
+async function fetchWithTimeout(url, options, timeoutMs = API_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
@@ -3531,7 +3531,7 @@ async function loadDiagnosticQuestions() {
             .map((s) => s.name),
         }),
       }),
-    });
+    }, 60000);
     const data = await res.json();
     if (!res.ok) throw data;
 
@@ -3888,7 +3888,7 @@ async function callStudyGuideApi(payload) {
       apikey: SUPABASE_ANON_KEY,
     },
     body: JSON.stringify(payload),
-  });
+  }, 60000);
   const data = await res.json();
   if (!res.ok) throw data;
   return data;
@@ -4674,7 +4674,7 @@ async function generateFlashcards() {
         topicTitle: fc.topicTitle,
         cardCount: fc.cardCount,
       }),
-    });
+    }, 60000);
 
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || t("errorFlashcardGeneration"));
@@ -5243,7 +5243,7 @@ async function startMockExam() {
         term,
         topics,
       }),
-    });
+    }, 60000);
     const data = await res.json();
     if (!res.ok) throw data;
 
@@ -5327,7 +5327,7 @@ async function submitExam() {
         responses,
         lang: state.profile?.lang ?? "en",
       }),
-    });
+    }, 60000);
     const data = await res.json();
     if (!res.ok) throw data;
     e.results = data;
