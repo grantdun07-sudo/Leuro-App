@@ -22,7 +22,9 @@ const SYSTEM_PROMPT =
   `Your task is to generate flashcard sets for self-study. ` +
   `Each flashcard has a concise concept (term, rule, or question) on the front ` +
   `and a clear, accurate definition or answer on the back. ` +
-  `Respond ONLY with the requested JSON — no extra text, no markdown.`;
+  `Respond ONLY with the requested JSON — no extra text, no markdown. ` +
+  `If asked to respond in Afrikaans, write all question text, all four option texts, and the explanation in Afrikaans. ` +
+  `The JSON keys themselves (question, options, A, B, C, D, correct, explanation) stay in English.`;
 
 interface RequestBody {
   subjectId: string;
