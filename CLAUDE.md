@@ -12,3 +12,12 @@ Key facts about the deployed reality:
 - Learner language is stored in profiles.lang (matched on profiles.id = user.id),
   NOT learners.lang.
 - Each AI function inlines its own callClaude and Anthropic call.
+
+## API Timeout Rules (app.js)
+fetchWithTimeout accepts a per-call timeout, default 15000ms.
+- AI-generation calls use 60000ms (60s): run-diagnostic, generate-study-guide,
+  generate-flashcards, generate-mock-exam, grade-mock-exam.
+- Non-AI calls stay at the 15000ms default: save-content-flag, notify-parent,
+  acknowledge-flag.
+- AI generation legitimately takes >15s (especially Afrikaans, which has heavier
+  language rules and longer output), so never drop AI calls below 60s.
