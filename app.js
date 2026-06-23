@@ -6075,7 +6075,8 @@ function renderAccountTab() {
       </div>
     </div>
 
-    <!-- 2. Subscription -->
+    <!-- 2. Subscription (learner only — parents use per-child billing) -->
+    ${isLearner ? `
     <div class="card">
       <div class="account-section-row">
         <span class="account-section-label">${t("subscriptionLabel")}</span>
@@ -6087,6 +6088,7 @@ function renderAccountTab() {
           : ""
       }
     </div>
+    ` : ""}
 
     <!-- 3. Language -->
     <div class="card">
@@ -6239,7 +6241,9 @@ async function handleApplyPromoCode(form) {
 function renderPromoCodeCard() {
   const promo = state.promoCode;
   const profile = state.profile;
-  if (promo && promo.active && isDiscountActive()) {
+  const active = promo && promo.active && isDiscountActive();
+
+  const activeBlock = active ? (() => {
     const started = profile?.discount_started_at ? new Date(profile.discount_started_at) : null;
     const months = promo.discount_months ?? 3;
     const expiry = started ? new Date(started) : null;
@@ -6248,24 +6252,20 @@ function renderPromoCodeCard() {
       ? expiry.toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" })
       : "";
     return `
-      <div class="card">
-        <h3 class="mt-0">${t("promoCodeHeading")}</h3>
-        <div class="referral-code-box">
-          <span class="code">${escapeHtml(profile.referral_code_used || "")}</span>
-          <span class="tier-badge tier-badge-basic">${t("activePromoLabel")}</span>
-        </div>
-        <p class="muted">${promo.discount_percent ?? 20}% ${t("offLabel")} · ${t("expired").replace ? "" : ""}expires ${expiryStr}</p>
+      <div class="referral-code-box" style="margin-bottom:8px;">
+        <span class="code">${escapeHtml(profile.referral_code_used || "")}</span>
+        <span class="tier-badge tier-badge-basic">${t("activePromoLabel")}</span>
       </div>
+      <p class="muted" style="margin-bottom:12px;">${promo.discount_percent ?? 20}% ${t("offLabel")} · expires ${expiryStr}</p>
     `;
-  }
-  // Show expired notice + re-entry form if code exists but discount inactive.
-  const expiredNotice = profile?.referral_code_used && !isDiscountActive()
-    ? `<p class="muted" style="margin-bottom:8px;">${t("expired")}: <strong>${escapeHtml(profile.referral_code_used)}</strong></p>`
-    : "";
+  })() : profile?.referral_code_used ? `
+    <p class="muted" style="margin-bottom:8px;">${t("expired")}: <strong>${escapeHtml(profile.referral_code_used)}</strong></p>
+  ` : "";
+
   return `
     <div class="card">
       <h3 class="mt-0">${t("promoCodeHeading")}</h3>
-      ${expiredNotice}
+      ${activeBlock}
       <form data-action="apply-promo-form">
         <div class="admin-referral-input-row">
           <input type="text" name="promoCode" placeholder="${t("enterPromoCodeLabel")}" style="text-transform:uppercase;" />
