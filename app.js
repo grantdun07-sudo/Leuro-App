@@ -52,8 +52,14 @@ const translations = {
     labelGrade: "Grade",
     labelReferral: "School referral code (optional)",
     placeholderReferral: "e.g. LEURO-YOURSCHOOL",
-    invalidReferralCode: "Invalid referral code. Please check and try again.",
-    referralApplied: "Referral code applied — 20% discount on your first payment!",
+    invalidReferralCode: "Invalid or inactive promo code. Please check and try again.",
+    referralApplied: "Promo code applied — your discount is now active!",
+    promoCodeHeading: "Promo Code",
+    activePromoLabel: "Active code",
+    offLabel: "off",
+    expired: "Expired",
+    enterPromoCodeLabel: "Enter a promo code",
+    btnApply: "Apply",
     keepMeSignedIn: "Keep me signed in",
     showPassword: "Show password",
     hidePassword: "Hide password",
@@ -417,8 +423,14 @@ const translations = {
     labelGrade: "Graad",
     labelReferral: "Skool-verwysingskode (opsioneel)",
     placeholderReferral: "bv. LEURO-JOUGSKOOL",
-    invalidReferralCode: "Ongeldige verwysingskode. Kontroleer asseblief en probeer weer.",
-    referralApplied: "Verwysingskode toegepas — 20% afslag op jou eerste betaling!",
+    invalidReferralCode: "Ongeldige of onaktiewe promosie-kode. Kontroleer asseblief en probeer weer.",
+    referralApplied: "Promosie-kode toegepas — jou afslag is nou aktief!",
+    promoCodeHeading: "Promosie-kode",
+    activePromoLabel: "Aktiewe kode",
+    offLabel: "afslag",
+    expired: "Verval",
+    enterPromoCodeLabel: "Voer 'n promosie-kode in",
+    btnApply: "Pas toe",
     keepMeSignedIn: "Bly aangemeld",
     showPassword: "Wys wagwoord",
     hidePassword: "Versteek wagwoord",
@@ -803,6 +815,7 @@ const state = {
   upgradeModalOpen: false,
   childUpgradeModalOpen: false,
   upgradeTargetLearnerId: null,
+  promoCode: null,
   tcModalOpen: false,
   privacyModalOpen: false,
   expandedSessionIds: {},
@@ -1304,6 +1317,7 @@ async function init() {
     if (!session) {
       state.user = null;
       state.profile = null;
+      state.promoCode = null;
       state.learner = null;
       state.parent = null;
       render();
@@ -1323,6 +1337,7 @@ async function init() {
       state.session = null;
       state.user = null;
       state.profile = null;
+      state.promoCode = null;
       state.learner = null;
       state.parent = null;
     }
@@ -1537,6 +1552,18 @@ async function loadUserData() {
   if (profileErr) throw profileErr;
   state.profile = profile;
   state.lang = profile.lang || "en";
+
+  // Load the promo code details so isDiscountActive() and price rendering have
+  // access to discount_percent, discount_months and active without extra queries.
+  state.promoCode = null;
+  if (profile.referral_code_used) {
+    const { data: codeData } = await sbClient
+      .from("referral_codes")
+      .select("code, discount_percent, discount_months, active")
+      .eq("code", profile.referral_code_used)
+      .maybeSingle();
+    state.promoCode = codeData || null;
+  }
   document.documentElement.lang = state.lang;
 
   if (profile.role === "learner") {
@@ -2383,6 +2410,7 @@ async function handleSignup(form) {
         .from("referral_codes")
         .select("code")
         .eq("code", referredByCode)
+        .eq("active", true)
         .maybeSingle();
       if (!codeRow) {
         showToast(t("invalidReferralCode"), "error");
@@ -2559,6 +2587,7 @@ async function handleLogout() {
   state.session = null;
   state.user = null;
   state.profile = null;
+  state.promoCode = null;
   state.learner = null;
   state.parent = null;
   state.topics = [];
@@ -3136,7 +3165,7 @@ async function loadAdminReferralCodes() {
   }
 }
 
-async function createAdminReferralCode(schoolName) {
+async function createAdminReferralCode(schoolName, discountPercent, discountMonths) {
   const code = `LEURO-${schoolName.toUpperCase().replace(/[^A-Z0-9]/g, "")}`;
   if (code.length < 7) {
     showToast("Please enter a valid school name.", "error");
@@ -3146,6 +3175,8 @@ async function createAdminReferralCode(schoolName) {
     const { data, error } = await sbClient.rpc("admin_create_referral_code", {
       p_code: code,
       p_description: schoolName,
+      p_discount_percent: discountPercent,
+      p_discount_months: discountMonths,
     });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
@@ -3154,6 +3185,18 @@ async function createAdminReferralCode(schoolName) {
     render();
   } catch (err) {
     console.error("createAdminReferralCode:", err);
+    showToast(err.message || t("errorGeneric"), "error");
+  }
+}
+
+async function adminToggleReferralCode(codeId) {
+  try {
+    const { error } = await sbClient.rpc("admin_toggle_referral_code_active", { p_id: codeId });
+    if (error) throw error;
+    state.admin.referralCodes = null; // trigger reload
+    render();
+  } catch (err) {
+    console.error("adminToggleReferralCode:", err);
     showToast(err.message || t("errorGeneric"), "error");
   }
 }
@@ -3169,8 +3212,15 @@ function renderAdminReferralCodesTab() {
     <tr>
       <td class="referral-code-cell">${escapeHtml(r.code)}</td>
       <td>${escapeHtml(r.description || "—")}</td>
+      <td style="text-align:center;">${r.discount_percent ?? 20}%</td>
+      <td style="text-align:center;">${r.discount_months ?? 3} mo</td>
       <td style="text-align:center;">${r.used_count}</td>
       <td class="muted">${formatDate(r.created_at)}</td>
+      <td style="text-align:center;">
+        <button class="btn btn-sm ${r.active ? "btn-outline" : "btn-primary"}" data-action="admin-toggle-referral-code" data-code-id="${r.id}">
+          ${r.active ? "Deactivate" : "Activate"}
+        </button>
+      </td>
     </tr>
   `
   ).join("");
@@ -3180,13 +3230,25 @@ function renderAdminReferralCodesTab() {
     <div class="card admin-referral-create-card">
       <h4 style="margin:0 0 10px;">Generate New Code</h4>
       <form data-action="admin-create-referral-code" class="admin-referral-form">
-        <div class="field" style="margin-bottom:0;">
+        <div class="field">
           <label>School name</label>
           <div class="admin-referral-input-row">
             <input type="text" name="schoolName" placeholder="e.g. YOURSCHOOL" maxlength="24" required style="text-transform:uppercase;" />
-            <button type="submit" class="btn btn-primary btn-sm">Generate &amp; Create</button>
           </div>
           <p class="field-hint">Code will be created as <strong>LEURO-SCHOOLNAME</strong></p>
+        </div>
+        <div style="display:flex;gap:12px;">
+          <div class="field" style="flex:1;margin-bottom:0;">
+            <label>Discount %</label>
+            <input type="number" name="discountPercent" min="1" max="100" value="20" required />
+          </div>
+          <div class="field" style="flex:1;margin-bottom:0;">
+            <label>Duration (months)</label>
+            <input type="number" name="discountMonths" min="1" max="24" value="3" required />
+          </div>
+          <div class="field" style="flex:0;margin-bottom:0;align-self:flex-end;">
+            <button type="submit" class="btn btn-primary btn-sm">Generate &amp; Create</button>
+          </div>
         </div>
       </form>
     </div>
@@ -3194,7 +3256,7 @@ function renderAdminReferralCodesTab() {
       ? `<div class="empty-state"><div class="empty-icon">🏫</div><p>No referral codes yet.</p></div>`
       : `<div class="card" style="padding:0;overflow:auto;">
            <table class="admin-referral-table">
-             <thead><tr><th>Code</th><th>School</th><th>Used</th><th>Created</th></tr></thead>
+             <thead><tr><th>Code</th><th>School</th><th>Discount</th><th>Duration</th><th>Used</th><th>Created</th><th>Active</th></tr></thead>
              <tbody>${rows}</tbody>
            </table>
          </div>`
@@ -6064,32 +6126,31 @@ function renderAccountTab() {
 // UPGRADE MODAL (learner) - PayFast subscription plans
 // ---------------------------------------------------------------------
 
-// Returns a formatted date string 3 months from today (the expiry of the
-// referral first-month discount).
-function referralDiscountExpiry() {
-  const d = new Date();
-  d.setMonth(d.getMonth() + 3);
-  return d.toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" });
-}
-
 // Renders the price block for a tier card, with referral discount markup
-// when the signed-in user has a referral_code_used on their profile.
+// when the signed-in user has an active promo code.
 function renderTierPriceBlock(price) {
   if (price === 0) return `<div class="tier-price">${t("free")}</div>`;
-  const hasReferral = !!(state.profile?.referral_code_used);
-  if (!hasReferral) {
+  if (!isDiscountActive()) {
     return `<div class="tier-price">R${price}<span>${t("perMonth")}</span></div>`;
   }
-  const discounted = (Math.round(price * 0.8 * 100) / 100).toFixed(2);
-  const expiry = referralDiscountExpiry();
+  const pct = state.promoCode?.discount_percent ?? 20;
+  const discounted = (Math.round(price * (1 - pct / 100) * 100) / 100).toFixed(2);
+  const expiryStr = (() => {
+    const started = state.profile?.discount_started_at ? new Date(state.profile.discount_started_at) : null;
+    if (!started) return "";
+    const months = state.promoCode?.discount_months ?? 3;
+    const exp = new Date(started);
+    exp.setMonth(exp.getMonth() + months);
+    return exp.toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" });
+  })();
   return `
     <div class="tier-price-block">
       <div class="tier-price-row">
         <span class="tier-price-original">R${price}</span>
-        <span class="tier-discount-badge">20% OFF</span>
+        <span class="tier-discount-badge">${pct}% OFF</span>
       </div>
       <div class="tier-price tier-price-discounted">R${discounted}<span>${t("perMonth")}</span></div>
-      <div class="tier-discount-expiry">Discount expires ${expiry} · renews at R${price}/mo</div>
+      <div class="tier-discount-expiry">Discount expires ${expiryStr} · renews at R${price}/mo</div>
     </div>
   `;
 }
@@ -6141,6 +6202,80 @@ function renderUpgradeModal() {
   `;
 }
 
+async function handleApplyPromoCode(form) {
+  const code = (form.promoCode?.value ?? "").trim().toUpperCase();
+  if (!code) return;
+  try {
+    const { data, error } = await sbClient.rpc("apply_referral_code", { p_code: code });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    // Reload profile + promoCode so state reflects the applied code immediately.
+    const { data: profile } = await sbClient
+      .from("profiles")
+      .select("*")
+      .eq("id", state.user.id)
+      .single();
+    if (profile) {
+      state.profile = profile;
+      state.lang = profile.lang || "en";
+      state.promoCode = null;
+      if (profile.referral_code_used) {
+        const { data: codeData } = await sbClient
+          .from("referral_codes")
+          .select("code, discount_percent, discount_months, active")
+          .eq("code", profile.referral_code_used)
+          .maybeSingle();
+        state.promoCode = codeData || null;
+      }
+    }
+    showToast(t("referralApplied"), "success");
+    render();
+  } catch (err) {
+    console.error("handleApplyPromoCode:", err);
+    showToast(t("invalidReferralCode"), "error");
+  }
+}
+
+function renderPromoCodeCard() {
+  const promo = state.promoCode;
+  const profile = state.profile;
+  if (promo && promo.active && isDiscountActive()) {
+    const started = profile?.discount_started_at ? new Date(profile.discount_started_at) : null;
+    const months = promo.discount_months ?? 3;
+    const expiry = started ? new Date(started) : null;
+    if (expiry) expiry.setMonth(expiry.getMonth() + months);
+    const expiryStr = expiry
+      ? expiry.toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" })
+      : "";
+    return `
+      <div class="card">
+        <h3 class="mt-0">${t("promoCodeHeading")}</h3>
+        <div class="referral-code-box">
+          <span class="code">${escapeHtml(profile.referral_code_used || "")}</span>
+          <span class="tier-badge tier-badge-basic">${t("activePromoLabel")}</span>
+        </div>
+        <p class="muted">${promo.discount_percent ?? 20}% ${t("offLabel")} · ${t("expired").replace ? "" : ""}expires ${expiryStr}</p>
+      </div>
+    `;
+  }
+  // Show expired notice + re-entry form if code exists but discount inactive.
+  const expiredNotice = profile?.referral_code_used && !isDiscountActive()
+    ? `<p class="muted" style="margin-bottom:8px;">${t("expired")}: <strong>${escapeHtml(profile.referral_code_used)}</strong></p>`
+    : "";
+  return `
+    <div class="card">
+      <h3 class="mt-0">${t("promoCodeHeading")}</h3>
+      ${expiredNotice}
+      <form data-action="apply-promo-form">
+        <div class="admin-referral-input-row">
+          <input type="text" name="promoCode" placeholder="${t("enterPromoCodeLabel")}" style="text-transform:uppercase;" />
+          <button type="submit" class="btn btn-primary btn-sm">${t("btnApply")}</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
 function renderParentAccountExtras() {
   return `
     <div class="section-title">${t("linkedChildrenHeading")}</div>
@@ -6150,6 +6285,8 @@ function renderParentAccountExtras() {
         : state.linkedLearners.map((l) => renderLinkedChildCard(l)).join("")
     }
     <button class="btn btn-gold btn-block" style="margin-top:var(--spacing-8);" data-action="open-add-child-modal">${t("btnAddChild")}</button>
+
+    ${renderPromoCodeCard()}
 
     <div class="section-title">${t("notificationPrefsHeading")}</div>
     <div class="card">
@@ -6334,15 +6471,16 @@ const PAYSTACK_KOBO = {
   premium: { full: 19900, discounted: 15920 },
 };
 
-// Returns true when the parent has a referral code AND is still within the
-// 3-month discount window counted from their account creation date.
+// Returns true when the parent has an active promo code AND is still within
+// the discount window anchored on discount_started_at (set when code applied).
 function isDiscountActive() {
   const profile = state.profile;
-  if (!profile?.referral_code_used) return false;
-  const created = profile.created_at ? new Date(profile.created_at) : null;
-  if (!created) return false;
-  const expiry = new Date(created);
-  expiry.setMonth(expiry.getMonth() + 3);
+  if (!profile?.referral_code_used || !profile?.discount_started_at) return false;
+  const promo = state.promoCode;
+  if (!promo?.active) return false;
+  const started = new Date(profile.discount_started_at);
+  const expiry = new Date(started);
+  expiry.setMonth(expiry.getMonth() + (promo.discount_months ?? 3));
   return new Date() < expiry;
 }
 
@@ -6356,12 +6494,14 @@ function renderChildUpgradeModal() {
   const discountActive = isDiscountActive();
   const childName = escapeHtml(learner.full_name);
   const currentTier = learner.subscription_tier || "free";
+  const pct = state.promoCode?.discount_percent ?? 20;
 
   const expiryStr = (() => {
-    const created = state.profile?.created_at ? new Date(state.profile.created_at) : null;
-    if (!created) return "";
-    const exp = new Date(created);
-    exp.setMonth(exp.getMonth() + 3);
+    const started = state.profile?.discount_started_at ? new Date(state.profile.discount_started_at) : null;
+    if (!started) return "";
+    const months = state.promoCode?.discount_months ?? 3;
+    const exp = new Date(started);
+    exp.setMonth(exp.getMonth() + months);
     return exp.toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" });
   })();
 
@@ -6380,12 +6520,12 @@ function renderChildUpgradeModal() {
         <div class="modal-body">
           <p class="muted">${t("upgradeChildIntro").replace("{name}", childName)}</p>
           ${plans.map((plan) => {
-            const discPrice = (Math.round(plan.price * 0.8 * 100) / 100).toFixed(2);
+            const discPrice = (Math.round(plan.price * (1 - pct / 100) * 100) / 100).toFixed(2);
             const priceBlock = discountActive
               ? `<div class="tier-price-block">
                    <div class="tier-price-row">
                      <span class="tier-price-original">R${plan.price}</span>
-                     <span class="tier-discount-badge">20% OFF</span>
+                     <span class="tier-discount-badge">${pct}% ${t("offLabel")}</span>
                    </div>
                    <div class="tier-price tier-price-discounted">R${discPrice}<span>${t("perMonth")}</span></div>
                    <div class="tier-discount-expiry">Discount expires ${expiryStr} · renews at R${plan.price}/mo</div>
@@ -6413,10 +6553,9 @@ function handleUpgrade(tier) {
     return;
   }
 
-  const hasReferral = !!(state.profile?.referral_code_used);
-  const amountKobo = hasReferral
-    ? PAYSTACK_KOBO[tier].discounted
-    : PAYSTACK_KOBO[tier].full;
+  const fullKobo = PAYSTACK_KOBO[tier].full;
+  const pct = isDiscountActive() ? (state.promoCode?.discount_percent ?? 20) : 0;
+  const amountKobo = pct > 0 ? Math.round(fullKobo * (1 - pct / 100)) : fullKobo;
   const reference = `LEURO-${state.user.id}-${Date.now()}`;
 
   const handler = window.PaystackPop.setup({
@@ -6455,10 +6594,9 @@ function handleChildUpgrade(learnerId, tier) {
     return;
   }
 
-  const discountActive = isDiscountActive();
-  const amountKobo = discountActive
-    ? PAYSTACK_KOBO[tier].discounted
-    : PAYSTACK_KOBO[tier].full;
+  const fullKobo = PAYSTACK_KOBO[tier].full;
+  const pct = isDiscountActive() ? (state.promoCode?.discount_percent ?? 20) : 0;
+  const amountKobo = pct > 0 ? Math.round(fullKobo * (1 - pct / 100)) : fullKobo;
   const reference = `LEURO-${learnerId}-${Date.now()}`;
 
   const handler = window.PaystackPop.setup({
@@ -6551,6 +6689,9 @@ function attachGlobalListeners() {
       case "child-subscribe":
         state.childUpgradeModalOpen = false;
         handleChildUpgrade(target.dataset.learnerId, target.dataset.tier);
+        break;
+      case "admin-toggle-referral-code":
+        adminToggleReferralCode(target.dataset.codeId);
         break;
       case "open-tc-modal":
         state.tcModalOpen = true;
@@ -6816,9 +6957,14 @@ function attachGlobalListeners() {
         break;
       case "admin-create-referral-code": {
         const schoolName = form.schoolName.value.trim();
-        if (schoolName) createAdminReferralCode(schoolName);
+        const discountPercent = parseInt(form.discountPercent?.value ?? "20", 10);
+        const discountMonths = parseInt(form.discountMonths?.value ?? "3", 10);
+        if (schoolName) createAdminReferralCode(schoolName, discountPercent, discountMonths);
         break;
       }
+      case "apply-promo-form":
+        handleApplyPromoCode(form);
+        break;
       default:
         break;
     }

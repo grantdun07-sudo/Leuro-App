@@ -16,9 +16,10 @@
 //   3. Parse reference LEURO-{learner_id}-{timestamp} → learner_id (UUID).
 //   4. Determine tier from amount in kobo: ≤9900 = basic | >9900 = premium.
 //   5. UPDATE learners.subscription_tier for that learner_id.
-//   6. If amount < full price → INSERT subscription_discounts (tied to parent user_id).
-//   7. INSERT subscription_history (learner_id traces which child was billed).
-//   8. Always return 200 OK (Paystack retries on non-2xx).
+//   6. Validate discount via referral_codes (active, discount_months, discount_started_at).
+//   7. If valid discounted amount → INSERT subscription_discounts (tied to parent user_id).
+//   8. INSERT subscription_history (learner_id traces which child was billed).
+//   9. Always return 200 OK (Paystack retries on non-2xx).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -128,12 +129,10 @@ Deno.serve(async (req: Request) => {
     const tierFrom = learner.subscription_tier ?? null;
     const parentUserId: string = learner.user_id;
 
-    // Load the parent's profile for referral discount validation.
-    // created_at is the Supabase-managed registration timestamp (set by the
-    // handle_new_user trigger, always populated).
+    // Load the parent's profile for promo code and discount_started_at.
     const { data: profile } = await supabase
       .from("profiles")
-      .select("referral_code_used, created_at")
+      .select("referral_code_used, discount_started_at")
       .eq("id", parentUserId)
       .single();
 
@@ -150,19 +149,43 @@ Deno.serve(async (req: Request) => {
 
     // 2) Record discount only when:
     //    a) the charged amount is below the full tier price, AND
-    //    b) the parent independently has a referral code, AND
-    //    c) the parent is still within the 3-month discount window.
-    // This prevents a stale or forged discount from being recorded even if
-    // the client somehow sent the wrong kobo amount to Paystack.
+    //    b) the parent has a referral code AND that code is still active, AND
+    //    c) the parent is still within the code's discount window
+    //       (discount_started_at + discount_months, NOT created_at + 3 months).
     const discountKobo = fullPriceKobo - amountKobo;
     if (discountKobo > 0) {
-      const createdAt = profile?.created_at ? new Date(profile.created_at) : null;
-      const discountExpiry = createdAt ? new Date(createdAt) : null;
-      if (discountExpiry) discountExpiry.setMonth(discountExpiry.getMonth() + 3);
-      const discountValid =
-        !!profile?.referral_code_used &&
-        discountExpiry !== null &&
-        new Date() < discountExpiry;
+      let discountValid = false;
+
+      if (profile?.referral_code_used && profile?.discount_started_at) {
+        // Look up the promo code to get active flag and duration.
+        const { data: promoCode } = await supabase
+          .from("referral_codes")
+          .select("active, discount_percent, discount_months")
+          .eq("code", profile.referral_code_used)
+          .maybeSingle();
+
+        if (promoCode?.active) {
+          const started = new Date(profile.discount_started_at);
+          const expiry = new Date(started);
+          expiry.setMonth(expiry.getMonth() + (promoCode.discount_months ?? 3));
+          discountValid = new Date() < expiry;
+
+          if (!discountValid) {
+            console.warn(
+              `paystack-webhook: discount window expired for parent ${parentUserId}` +
+              ` (started=${profile.discount_started_at}, months=${promoCode.discount_months ?? 3})`,
+            );
+          }
+        } else {
+          console.warn(
+            `paystack-webhook: promo code ${profile.referral_code_used} inactive for parent ${parentUserId}`,
+          );
+        }
+      } else {
+        console.warn(
+          `paystack-webhook: discounted amount received but no valid code/start date for parent ${parentUserId}`,
+        );
+      }
 
       if (discountValid) {
         const discountRand = discountKobo / 100;
@@ -170,7 +193,7 @@ Deno.serve(async (req: Request) => {
           .from("subscription_discounts")
           .insert({
             user_id: parentUserId,
-            code: profile.referral_code_used!,
+            code: profile!.referral_code_used!,
             discount_amount: discountRand,
           });
         if (discountErr) {
@@ -178,11 +201,6 @@ Deno.serve(async (req: Request) => {
         } else {
           console.log(`paystack-webhook: recorded discount R${discountRand} for parent ${parentUserId}`);
         }
-      } else {
-        console.warn(
-          `paystack-webhook: discounted amount received but discount not valid for parent ${parentUserId}` +
-          ` (code=${profile?.referral_code_used ?? "none"}, expiry=${discountExpiry?.toISOString() ?? "n/a"})`,
-        );
       }
     }
 
