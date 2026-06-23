@@ -1,29 +1,23 @@
 // Supabase Edge Function: paystack-webhook
 //
 // Receives Paystack charge.success webhooks (JSON, HMAC-SHA512 signed)
-// and activates the learner's subscription plan.
+// and activates per-child subscription plans.
 //
 // DEPLOY WITHOUT JWT VERIFICATION:
 //   supabase functions deploy paystack-webhook --no-verify-jwt
 //
-// SET SECRETS BEFORE DEPLOYING:
-//   supabase secrets set PAYSTACK_TEST_SECRET=sk_test_a51aa1055986a6f82f5079095c4353d6c9e9f30d
-//   supabase secrets set PAYSTACK_TEST_PUBLIC=pk_test_243ec9c224153ee5679f251dba0f8459772525a1
-//
-// PAYSTACK DASHBOARD (manual):
-//   Settings → API Keys & Webhooks → Webhook URL:
-//   https://xekmcqzsqifcqpmjycct.supabase.co/functions/v1/paystack-webhook
-//   Events: charge.success
+// Reference format: LEURO-{learner_id}-{timestamp}
+//   learner_id is the UUID from the learners table (NOT the parent user_id).
+//   The webhook updates learners.subscription_tier for that specific child.
 //
 // Flow:
 //   1. Verify HMAC-SHA512 x-paystack-signature header.
 //   2. Check event.data.status === "success".
-//   3. Parse reference LEURO-{user_id}-{timestamp} → user_id.
-//   4. Determine tier from amount in kobo:
-//        ≤9900 = basic | >9900 = premium
-//   5. UPDATE profiles.subscription_tier.
-//   6. If amount < full price (9900/19900 kobo) → INSERT subscription_discounts.
-//   7. INSERT subscription_history.
+//   3. Parse reference LEURO-{learner_id}-{timestamp} → learner_id (UUID).
+//   4. Determine tier from amount in kobo: ≤9900 = basic | >9900 = premium.
+//   5. UPDATE learners.subscription_tier for that learner_id.
+//   6. If amount < full price → INSERT subscription_discounts (tied to parent user_id).
+//   7. INSERT subscription_history (learner_id traces which child was billed).
 //   8. Always return 200 OK (Paystack retries on non-2xx).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -33,16 +27,17 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-// Full prices in kobo (smallest ZAR unit, 1 kobo = R0.01)
+// Full prices in kobo (1 kobo = R0.01)
 const FULL_PRICE_KOBO = { basic: 9900, premium: 19900 } as const;
 
 function tierFromKobo(amountKobo: number): "basic" | "premium" {
   return amountKobo <= 9900 ? "basic" : "premium";
 }
 
-// Extract UUID user_id from LEURO-{uuid}-{timestamp} by stripping the prefix
-// and dropping the trailing "-{timestamp}" segment (split on last dash).
-function extractUserId(reference: string): string | null {
+// Extract learner_id UUID from LEURO-{uuid}-{timestamp}.
+// UUIDs contain dashes internally, but the timestamp has none, so the last
+// dash in the stripped string is always the uuid/timestamp separator.
+function extractLearnerId(reference: string): string | null {
   if (!reference) return null;
   const withoutPrefix = reference.replace(/^LEURO-/, "");
   const lastDash = withoutPrefix.lastIndexOf("-");
@@ -109,8 +104,8 @@ Deno.serve(async (req: Request) => {
     const amountKobo: number = Number(data.amount ?? 0);
     const amountRand: number = amountKobo / 100;
 
-    const userId = extractUserId(reference);
-    if (!userId) {
+    const learnerId = extractLearnerId(reference);
+    if (!learnerId) {
       console.error("paystack-webhook: unrecognised reference:", reference);
       return new Response("OK", { status: 200 });
     }
@@ -118,48 +113,85 @@ Deno.serve(async (req: Request) => {
     const tier = tierFromKobo(amountKobo);
     const fullPriceKobo = FULL_PRICE_KOBO[tier];
 
-    // Read current profile (tier_from for history, referral_code_used for discounts).
+    // Load the learner to get current tier and the parent's user_id.
+    const { data: learner } = await supabase
+      .from("learners")
+      .select("id, user_id, subscription_tier")
+      .eq("id", learnerId)
+      .single();
+
+    if (!learner) {
+      console.error("paystack-webhook: learner not found:", learnerId);
+      return new Response("OK", { status: 200 });
+    }
+
+    const tierFrom = learner.subscription_tier ?? null;
+    const parentUserId: string = learner.user_id;
+
+    // Load the parent's profile for referral discount validation.
+    // created_at is the Supabase-managed registration timestamp (set by the
+    // handle_new_user trigger, always populated).
     const { data: profile } = await supabase
       .from("profiles")
-      .select("subscription_tier, referral_code_used")
-      .eq("id", userId)
+      .select("referral_code_used, created_at")
+      .eq("id", parentUserId)
       .single();
-    const tierFrom = profile?.subscription_tier ?? null;
 
-    // 1) Activate the new tier.
+    // 1) Activate the new tier on the child's learner record.
     const { error: updateErr } = await supabase
-      .from("profiles")
+      .from("learners")
       .update({ subscription_tier: tier })
-      .eq("id", userId);
+      .eq("id", learnerId);
     if (updateErr) {
       console.error("paystack-webhook: tier update failed:", JSON.stringify(updateErr));
       return new Response("OK", { status: 200 });
     }
-    console.log(`paystack-webhook: set ${userId} → ${tier}`);
+    console.log(`paystack-webhook: set learner ${learnerId} → ${tier}`);
 
-    // 2) Record discount when amount is below the full tier price.
+    // 2) Record discount only when:
+    //    a) the charged amount is below the full tier price, AND
+    //    b) the parent independently has a referral code, AND
+    //    c) the parent is still within the 3-month discount window.
+    // This prevents a stale or forged discount from being recorded even if
+    // the client somehow sent the wrong kobo amount to Paystack.
     const discountKobo = fullPriceKobo - amountKobo;
     if (discountKobo > 0) {
-      const discountRand = discountKobo / 100;
-      const { error: discountErr } = await supabase
-        .from("subscription_discounts")
-        .insert({
-          user_id: userId,
-          code: profile?.referral_code_used ?? "REFERRAL",
-          discount_amount: discountRand,
-        });
-      if (discountErr) {
-        console.error("paystack-webhook: discount insert failed:", JSON.stringify(discountErr));
+      const createdAt = profile?.created_at ? new Date(profile.created_at) : null;
+      const discountExpiry = createdAt ? new Date(createdAt) : null;
+      if (discountExpiry) discountExpiry.setMonth(discountExpiry.getMonth() + 3);
+      const discountValid =
+        !!profile?.referral_code_used &&
+        discountExpiry !== null &&
+        new Date() < discountExpiry;
+
+      if (discountValid) {
+        const discountRand = discountKobo / 100;
+        const { error: discountErr } = await supabase
+          .from("subscription_discounts")
+          .insert({
+            user_id: parentUserId,
+            code: profile.referral_code_used!,
+            discount_amount: discountRand,
+          });
+        if (discountErr) {
+          console.error("paystack-webhook: discount insert failed:", JSON.stringify(discountErr));
+        } else {
+          console.log(`paystack-webhook: recorded discount R${discountRand} for parent ${parentUserId}`);
+        }
       } else {
-        console.log(`paystack-webhook: recorded discount R${discountRand} for ${userId}`);
+        console.warn(
+          `paystack-webhook: discounted amount received but discount not valid for parent ${parentUserId}` +
+          ` (code=${profile?.referral_code_used ?? "none"}, expiry=${discountExpiry?.toISOString() ?? "n/a"})`,
+        );
       }
     }
 
-    // 3) Record the subscription event.
+    // 3) Record the subscription event (learner_id traces which child was billed).
     const { error: historyErr } = await supabase
       .from("subscription_history")
       .insert({
-        user_id: userId,
+        user_id: parentUserId,
+        learner_id: learnerId,
         tier_from: tierFrom,
         tier_to: tier,
         amount_paid: amountRand,
@@ -170,7 +202,7 @@ Deno.serve(async (req: Request) => {
     if (historyErr) {
       console.error("paystack-webhook: history insert failed:", JSON.stringify(historyErr));
     } else {
-      console.log("paystack-webhook: recorded subscription_history for", userId);
+      console.log("paystack-webhook: recorded subscription_history for learner", learnerId);
     }
 
     return new Response("OK", { status: 200 });

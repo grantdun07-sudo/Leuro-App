@@ -374,6 +374,9 @@ const translations = {
     featPremiumRefresher: "Exam Refresher",
     paymentSuccessMsg: "Payment successful! Your plan is being activated.",
     paymentCancelledMsg: "Payment cancelled.",
+    upgradeChildModalTitle: "Upgrade {name}'s Plan",
+    upgradeChildIntro: "Choose a plan for {name}.",
+    btnUpgrade: "Upgrade",
 
     loading: "Loading...",
     errorGeneric: "Something went wrong. Please try again.",
@@ -736,6 +739,9 @@ const translations = {
     featPremiumRefresher: "Eksamenopfrisser",
     paymentSuccessMsg: "Betaling suksesvol! Jou plan word geaktiveer.",
     paymentCancelledMsg: "Betaling gekanselleer.",
+    upgradeChildModalTitle: "Gradeer {name} se Plan op",
+    upgradeChildIntro: "Kies 'n plan vir {name}.",
+    btnUpgrade: "Gradeer op",
 
     loading: "Laai...",
     errorGeneric: "Iets het verkeerd geloop. Probeer asseblief weer.",
@@ -795,6 +801,8 @@ const state = {
   acceptInviteToken: null,
   acceptInviteData: null,
   upgradeModalOpen: false,
+  childUpgradeModalOpen: false,
+  upgradeTargetLearnerId: null,
   tcModalOpen: false,
   privacyModalOpen: false,
   expandedSessionIds: {},
@@ -5550,6 +5558,7 @@ function renderParentHomeTab() {
     </div>
 
     ${state.showAddChildModal ? renderAddChildModal() : ""}
+    ${state.childUpgradeModalOpen ? renderChildUpgradeModal() : ""}
   `;
 }
 
@@ -6155,6 +6164,7 @@ function renderParentAccountExtras() {
     </div>
 
     ${state.showAddChildModal ? renderAddChildModal() : ""}
+    ${state.childUpgradeModalOpen ? renderChildUpgradeModal() : ""}
   `;
 }
 
@@ -6162,16 +6172,23 @@ function renderLinkedChildCard(learner) {
   const tier = learner.subscription_tier || "free";
   const tierBadgeClass = tier === "premium" ? "tier-badge-premium" : tier === "basic" ? "tier-badge-basic" : "tier-badge-free";
   const isPending = learner.invite_status === "pending";
+  const canUpgrade = !isPending && tier !== "premium";
   return `
     <div class="linked-child-card">
       <div>
         <div style="font-weight:700;">${escapeHtml(learner.full_name)}</div>
         <div class="muted">${t("gradeLabel")} ${learner.grade}</div>
       </div>
-      ${isPending
-        ? `<span class="tier-badge" style="background:var(--border);color:var(--text-muted);">${t("inviteStatusPending")}</span>`
-        : `<span class="tier-badge ${tierBadgeClass}">${t(tier)}</span>`
-      }
+      <div style="display:flex;align-items:center;gap:8px;">
+        ${isPending
+          ? `<span class="tier-badge" style="background:var(--border);color:var(--text-muted);">${t("inviteStatusPending")}</span>`
+          : `<span class="tier-badge ${tierBadgeClass}">${t(tier)}</span>`
+        }
+        ${canUpgrade
+          ? `<button class="btn btn-gold btn-sm" data-action="open-child-upgrade-modal" data-learner-id="${learner.id}">${t("btnUpgrade")}</button>`
+          : ""
+        }
+      </div>
     </div>
   `;
 }
@@ -6317,6 +6334,76 @@ const PAYSTACK_KOBO = {
   premium: { full: 19900, discounted: 15920 },
 };
 
+// Returns true when the parent has a referral code AND is still within the
+// 3-month discount window counted from their account creation date.
+function isDiscountActive() {
+  const profile = state.profile;
+  if (!profile?.referral_code_used) return false;
+  const created = profile.created_at ? new Date(profile.created_at) : null;
+  if (!created) return false;
+  const expiry = new Date(created);
+  expiry.setMonth(expiry.getMonth() + 3);
+  return new Date() < expiry;
+}
+
+// Per-child upgrade modal: shows Basic and Premium plans (excluding the
+// child's current tier) with the correct discounted or full price.
+function renderChildUpgradeModal() {
+  const learnerId = state.upgradeTargetLearnerId;
+  const learner = state.linkedLearners.find((l) => l.id === learnerId);
+  if (!learner) return "";
+
+  const discountActive = isDiscountActive();
+  const childName = escapeHtml(learner.full_name);
+  const currentTier = learner.subscription_tier || "free";
+
+  const expiryStr = (() => {
+    const created = state.profile?.created_at ? new Date(state.profile.created_at) : null;
+    if (!created) return "";
+    const exp = new Date(created);
+    exp.setMonth(exp.getMonth() + 3);
+    return exp.toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" });
+  })();
+
+  const plans = [
+    { id: "basic",   name: t("basic"),   price: TIER_PRICES.basic   },
+    { id: "premium", name: t("premium"), price: TIER_PRICES.premium },
+  ].filter((p) => p.id !== currentTier);
+
+  return `
+    <div class="modal-overlay">
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3>${t("upgradeChildModalTitle").replace("{name}", childName)}</h3>
+          <button class="modal-close" data-action="close-child-upgrade-modal">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="muted">${t("upgradeChildIntro").replace("{name}", childName)}</p>
+          ${plans.map((plan) => {
+            const discPrice = (Math.round(plan.price * 0.8 * 100) / 100).toFixed(2);
+            const priceBlock = discountActive
+              ? `<div class="tier-price-block">
+                   <div class="tier-price-row">
+                     <span class="tier-price-original">R${plan.price}</span>
+                     <span class="tier-discount-badge">20% OFF</span>
+                   </div>
+                   <div class="tier-price tier-price-discounted">R${discPrice}<span>${t("perMonth")}</span></div>
+                   <div class="tier-discount-expiry">Discount expires ${expiryStr} · renews at R${plan.price}/mo</div>
+                 </div>`
+              : `<div class="tier-price">R${plan.price}<span>${t("perMonth")}</span></div>`;
+            return `
+              <div class="tier-card">
+                <div class="tier-name">${plan.name}</div>
+                ${priceBlock}
+                <button class="btn btn-gold btn-block" data-action="child-subscribe" data-learner-id="${learnerId}" data-tier="${plan.id}">${t("btnSubscribe")}</button>
+              </div>`;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function handleUpgrade(tier) {
   if (!PAYSTACK_KOBO[tier]) return;
 
@@ -6348,6 +6435,50 @@ function handleUpgrade(tier) {
       console.log("Paystack success:", response.reference);
       showToast(t("paymentSuccessMsg"), "success");
       state.upgradeModalOpen = false;
+      render();
+    },
+    onClose() {
+      showToast(t("paymentCancelledMsg"), "info");
+    },
+  });
+  handler.openIframe();
+}
+
+// Per-child upgrade: reference encodes the learner's UUID (not the parent
+// user_id) so the webhook can update learners.subscription_tier directly.
+function handleChildUpgrade(learnerId, tier) {
+  if (!PAYSTACK_KOBO[tier]) return;
+
+  if (!window.PaystackPop) {
+    showToast(t("errorGeneric"), "error");
+    console.error("handleChildUpgrade: PaystackPop not loaded");
+    return;
+  }
+
+  const discountActive = isDiscountActive();
+  const amountKobo = discountActive
+    ? PAYSTACK_KOBO[tier].discounted
+    : PAYSTACK_KOBO[tier].full;
+  const reference = `LEURO-${learnerId}-${Date.now()}`;
+
+  const handler = window.PaystackPop.setup({
+    key: PAYSTACK_CONFIG.publicKey,
+    email: state.profile.email,
+    amount: amountKobo,
+    currency: "ZAR",
+    ref: reference,
+    label: `Leuro ${capitalize(tier)} Monthly`,
+    metadata: {
+      tier,
+      learner_id: learnerId,
+      user_id: state.user.id,
+      referral_code: state.profile.referral_code_used || "",
+    },
+    callback(response) {
+      console.log("Paystack success:", response.reference);
+      showToast(t("paymentSuccessMsg"), "success");
+      state.childUpgradeModalOpen = false;
+      state.upgradeTargetLearnerId = null;
       render();
     },
     onClose() {
@@ -6406,6 +6537,20 @@ function attachGlobalListeners() {
       case "close-upgrade-modal":
         state.upgradeModalOpen = false;
         render();
+        break;
+      case "open-child-upgrade-modal":
+        state.childUpgradeModalOpen = true;
+        state.upgradeTargetLearnerId = target.dataset.learnerId;
+        render();
+        break;
+      case "close-child-upgrade-modal":
+        state.childUpgradeModalOpen = false;
+        state.upgradeTargetLearnerId = null;
+        render();
+        break;
+      case "child-subscribe":
+        state.childUpgradeModalOpen = false;
+        handleChildUpgrade(target.dataset.learnerId, target.dataset.tier);
         break;
       case "open-tc-modal":
         state.tcModalOpen = true;
