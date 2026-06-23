@@ -42,7 +42,7 @@ function extractLearnerId(reference: string): string | null {
   const withoutPrefix = reference.replace(/^LEURO-/, "");
   const lastDash = withoutPrefix.lastIndexOf("-");
   if (lastDash <= 0) return null;
-  return withoutPrefix.slice(0, lastDash);
+  return withoutPrefix.slice(0, lastDash).trim();
 }
 
 // Verify Paystack HMAC-SHA512 signature over the raw request body.
@@ -114,14 +114,14 @@ Deno.serve(async (req: Request) => {
     const fullPriceKobo = FULL_PRICE_KOBO[tier];
 
     // Load the learner to get current tier and the parent's user_id.
-    const { data: learner } = await supabase
+    const { data: learner, error: learnerErr } = await supabase
       .from("learners")
       .select("id, user_id, subscription_tier")
       .eq("id", learnerId)
       .single();
 
-    if (!learner) {
-      console.error("paystack-webhook: learner not found:", learnerId);
+    if (learnerErr || !learner) {
+      console.error("learner lookup failed:", JSON.stringify(learnerErr), "id:", JSON.stringify(learnerId), "len:", learnerId.length);
       return new Response("OK", { status: 200 });
     }
 
