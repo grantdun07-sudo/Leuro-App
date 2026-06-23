@@ -128,10 +128,12 @@ Deno.serve(async (req: Request) => {
     const tierFrom = learner.subscription_tier ?? null;
     const parentUserId: string = learner.user_id;
 
-    // Load the parent's profile for referral discount context.
+    // Load the parent's profile for referral discount validation.
+    // created_at is the Supabase-managed registration timestamp (set by the
+    // handle_new_user trigger, always populated).
     const { data: profile } = await supabase
       .from("profiles")
-      .select("referral_code_used")
+      .select("referral_code_used, created_at")
       .eq("id", parentUserId)
       .single();
 
@@ -146,21 +148,41 @@ Deno.serve(async (req: Request) => {
     }
     console.log(`paystack-webhook: set learner ${learnerId} → ${tier}`);
 
-    // 2) Record discount when amount is below the full tier price.
+    // 2) Record discount only when:
+    //    a) the charged amount is below the full tier price, AND
+    //    b) the parent independently has a referral code, AND
+    //    c) the parent is still within the 3-month discount window.
+    // This prevents a stale or forged discount from being recorded even if
+    // the client somehow sent the wrong kobo amount to Paystack.
     const discountKobo = fullPriceKobo - amountKobo;
     if (discountKobo > 0) {
-      const discountRand = discountKobo / 100;
-      const { error: discountErr } = await supabase
-        .from("subscription_discounts")
-        .insert({
-          user_id: parentUserId,
-          code: profile?.referral_code_used ?? "REFERRAL",
-          discount_amount: discountRand,
-        });
-      if (discountErr) {
-        console.error("paystack-webhook: discount insert failed:", JSON.stringify(discountErr));
+      const createdAt = profile?.created_at ? new Date(profile.created_at) : null;
+      const discountExpiry = createdAt ? new Date(createdAt) : null;
+      if (discountExpiry) discountExpiry.setMonth(discountExpiry.getMonth() + 3);
+      const discountValid =
+        !!profile?.referral_code_used &&
+        discountExpiry !== null &&
+        new Date() < discountExpiry;
+
+      if (discountValid) {
+        const discountRand = discountKobo / 100;
+        const { error: discountErr } = await supabase
+          .from("subscription_discounts")
+          .insert({
+            user_id: parentUserId,
+            code: profile.referral_code_used!,
+            discount_amount: discountRand,
+          });
+        if (discountErr) {
+          console.error("paystack-webhook: discount insert failed:", JSON.stringify(discountErr));
+        } else {
+          console.log(`paystack-webhook: recorded discount R${discountRand} for parent ${parentUserId}`);
+        }
       } else {
-        console.log(`paystack-webhook: recorded discount R${discountRand} for parent ${parentUserId}`);
+        console.warn(
+          `paystack-webhook: discounted amount received but discount not valid for parent ${parentUserId}` +
+          ` (code=${profile?.referral_code_used ?? "none"}, expiry=${discountExpiry?.toISOString() ?? "n/a"})`,
+        );
       }
     }
 
