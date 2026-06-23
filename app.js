@@ -60,6 +60,7 @@ const translations = {
     expired: "Expired",
     enterPromoCodeLabel: "Enter a promo code",
     btnApply: "Apply",
+    promoCodeDisclaimer: "Applying a new code replaces your current one and starts a new discount period.",
     keepMeSignedIn: "Keep me signed in",
     showPassword: "Show password",
     hidePassword: "Hide password",
@@ -431,6 +432,7 @@ const translations = {
     expired: "Verval",
     enterPromoCodeLabel: "Voer 'n promosie-kode in",
     btnApply: "Pas toe",
+    promoCodeDisclaimer: "Deur 'n nuwe kode toe te pas, vervang jy jou huidige kode en begin 'n nuwe afslagtydperk.",
     keepMeSignedIn: "Bly aangemeld",
     showPassword: "Wys wagwoord",
     hidePassword: "Versteek wagwoord",
@@ -6271,6 +6273,7 @@ function renderPromoCodeCard() {
           <input type="text" name="promoCode" placeholder="${t("enterPromoCodeLabel")}" style="text-transform:uppercase;" />
           <button type="submit" class="btn btn-primary btn-sm">${t("btnApply")}</button>
         </div>
+        <p class="muted" style="font-size:0.78rem;margin-top:6px;margin-bottom:0;">${t("promoCodeDisclaimer")}</p>
       </form>
     </div>
   `;
