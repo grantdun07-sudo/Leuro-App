@@ -377,6 +377,10 @@ const translations = {
     offlineMsg: "You're offline. Some features may not work.",
     never: "Never",
     cancel: "Cancel",
+    btnConfirm: "Confirm",
+    confirmCloseExam: "Close exam? Your progress will be lost and the exam won't be scored.",
+    confirmRetakeDiagnostic: "Retake the diagnostic? This will replace your current level.",
+    confirmFreezeAccount: "Freeze this account? The user will be locked out immediately.",
 
     safetyCrisisMessage: "Your feelings are valid and important. Please talk to a trusted adult or your parent right away. You can also call the SADAG helpline anytime — it's free: 0800 21 22 23 (available 24 hours).",
     safetyTier2Message: "This type of language isn't allowed on Leuro™.",
@@ -750,6 +754,10 @@ const translations = {
     offlineMsg: "Jy is vanlyn. Sommige funksies werk dalk nie.",
     never: "Nooit",
     cancel: "Kanselleer",
+    btnConfirm: "Bevestig",
+    confirmCloseExam: "Eksamen sluit? Jou vordering sal verlore gaan en die eksamen sal nie gegradeer word nie.",
+    confirmRetakeDiagnostic: "Diagnose herhaal? Dit sal jou huidige vlak vervang.",
+    confirmFreezeAccount: "Hierdie rekening bevries? Die gebruiker sal onmiddellik uitgeskakel word.",
 
     safetyCrisisMessage: "Jou gevoelens is geldig en belangrik. Praat asseblief dadelik met 'n vertroude volwassene of jou ouer. Jy kan ook die SADAG-hulplyn enige tyd skakel — dit is gratis: 0800 21 22 23 (24 uur beskikbaar).",
     safetyTier2Message: "Hierdie tipe taal is nie op Leuro™ toegelaat nie.",
@@ -835,6 +843,7 @@ const state = {
   safetyOverlay: null,
   diagnostic: null,
   activeSession: null,
+  confirmModal: null,  // { message, confirmAction, userId? }
   activeExam: null,
   examsView: "studyguide",
   studyGuide: {
@@ -2057,6 +2066,23 @@ async function handleUpdatePassword(form) {
   }
 }
 
+function renderConfirmModal() {
+  const m = state.confirmModal;
+  return `
+    <div class="modal-overlay">
+      <div class="modal-sheet" style="max-width:360px;">
+        <div class="modal-body" style="padding-top:24px;padding-bottom:8px;">
+          <p style="margin:0;font-weight:600;">${escapeHtml(m.message)}</p>
+        </div>
+        <div class="modal-footer" style="display:flex;gap:10px;">
+          <button class="btn btn-outline" style="flex:1;" data-action="confirm-modal-cancel">${t("cancel")}</button>
+          <button class="btn btn-danger" style="flex:1;" data-action="confirm-modal-ok">${t("btnConfirm")}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderTcModal() {
   return `
     <div class="modal-overlay" data-action="close-tc-modal">
@@ -2634,6 +2660,10 @@ function render() {
   // detected, so the learner sees support resources immediately.
   if (state.safetyOverlay && state.safetyOverlay.severity === 1) {
     app.insertAdjacentHTML("beforeend", renderSafetyTier1Overlay());
+  }
+
+  if (state.confirmModal) {
+    app.insertAdjacentHTML("beforeend", renderConfirmModal());
   }
 
 }
@@ -3792,7 +3822,7 @@ function renderLearnTab() {
           : `<span class="badge badge-success">${t("unlimitedSessions")}</span>`
       }
       <div class="text-center" style="margin-top:12px;">
-        <button class="link-btn" data-action="retake-diagnostic">${t("retakeDiagnostic")}</button>
+        <button class="link-btn" data-action="retake-diagnostic-confirm">${t("retakeDiagnostic")}</button>
       </div>
     </div>
 
@@ -5442,7 +5472,7 @@ function renderExamModal() {
       <div class="modal-sheet">
         <div class="modal-header">
           <h3>${escapeHtml(subjectMap[e.subjectId] || "")} - ${difficultyLabel(e.difficulty)}</h3>
-          <button class="modal-close" data-action="exam-close">✕</button>
+          <button class="modal-close" data-action="exam-close-confirm">✕</button>
         </div>
         <div class="modal-body">
           <div class="progress-bar"><div class="progress-bar-fill" style="width:${progress}%"></div></div>
@@ -6697,6 +6727,13 @@ function attachGlobalListeners() {
       case "retake-diagnostic":
         retakeDiagnostic();
         break;
+      case "retake-diagnostic-confirm":
+        state.confirmModal = {
+          message: t("confirmRetakeDiagnostic"),
+          confirmAction: "retake-diagnostic-confirmed",
+        };
+        render();
+        break;
       case "subject-selection-submit":
         submitSubjectSelection();
         break;
@@ -6787,6 +6824,13 @@ function attachGlobalListeners() {
       case "start-exam":
         startMockExam();
         break;
+      case "exam-close-confirm":
+        state.confirmModal = {
+          message: t("confirmCloseExam"),
+          confirmAction: "exam-close-confirmed",
+        };
+        render();
+        break;
       case "exam-close":
         examClose();
         break;
@@ -6862,9 +6906,33 @@ function attachGlobalListeners() {
         state.admin.currentTab = target.dataset.tab;
         render();
         break;
-      case "admin-toggle-freeze":
-        adminToggleFreeze(target.dataset.userId, target.dataset.frozen === "true", target);
+      case "confirm-modal-cancel":
+        state.confirmModal = null;
+        render();
         break;
+      case "confirm-modal-ok": {
+        const { confirmAction, userId: confirmUserId } = state.confirmModal || {};
+        state.confirmModal = null;
+        if (confirmAction === "exam-close-confirmed") examClose();
+        else if (confirmAction === "retake-diagnostic-confirmed") retakeDiagnostic();
+        else if (confirmAction === "admin-freeze-confirmed") adminToggleFreeze(confirmUserId, false, null);
+        render();
+        break;
+      }
+      case "admin-toggle-freeze": {
+        const isFrozen = target.dataset.frozen === "true";
+        if (!isFrozen) {
+          state.confirmModal = {
+            message: t("confirmFreezeAccount"),
+            confirmAction: "admin-freeze-confirmed",
+            userId: target.dataset.userId,
+          };
+          render();
+        } else {
+          adminToggleFreeze(target.dataset.userId, true, target);
+        }
+        break;
+      }
       case "admin-mark-reviewed":
         adminMarkFlagReviewed(target.dataset.flagId, target);
         break;
