@@ -9,18 +9,6 @@ const SUPABASE_URL = "https://izyrizwudvalrbqgbhgl.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_a-PcjnZDacNw4UN51zUOcQ_U_gozE2O";
 const FN_URL = `${SUPABASE_URL}/functions/v1`;
 
-// PayFast - sandbox/test credentials (publicly documented PayFast test
-// merchant). Replace with live merchant_id/merchant_key via env/config
-// once the real PayFast merchant account is approved.
-const PAYFAST_CONFIG = {
-  merchantId: "10000100",
-  merchantKey: "46f0cd694581a",
-  passphrase: "jt7NOE43FZPn",
-  processUrl: "https://sandbox.payfast.co.za/eng/process",
-  notifyUrl: "https://izyrizwudvalrbqgbhgl.supabase.co/functions/v1/payfast-webhook",
-  returnUrl: "https://leuro-app.vercel.app/?payment=success",
-  cancelUrl: "https://leuro-app.vercel.app/?payment=cancelled",
-};
 
 // Paystack — public key is safe to expose in the browser.
 // The secret key is stored in Supabase secrets as PAYSTACK_TEST_SECRET (never in client code).
@@ -842,7 +830,6 @@ const state = {
   currentTab: "home",
   lang: "en",
   loading: true,
-  returningFromPayment: false,
   showDiagnostic: false,
   showProgressSummary: false,
   safetyOverlay: null,
@@ -1300,7 +1287,6 @@ async function init() {
 
   registerServiceWorker();
   setupOfflineDetection();
-  handlePayfastReturn();
   handleRecoveryHash();
   handleInviteToken();
   attachGlobalListeners();
@@ -1348,7 +1334,6 @@ async function init() {
 
   state.loading = false;
   render();
-  state.returningFromPayment = false;
 
   // If the user arrived via an invite link, fetch the learner record by token.
   if (state.acceptInviteToken) {
@@ -1480,39 +1465,6 @@ function generatePassword(length = 12) {
     .join("");
 }
 
-function handlePayfastReturn() {
-  const params = new URLSearchParams(window.location.search);
-  if (params.has("payment")) {
-    const status = params.get("payment");
-    // Set before any data loading begins so the diagnostic gate (which runs
-    // during the initial render) doesn't see a not-yet-loaded
-    // diagnostic_level and show the diagnostic on top of the payment return.
-    state.returningFromPayment = true;
-    if (status === "success") {
-      showToast(t("paymentSuccessMsg"), "success");
-      // The PayFast webhook updates subscription_tier asynchronously. Give it a
-      // few seconds, then re-fetch the profile so the new tier shows up.
-      setTimeout(() => {
-        refreshProfileAfterPayment();
-      }, 5000);
-    } else if (status === "cancelled") {
-      showToast(t("paymentCancelledMsg"), "info");
-    }
-    params.delete("payment");
-    const newUrl = window.location.pathname + (params.toString() ? `?${params}` : "");
-    window.history.replaceState({}, "", newUrl);
-  }
-}
-
-async function refreshProfileAfterPayment() {
-  if (!state.user) return;
-  try {
-    await loadUserData();
-    render();
-  } catch (err) {
-    console.error("Failed to refresh profile after payment:", err);
-  }
-}
 
 // ---------------------------------------------------------------------
 // PWA: Service Worker + Offline detection
@@ -2146,7 +2098,7 @@ function renderTcModal() {
           <ul>
             <li>The Platform offers free and premium subscription tiers.</li>
             <li>Premium subscriptions are billed monthly at the advertised rate (currently R99 or R199/month depending on tier).</li>
-            <li>Payments are processed securely via PayFast. We do not store your card details.</li>
+            <li>Payments are processed securely via Paystack. We do not store your card details.</li>
             <li>Subscriptions renew automatically unless cancelled before the next billing date.</li>
             <li>Refunds are considered on a case-by-case basis. Contact hello@leuroai.co.za within 7 days of a charge if you believe an error has occurred.</li>
           </ul>
@@ -2234,7 +2186,7 @@ function renderPrivacyModal() {
             <tbody>
               <tr><td>Supabase (EU-West-2, London)</td><td>Database and authentication hosting</td></tr>
               <tr><td>Anthropic (Claude API)</td><td>AI content generation — prompts contain curriculum context, not personal identifiers</td></tr>
-              <tr><td>PayFast</td><td>Payment processing</td></tr>
+              <tr><td>Paystack</td><td>Payment processing</td></tr>
               <tr><td>Vercel</td><td>Platform hosting</td></tr>
               <tr><td>SendGrid</td><td>Transactional email delivery</td></tr>
             </tbody>
@@ -2665,17 +2617,14 @@ function render() {
   if (
     state.profile.role === "learner" &&
     state.learner &&
-    !state.returningFromPayment &&
     state.showSubjectSelection
   ) {
     app.insertAdjacentHTML("beforeend", renderSubjectSelectionScreen());
   } else if (
     // Diagnostic gate: shown whenever a learner has not completed their
     // diagnostic (diagnostic_level null or 0), or has chosen to retake it.
-    // Skipped when returning from a PayFast redirect.
     state.profile.role === "learner" &&
     state.learner &&
-    !state.returningFromPayment &&
     (!state.learner.diagnostic_level || state.showDiagnostic)
   ) {
     app.insertAdjacentHTML("beforeend", renderDiagnosticScreen());
@@ -6127,7 +6076,7 @@ function renderAccountTab() {
 }
 
 // ---------------------------------------------------------------------
-// UPGRADE MODAL (learner) - PayFast subscription plans
+// UPGRADE MODAL (learner)
 // ---------------------------------------------------------------------
 
 // Renders the price block for a tier card, with referral discount markup
