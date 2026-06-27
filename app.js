@@ -22,10 +22,8 @@ const PAYFAST_CONFIG = {
   cancelUrl: "https://leuro-app.vercel.app/?payment=cancelled",
 };
 
-// Paystack test credentials (public key is safe to expose in the browser).
-// Store the secret key in Supabase:
-//   supabase secrets set PAYSTACK_TEST_SECRET=sk_test_a51aa1055986a6f82f5079095c4353d6c9e9f30d
-//   supabase secrets set PAYSTACK_TEST_PUBLIC=pk_test_243ec9c224153ee5679f251dba0f8459772525a1
+// Paystack — public key is safe to expose in the browser.
+// The secret key is stored in Supabase secrets as PAYSTACK_TEST_SECRET (never in client code).
 const PAYSTACK_CONFIG = {
   publicKey: "pk_test_243ec9c224153ee5679f251dba0f8459772525a1",
 };
