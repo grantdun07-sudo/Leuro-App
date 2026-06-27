@@ -2617,6 +2617,9 @@ function render() {
   // tabs, diagnostic gate, or overlays.
   if (state.profile.role === "admin") {
     app.innerHTML = renderAdminScreen();
+    if (state.confirmModal) {
+      app.insertAdjacentHTML("beforeend", renderConfirmModal());
+    }
     return;
   }
 
