@@ -81,6 +81,10 @@ Deno.serve(async (req: Request) => {
     return jsonErr("Method not allowed", 405);
   }
 
+  // Top-level catch: surfaces any unhandled throw (ReferenceError, TypeError, etc.)
+  // that would otherwise be swallowed by Deno.serve and returned as a silent 500.
+  return await (async () => {
+
   // --- Environment ---
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -194,11 +198,30 @@ Deno.serve(async (req: Request) => {
     authPassword = rawPassword;
   } else {
     // Unguessable internal temp password — child will replace it via accept-child-invite.
-    authPassword = randomHex(48);
+    console.log("create-child-auth: [invite] calling randomHex(48) for temp password");
+    try {
+      authPassword = randomHex(48);
+      console.log("create-child-auth: [invite] temp password generated, length:", authPassword.length);
+    } catch (e: unknown) {
+      const eMsg = e instanceof Error ? `${e.message} | stack: ${e.stack ?? "none"}` : String(e);
+      console.error("create-child-auth: [invite] randomHex(48) threw:", eMsg);
+      return jsonErr("Could not create child account. Please try again.", 500);
+    }
   }
 
   // invite_token is generated for invite mode and stored on the learners row.
-  const inviteToken: string | null = mode === "invite" ? randomHex(32) : null;
+  let inviteToken: string | null = null;
+  if (mode === "invite") {
+    console.log("create-child-auth: [invite] calling randomHex(32) for invite_token");
+    try {
+      inviteToken = randomHex(32);
+      console.log("create-child-auth: [invite] invite_token generated, length:", inviteToken.length);
+    } catch (e: unknown) {
+      const eMsg = e instanceof Error ? `${e.message} | stack: ${e.stack ?? "none"}` : String(e);
+      console.error("create-child-auth: [invite] randomHex(32) threw:", eMsg);
+      return jsonErr("Could not create child account. Please try again.", 500);
+    }
+  }
 
   // -------------------------------------------------------------------------
   // 3. Create the child's Supabase Auth user
@@ -208,6 +231,7 @@ Deno.serve(async (req: Request) => {
   //    handle_new_user trigger.
   // -------------------------------------------------------------------------
 
+  console.log("create-child-auth: calling admin.createUser — email:", email, "mode:", mode);
   const { data: createData, error: createErr } = await admin.auth.admin.createUser({
     email,
     password: authPassword,
@@ -229,7 +253,12 @@ Deno.serve(async (req: Request) => {
         400,
       );
     }
-    console.error("create-child-auth: admin.createUser failed:", msg);
+    console.error(
+      "create-child-auth: admin.createUser failed — message:", msg,
+      "| status:", (createErr as Record<string, unknown>).status ?? "n/a",
+      "| code:", (createErr as Record<string, unknown>).code ?? "n/a",
+      "| full:", JSON.stringify(createErr),
+    );
     return jsonErr("Could not create child account. Please try again.", 500);
   }
 
@@ -320,6 +349,12 @@ Deno.serve(async (req: Request) => {
   // 5. Append the new learner id to the parent's linked_learners array
   // -------------------------------------------------------------------------
   return await linkAndRespond(admin, parentRecord, learnerId, childAuthId, callerId, inviteToken);
+
+  })().catch((e: unknown) => {
+    const eMsg = e instanceof Error ? `${e.message} | stack: ${e.stack ?? "none"}` : String(e);
+    console.error("create-child-auth: UNHANDLED EXCEPTION:", eMsg);
+    return jsonErr("Server error. Please try again.", 500);
+  });
 });
 
 // ---------------------------------------------------------------------------
