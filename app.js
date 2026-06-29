@@ -381,6 +381,13 @@ const translations = {
     confirmCloseExam: "Close exam? Your progress will be lost and the exam won't be scored.",
     confirmRetakeDiagnostic: "Retake the diagnostic? This will replace your current level.",
     confirmFreezeAccount: "Freeze this account? The user will be locked out immediately.",
+    changeEmailHeading: "Change Email Address",
+    changeEmailBtn: "Change email",
+    changeEmailNewLabel: "New email address",
+    changeEmailSubmitBtn: "Update email",
+    changeEmailSuccess: "Check both your new and current email for confirmation links. Your email won't change until you've clicked both.",
+    changeEmailSameError: "The new email is the same as your current one.",
+    changeEmailInvalidError: "Please enter a valid email address.",
 
     safetyCrisisMessage: "Your feelings are valid and important. Please talk to a trusted adult or your parent right away. You can also call the SADAG helpline anytime — it's free: 0800 21 22 23 (available 24 hours).",
     safetyTier2Message: "This type of language isn't allowed on Leuro™.",
@@ -758,6 +765,13 @@ const translations = {
     confirmCloseExam: "Eksamen sluit? Jou vordering sal verlore gaan en die eksamen sal nie gegradeer word nie.",
     confirmRetakeDiagnostic: "Diagnose herhaal? Dit sal jou huidige vlak vervang.",
     confirmFreezeAccount: "Hierdie rekening bevries? Die gebruiker sal onmiddellik uitgeskakel word.",
+    changeEmailHeading: "Verander e-posadres",
+    changeEmailBtn: "Verander e-pos",
+    changeEmailNewLabel: "Nuwe e-posadres",
+    changeEmailSubmitBtn: "Dateer e-pos op",
+    changeEmailSuccess: "Kyk in beide jou nuwe en huidige e-pos vir bevestigingskakels. Jou e-pos verander nie totdat jy albei geklik het nie.",
+    changeEmailSameError: "Die nuwe e-pos is dieselfde as jou huidige e-pos.",
+    changeEmailInvalidError: "Voer asseblief 'n geldige e-posadres in.",
 
     safetyCrisisMessage: "Jou gevoelens is geldig en belangrik. Praat asseblief dadelik met 'n vertroude volwassene of jou ouer. Jy kan ook die SADAG-hulplyn enige tyd skakel — dit is gratis: 0800 21 22 23 (24 uur beskikbaar).",
     safetyTier2Message: "Hierdie tipe taal is nie op Leuro™ toegelaat nie.",
@@ -844,6 +858,9 @@ const state = {
   diagnostic: null,
   activeSession: null,
   confirmModal: null,  // { message, confirmAction, userId? }
+  emailChangeOpen: false,
+  emailChangeError: null,
+  emailChangeSuccess: false,
   activeExam: null,
   examsView: "studyguide",
   studyGuide: {
@@ -2063,6 +2080,38 @@ async function handleUpdatePassword(form) {
     showToast(err.message || t("errorGeneric"), "error");
   } finally {
     setButtonLoading(btn, false);
+  }
+}
+
+async function handleChangeEmail(form) {
+  const newEmail = (form.newEmail?.value || "").trim().toLowerCase();
+  const currentEmail = (state.profile?.email || "").trim().toLowerCase();
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+    state.emailChangeError = t("changeEmailInvalidError");
+    render();
+    return;
+  }
+  if (newEmail === currentEmail) {
+    state.emailChangeError = t("changeEmailSameError");
+    render();
+    return;
+  }
+
+  state.emailChangeError = null;
+  const btn = form.querySelector("button[type=submit]");
+  setButtonLoading(btn, true);
+  try {
+    const { error } = await sbClient.auth.updateUser({ email: newEmail });
+    if (error) throw error;
+    state.emailChangeSuccess = true;
+    state.emailChangeOpen = false;
+  } catch (err) {
+    console.error(err);
+    state.emailChangeError = err.message || t("errorGeneric");
+  } finally {
+    setButtonLoading(btn, false);
+    render();
   }
 }
 
@@ -6038,6 +6087,44 @@ async function toggleMonthlyRecap() {
 // ---------------------------------------------------------------------
 // ACCOUNT TAB
 // ---------------------------------------------------------------------
+function renderChangeEmailSection() {
+  if (state.emailChangeSuccess) {
+    return `
+      <div class="card">
+        <div class="account-section-row">
+          <span class="account-section-label">${t("changeEmailHeading")}</span>
+        </div>
+        <p style="margin:8px 0 10px;color:var(--success);font-size:0.9rem;">${t("changeEmailSuccess")}</p>
+        <button class="btn btn-outline btn-sm" data-action="email-change-toggle">${t("changeEmailBtn")}</button>
+      </div>
+    `;
+  }
+  if (!state.emailChangeOpen) {
+    return `
+      <div class="card">
+        <div class="account-section-row">
+          <span class="account-section-label">${t("changeEmailHeading")}</span>
+          <button class="btn btn-outline btn-sm" data-action="email-change-toggle">${t("changeEmailBtn")}</button>
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="card">
+      <div class="account-section-label" style="margin-bottom:10px;">${t("changeEmailHeading")}</div>
+      <form data-action="change-email-form">
+        <label style="display:block;margin-bottom:6px;font-size:0.88rem;">${t("changeEmailNewLabel")}</label>
+        <input type="email" name="newEmail" required autocomplete="email" style="margin-bottom:${state.emailChangeError ? "6px" : "10px"};" />
+        ${state.emailChangeError ? `<p class="form-error" style="margin:0 0 10px;">${escapeHtml(state.emailChangeError)}</p>` : ""}
+        <div style="display:flex;gap:10px;">
+          <button type="button" class="btn btn-outline" style="flex:1;" data-action="email-change-toggle">${t("cancel")}</button>
+          <button type="submit" class="btn btn-primary" style="flex:1;">${t("changeEmailSubmitBtn")}</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
 function renderAccountTab() {
   const profile = state.profile;
   const learner = state.learner;
@@ -6059,7 +6146,10 @@ function renderAccountTab() {
       </div>
     </div>
 
-    <!-- 2. Subscription (learner only — parents use per-child billing) -->
+    <!-- 2. Change email (parent only) -->
+    ${!isLearner ? renderChangeEmailSection() : ""}
+
+    <!-- 3a. Subscription (learner only — parents use per-child billing) -->
     ${isLearner ? `
     <div class="card">
       <div class="account-section-row">
@@ -6909,6 +6999,12 @@ function attachGlobalListeners() {
         state.admin.currentTab = target.dataset.tab;
         render();
         break;
+      case "email-change-toggle":
+        state.emailChangeOpen = !state.emailChangeOpen;
+        state.emailChangeError = null;
+        state.emailChangeSuccess = false;
+        render();
+        break;
       case "confirm-modal-cancel":
         state.confirmModal = null;
         render();
@@ -6987,6 +7083,9 @@ function attachGlobalListeners() {
       }
       case "apply-promo-form":
         handleApplyPromoCode(form);
+        break;
+      case "change-email-form":
+        handleChangeEmail(form);
         break;
       default:
         break;
