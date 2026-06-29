@@ -72,12 +72,14 @@ Deno.serve(async (req: Request) => {
   // --- Environment ---
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
-  if (!supabaseUrl || !serviceRoleKey) {
-    console.error("create-child-auth: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set");
+  if (!supabaseUrl || !serviceRoleKey || !anonKey) {
+    console.error("create-child-auth: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or SUPABASE_ANON_KEY not set");
     return jsonErr("Server configuration error", 500);
   }
 
+  // Service role client — bypasses RLS for all admin DB operations.
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -93,8 +95,17 @@ Deno.serve(async (req: Request) => {
     return jsonErr("Unauthorized", 401);
   }
 
-  // Verify the JWT using the admin client (validates signature + expiry).
-  const { data: { user: caller }, error: jwtErr } = await admin.auth.getUser(jwt);
+  // User-scoped client for JWT verification — standard Supabase edge function
+  // pattern. The service role client's auth.getUser(jwt) does not forward the
+  // JWT as the bearer token to GoTrue; it uses the service role key instead,
+  // which can return a wrong caller ID and cause the parents lookup to fail
+  // even when the row exists.
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  const { data: { user: caller }, error: jwtErr } = await userClient.auth.getUser();
   if (jwtErr || !caller) {
     console.warn("create-child-auth: invalid JWT:", jwtErr?.message);
     return jsonErr("Unauthorized", 401);
