@@ -53,7 +53,7 @@ Deno.serve(async (req: Request) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "Leuro <onboarding@resend.dev>",
+        from: "Leuro <noreply@leuroai.co.za>",
         to: [email],
         subject: "You've been added to Leuro™ — activate your account",
         html: `
