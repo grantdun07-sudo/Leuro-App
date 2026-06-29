@@ -153,18 +153,21 @@ Deno.serve(async (req: Request) => {
     }
 
     console.log("submit-support-message: stored message id:", inserted.id, "user:", callerId, "role:", profile.role);
+    console.log("[safety] caller role:", profile.role);
 
     // 4. Safety detection (learners only)
     // KNOWN LIMITATION: Tier 2 cumulative "freeze after 3 flags" check is not
     // performed in this path. The flag is saved and parent notified, but the
     // threshold counter is not evaluated server-side here.
     if (profile.role === "learner") {
+      console.log("[safety] running detection on message, role=" + profile.role);
       const tier1 = containsTier1Language(message);
       const tier2 = !tier1 && TIER2_REGEX.test(message);
+      console.log("[safety] tier1=" + tier1 + " tier2=" + tier2);
 
       if (tier1 || tier2) {
         const severity = tier1 ? 1 : 2;
-        console.warn("submit-support-message: safety flag — severity:", severity, "message id:", inserted.id);
+        console.log("[safety] FLAG severity=" + severity + ", calling save-content-flag");
 
         const { data: learnerRow } = await admin
           .from("learners").select("id").eq("user_id", callerId).maybeSingle();
@@ -179,10 +182,14 @@ Deno.serve(async (req: Request) => {
             }),
           });
 
+          const flagStatus = flagRes.status;
+          const flagBody = await flagRes.text();
+          console.log("[safety] save-content-flag status=" + flagStatus + " body=" + flagBody);
+
           if (!flagRes.ok) {
-            console.error("submit-support-message: save-content-flag failed:", await flagRes.text());
+            console.error("submit-support-message: save-content-flag failed:", flagBody);
           } else {
-            const flagData = await flagRes.json();
+            const flagData = JSON.parse(flagBody);
             const flagId = flagData?.id ?? null;
             console.log("submit-support-message: flag saved, id:", flagId);
 
@@ -196,16 +203,25 @@ Deno.serve(async (req: Request) => {
                     context: "support-message", flagId,
                   }),
                 });
+                const notifyStatus = notifyRes.status;
+                const notifyBody = await notifyRes.text();
+                console.log("[safety] notify-parent status=" + notifyStatus + " body=" + notifyBody);
                 if (!notifyRes.ok) {
-                  console.error("submit-support-message: notify-parent failed:", await notifyRes.text());
+                  console.error("submit-support-message: notify-parent failed:", notifyBody);
                 } else {
                   console.log("submit-support-message: notify-parent ok");
                 }
               } catch (e) { console.error("submit-support-message: notify-parent threw:", e); }
+            } else {
+              console.log("[safety] skipping notify-parent: learnerRow.id=" + learnerRow?.id + " flagId=" + flagId);
             }
           }
         } catch (e) { console.error("submit-support-message: safety pipeline threw:", e); }
+      } else {
+        console.log("[safety] no flag triggered for this message");
       }
+    } else {
+      console.log("[safety] skipping safety check: role is not learner, role=" + profile.role);
     }
 
     // 5. Send email via Resend (non-fatal if it fails)
