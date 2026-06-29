@@ -198,9 +198,11 @@ Deno.serve(async (req: Request) => {
     authPassword = rawPassword;
   } else {
     // Unguessable internal temp password — child will replace it via accept-child-invite.
-    console.log("create-child-auth: [invite] calling randomHex(48) for temp password");
+    // 32 bytes → 64 hex chars. GoTrue rejects passwords > 72 chars (bcrypt limit);
+    // 96-char randomHex(48) caused a 500. 64 chars is cryptographically secure and safe.
+    console.log("create-child-auth: [invite] calling randomHex(32) for temp password");
     try {
-      authPassword = randomHex(48);
+      authPassword = randomHex(32);
       console.log("create-child-auth: [invite] temp password generated, length:", authPassword.length);
     } catch (e: unknown) {
       const eMsg = e instanceof Error ? `${e.message} | stack: ${e.stack ?? "none"}` : String(e);
