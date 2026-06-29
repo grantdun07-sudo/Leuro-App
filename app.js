@@ -2032,16 +2032,21 @@ async function handleAcceptInvite(form) {
       showToast(t(check.messageKey), "error");
       return;
     }
-    const passwordHash = await sha256Hex(password);
-    const learner = state.acceptInviteData;
-    const { error } = await sbClient
-      .from("learners")
-      .update({ password_hash: passwordHash, invite_status: "accepted" })
-      .eq("id", learner.id);
-    if (error) throw error;
+    const { data: fnData, error: fnErr } = await sbClient.functions.invoke("accept-child-invite", {
+      body: { token: state.acceptInviteToken, password },
+    });
+
+    if (fnErr) {
+      showToast(fnErr.message || t("errorGeneric"), "error");
+      return;
+    }
+    if (!fnData?.ok) {
+      showToast(fnData?.error || t("errorGeneric"), "error");
+      return;
+    }
+
     showToast(t("acceptInviteSuccess"), "success");
     state.acceptInviteToken = null;
-    state.acceptInviteData = null;
     authTab = "login";
     render();
   } catch (err) {
@@ -6008,8 +6013,6 @@ async function handleAddChild(form) {
   render();
 
   try {
-    const inviteToken = generateToken(32);
-
     if (mode === "direct") {
       const rawPassword = form.childPassword.value;
       if (rawPassword.length < 8) {
@@ -6040,19 +6043,21 @@ async function handleAddChild(form) {
         alert(`${t("addChildSuccessDirect")}\n\n${t("labelEmail")}: ${email}\n${t("labelPassword")}: ${rawPassword}`);
       }, 300);
     } else {
-      const { error } = await sbClient.rpc("parent_add_child", {
-        p_full_name: name,
-        p_grade: grade,
-        p_email: email,
-        p_invite_token: inviteToken,
-        p_invite_status: "pending",
-        p_password_hash: null,
+      const { data: fnData, error: fnErr } = await sbClient.functions.invoke("create-child-auth", {
+        body: { mode: "invite", email, full_name: name, grade },
       });
-      if (error) throw error;
 
-      // Call edge function to send invite email via Resend
+      if (fnErr) {
+        showToast(fnErr.message || t("errorGeneric"), "error");
+        return;
+      }
+      if (!fnData?.ok) {
+        showToast(fnData?.error || t("errorGeneric"), "error");
+        return;
+      }
+
       await sbClient.functions.invoke("send-invite-email", {
-        body: { email, name, token: inviteToken },
+        body: { email, name, token: fnData.invite_token },
       });
 
       await loadParentData();
