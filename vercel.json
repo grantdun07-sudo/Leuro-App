@@ -1,6 +1,5 @@
 {
   "rewrites": [
-    { "source": "/acknowledge", "destination": "/index.html" },
-    { "source": "/accept-invite", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
