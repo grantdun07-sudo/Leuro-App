@@ -11,7 +11,18 @@
 //
 // Expected body: { email: string, name: string, token: string }
 
-import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
 
 const APP_URL = "https://leuro-app.vercel.app";
 
@@ -42,7 +53,7 @@ Deno.serve(async (req: Request) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "Leuro <noreply@leuro-app.vercel.app>",
+        from: "Leuro <onboarding@resend.dev>",
         to: [email],
         subject: "You've been added to Leuro™ — activate your account",
         html: `
