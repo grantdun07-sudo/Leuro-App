@@ -2644,6 +2644,13 @@ function render() {
   const savedScrollY = window.scrollY;
   const sameTab = state.currentTab === _lastRenderedTab;
 
+  // Save chat scroll state before DOM rebuild so we can restore it below.
+  const chatEl = document.getElementById("chat-scroll");
+  const savedChatScrollTop = chatEl ? chatEl.scrollTop : null;
+  const chatWasAtBottom = chatEl
+    ? chatEl.scrollTop + chatEl.clientHeight >= chatEl.scrollHeight - 5
+    : false;
+
   if (state.loading) {
     app.innerHTML = `<div class="loading-row"><span class="spinner spinner-purple"></span> ${t("loading")}</div>`;
     return;
@@ -2693,6 +2700,18 @@ function render() {
     requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
   }
   _lastRenderedTab = state.currentTab;
+
+  // Restore chat scroll position after DOM rebuild. If the user was at (or
+  // within 5px of) the bottom, pin to the new bottom — handles the case where
+  // new content changed scrollHeight. Otherwise restore the exact position so
+  // mid-scroll reading isn't interrupted.
+  if (savedChatScrollTop !== null) {
+    requestAnimationFrame(() => {
+      const el = document.getElementById("chat-scroll");
+      if (!el) return;
+      el.scrollTop = chatWasAtBottom ? el.scrollHeight : savedChatScrollTop;
+    });
+  }
 
   // Subject-selection gate: Grade 10-12 learners who have not yet chosen
   // their subjects see this overlay before the diagnostic. The two gates
