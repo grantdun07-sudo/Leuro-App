@@ -6016,17 +6016,19 @@ async function handleAddChild(form) {
         showToast(t("pwTooShort"), "error");
         return;
       }
-      const passwordHash = await sha256Hex(rawPassword);
 
-      const { data: learner, error } = await sbClient.rpc("parent_add_child", {
-        p_full_name: name,
-        p_grade: grade,
-        p_email: email,
-        p_invite_token: inviteToken,
-        p_invite_status: "active",
-        p_password_hash: passwordHash,
+      const { data: fnData, error: fnErr } = await sbClient.functions.invoke("create-child-auth", {
+        body: { email, password: rawPassword, full_name: name, grade },
       });
-      if (error) throw error;
+
+      if (fnErr) {
+        showToast(fnErr.message || t("errorGeneric"), "error");
+        return;
+      }
+      if (!fnData?.ok) {
+        showToast(fnData?.error || t("errorGeneric"), "error");
+        return;
+      }
 
       await loadParentData();
       state.showAddChildModal = false;
