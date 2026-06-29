@@ -79,8 +79,13 @@ Deno.serve(async (req: Request) => {
     return jsonErr("Server configuration error", 500);
   }
 
-  // Service role client — bypasses RLS for all admin DB operations.
+  // Service role client — both Authorization AND apikey headers set explicitly
+  // to the service role key. Some supabase-js versions in Deno send the anon
+  // key as the default PostgREST apikey even when Authorization differs;
+  // setting both forces PostgREST to use the service_role JWT and bypass RLS.
+  // Used for ALL database operations — never for JWT verification.
   const admin = createClient(supabaseUrl, serviceRoleKey, {
+    global: { headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
@@ -129,6 +134,43 @@ Deno.serve(async (req: Request) => {
     console.warn("create-child-auth: caller is not a parent:", callerId, "role:", callerProfile.role);
     return jsonErr("Forbidden — only parent accounts can add children", 403);
   }
+
+  // ── Diagnostic (remove once role is confirmed) ───────────────────────────
+  // Bypass supabase-js entirely and hit PostgREST with the service role key
+  // directly via fetch. Logs the HTTP status AND the raw body so we can see:
+  //   200 []  → key is valid, table is accessible, issue is in supabase-js
+  //   403/401 → key or table privilege problem at the PostgREST/Postgres level
+  // Also logs request.jwt.claims so we can see the role PostgREST actually
+  // resolved from the JWT.
+  try {
+    const _diagBasic = await fetch(`${supabaseUrl}/rest/v1/parents?select=id&limit=0`, {
+      headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey },
+    });
+    const _diagBody = await _diagBasic.text();
+    console.log(
+      "create-child-auth: [DIAG] raw fetch parents →",
+      "status:", _diagBasic.status,
+      "| body:", _diagBody.slice(0, 300),
+    );
+
+    const _diagClaims = await fetch(`${supabaseUrl}/rest/v1/rpc/get_jwt_claims`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${serviceRoleKey}`,
+        apikey: serviceRoleKey,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    console.log(
+      "create-child-auth: [DIAG] jwt claims rpc →",
+      "status:", _diagClaims.status,
+      "| body:", (await _diagClaims.text()).slice(0, 300),
+    );
+  } catch (diagErr) {
+    console.error("create-child-auth: [DIAG] fetch threw:", diagErr);
+  }
+  // ── End diagnostic ────────────────────────────────────────────────────────
 
   // Fetch the parent record — need id and linked_learners for step 5.
   const { data: parentRecord, error: parentErr } = await admin
