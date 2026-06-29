@@ -163,13 +163,29 @@ Deno.serve(async (req: Request) => {
     .eq("id", learner.id);
 
   if (consumeErr) {
-    // Password was set successfully — the child can log in. This update is
-    // a bookkeeping step; failure is non-fatal but log it loudly.
-    console.error(
-      "accept-child-invite: failed to clear invite_token for learner", learner.id,
-      ":", consumeErr.message,
-      "— password was set; child can log in but token remains reusable until fixed.",
+    console.warn(
+      "accept-child-invite: first attempt to clear invite_token failed for learner", learner.id,
+      ":", consumeErr.message, "— retrying once",
     );
+
+    const { error: retryErr } = await admin
+      .from("learners")
+      .update({ invite_status: "active", invite_token: null })
+      .eq("id", learner.id);
+
+    if (retryErr) {
+      // The token is still live and reusable — that's worse than asking the
+      // child to retry. Password was set, but we cannot safely report success.
+      console.error(
+        "accept-child-invite: retry also failed for learner", learner.id,
+        ":", retryErr.message,
+        "— returning 500 to prevent token reuse; password was set, child must retry.",
+      );
+      return jsonErr(
+        "Your password was set, but we could not complete the invite. Please try again — your new password will still work.",
+        500,
+      );
+    }
   }
 
   console.log("accept-child-invite: success — learner_id:", learner.id, "child_auth_id:", childUserId);
