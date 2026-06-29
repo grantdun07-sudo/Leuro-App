@@ -407,6 +407,21 @@ const translations = {
     featureUnlimitedLearn: "Unlimited learn section",
     featureFullAccess: "Learn + Mock Exams",
     featureBilingual: "English & Afrikaans",
+    supportHeading: "Help & Contact",
+    supportIntro: "Have a question or issue? We'll get back to you.",
+    supportLabelName: "Name",
+    supportLabelEmail: "Email",
+    supportLabelCategory: "Category",
+    supportLabelMessage: "Message",
+    supportCategoryDefault: "Select a category",
+    supportCategoryGeneral: "General",
+    supportCategoryBilling: "Billing",
+    supportCategoryTechnical: "Technical",
+    supportCategoryReport: "Report a problem",
+    supportPlaceholderMessage: "Describe your question or issue...",
+    supportBtnSubmit: "Send Message",
+    supportSuccess: "Thanks — we've received your message and will get back to you.",
+    supportBtnAnother: "Send another message",
   },
   af: {
     appName: "Leuro",
@@ -791,6 +806,21 @@ const translations = {
     featureUnlimitedLearn: "Onbeperkte leer-afdeling",
     featureFullAccess: "Leer + Toetseksamens",
     featureBilingual: "Engels & Afrikaans",
+    supportHeading: "Hulp & Kontak",
+    supportIntro: "Het jy 'n vraag of probleem? Ons sal by jou terugkom.",
+    supportLabelName: "Naam",
+    supportLabelEmail: "E-pos",
+    supportLabelCategory: "Kategorie",
+    supportLabelMessage: "Boodskap",
+    supportCategoryDefault: "Kies 'n kategorie",
+    supportCategoryGeneral: "Algemeen",
+    supportCategoryBilling: "Betaling",
+    supportCategoryTechnical: "Tegnies",
+    supportCategoryReport: "Rapporteer 'n probleem",
+    supportPlaceholderMessage: "Beskryf jou vraag of probleem...",
+    supportBtnSubmit: "Stuur Boodskap",
+    supportSuccess: "Dankie — ons het jou boodskap ontvang en sal by jou terugkom.",
+    supportBtnAnother: "Stuur nog 'n boodskap",
   },
 };
 
@@ -830,6 +860,7 @@ const state = {
   promoCode: null,
   tcModalOpen: false,
   privacyModalOpen: false,
+  supportForm: { success: false },
   expandedSessionIds: {},
   expandedDateGroups: new Set(),
   admin: {
@@ -6215,6 +6246,9 @@ function renderAccountTab() {
       <button class="btn-link legal-section-link" data-action="open-privacy-modal">${t("linkPrivacy")}</button>
     </div>
 
+    <!-- Help & Contact -->
+    ${renderSupportSection()}
+
     <!-- 5. Logout -->
     <button class="btn btn-danger btn-block" data-action="logout" style="margin-top:6px;">${t("btnLogout")}</button>
 
@@ -6335,6 +6369,76 @@ async function handleApplyPromoCode(form) {
   } catch (err) {
     console.error("handleApplyPromoCode:", err);
     showToast(t("invalidReferralCode"), "error");
+  }
+}
+
+function renderSupportSection() {
+  const profile = state.profile;
+  if (state.supportForm.success) {
+    return `
+      <div class="section-title">${t("supportHeading")}</div>
+      <div class="card">
+        <p style="margin:0 0 12px;color:#2d8a4e;">${t("supportSuccess")}</p>
+        <button class="btn btn-outline btn-block" data-action="support-reset">${t("supportBtnAnother")}</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="section-title">${t("supportHeading")}</div>
+    <div class="card">
+      <p class="muted" style="margin:0 0 16px;font-size:14px;">${t("supportIntro")}</p>
+      <form data-action="support-form">
+        <div class="field">
+          <label>${t("supportLabelName")}</label>
+          <input type="text" name="supportName" value="${escapeHtml(profile?.full_name || "")}" required />
+        </div>
+        <div class="field">
+          <label>${t("supportLabelEmail")}</label>
+          <input type="email" name="supportEmail" value="${escapeHtml(profile?.email || "")}" required />
+        </div>
+        <div class="field">
+          <label>${t("supportLabelCategory")}</label>
+          <select name="supportCategory">
+            <option value="">${t("supportCategoryDefault")}</option>
+            <option value="general">${t("supportCategoryGeneral")}</option>
+            <option value="billing">${t("supportCategoryBilling")}</option>
+            <option value="technical">${t("supportCategoryTechnical")}</option>
+            <option value="report">${t("supportCategoryReport")}</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>${t("supportLabelMessage")}</label>
+          <textarea name="supportMessage" rows="4" placeholder="${t("supportPlaceholderMessage")}" required style="resize:vertical;"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">${t("supportBtnSubmit")}</button>
+      </form>
+    </div>
+  `;
+}
+
+async function handleSupportSubmit(form) {
+  const btn = form.querySelector("button[type=submit]");
+  setButtonLoading(btn, true);
+  try {
+    const name     = form.supportName.value.trim();
+    const email    = form.supportEmail.value.trim();
+    const category = form.supportCategory.value;
+    const message  = form.supportMessage.value.trim();
+
+    const { data: fnData, error: fnErr } = await sbClient.functions.invoke("submit-support-message", {
+      body: { name, email, category, message },
+    });
+
+    if (fnErr) { showToast(fnErr.message || t("errorGeneric"), "error"); return; }
+    if (!fnData?.ok) { showToast(fnData?.error || t("errorGeneric"), "error"); return; }
+
+    state.supportForm.success = true;
+    render();
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || t("errorGeneric"), "error");
+  } finally {
+    setButtonLoading(btn, false);
   }
 }
 
@@ -6810,6 +6914,10 @@ function attachGlobalListeners() {
         state.privacyModalOpen = false;
         render();
         break;
+      case "support-reset":
+        state.supportForm.success = false;
+        render();
+        break;
       case "subscribe":
         state.upgradeModalOpen = false;
         handleUpgrade(target.dataset.tier);
@@ -7112,6 +7220,9 @@ function attachGlobalListeners() {
         break;
       case "change-email-form":
         handleChangeEmail(form);
+        break;
+      case "support-form":
+        handleSupportSubmit(form);
         break;
       default:
         break;
