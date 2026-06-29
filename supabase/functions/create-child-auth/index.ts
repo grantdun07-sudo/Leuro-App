@@ -3,10 +3,11 @@
 // Creates a child Supabase Auth user for the DIRECT path
 // ("I'll set the password" in the Add Child modal).
 //
-// The handle_new_user trigger auto-creates profiles + learners rows on
-// auth.users INSERT. This function then updates the learners row with the
-// extra fields (full_name, email, invite_status) and links the child to
-// the calling parent's linked_learners array.
+// The live handle_new_user trigger auto-creates a profiles row on auth.users
+// INSERT but does NOT create a learners row. This function inserts the
+// learners row directly, then links the child to the calling parent's
+// linked_learners array. A pre-check guard handles the case where the
+// trigger is later updated to also create learners rows (upsert-safe).
 //
 // DEPLOY:
 //   supabase functions deploy create-child-auth --no-verify-jwt
@@ -199,54 +200,73 @@ Deno.serve(async (req: Request) => {
   console.log("create-child-auth: created auth user", childAuthId, "for parent", callerId);
 
   // -------------------------------------------------------------------------
-  // 4. Update the learners row the trigger just created
+  // 4. Upsert the learners row
   //
-  //    handle_new_user fires AFTER INSERT ON auth.users in the same database
-  //    transaction, so it has committed before createUser() resolves on our
-  //    side. We update — not insert — to avoid duplicating the row.
+  //    The LIVE handle_new_user trigger only creates a profiles row — it does
+  //    NOT create a learners row. We INSERT here. The pre-check guard handles
+  //    the case where the trigger is later re-enabled with learners support:
+  //    if a row already exists for this user_id, UPDATE it instead so we
+  //    never error or leave a duplicate.
   // -------------------------------------------------------------------------
 
-  const { data: learnerRow, error: learnerErr } = await admin
+  // Pre-check: does a learners row already exist for this child?
+  const { data: existingLearner, error: checkErr } = await admin
     .from("learners")
-    .update({
-      full_name: fullName,
-      email,
-      invite_status: "active",
-    })
-    .eq("user_id", childAuthId)
     .select("id")
-    .single();
+    .eq("user_id", childAuthId)
+    .maybeSingle();
 
-  if (learnerErr || !learnerRow) {
-    // The trigger may not have run yet in edge cases — attempt a direct insert.
-    console.warn(
-      "create-child-auth: learners UPDATE returned no row (trigger may have been slow).",
-      "Attempting INSERT. Error was:", learnerErr?.message,
+  if (checkErr) {
+    console.error("create-child-auth: learners pre-check failed:", checkErr.message, "— cleaning up", childAuthId);
+    await admin.auth.admin.deleteUser(childAuthId).catch((e: unknown) =>
+      console.error("create-child-auth: cleanup deleteUser failed:", e)
     );
+    return jsonErr("Account created but setup failed. Please try again.", 500);
+  }
 
-    const { data: insertedRow, error: insertErr } = await admin
+  let learnerId: string;
+
+  if (existingLearner) {
+    // Row already exists (trigger re-enabled) — update the extra fields only.
+    console.log("create-child-auth: learners row already exists for", childAuthId, "— updating");
+    const { data: updatedRow, error: updateErr } = await admin
       .from("learners")
-      .insert({ user_id: childAuthId, grade, full_name: fullName, email, invite_status: "active" })
+      .update({ full_name: fullName, email, invite_status: "active" })
+      .eq("user_id", childAuthId)
       .select("id")
       .single();
 
-    if (insertErr || !insertedRow) {
-      console.error(
-        "create-child-auth: learners INSERT also failed:", insertErr?.message,
-        "— cleaning up auth user", childAuthId,
-      );
+    if (updateErr || !updatedRow) {
+      console.error("create-child-auth: learners UPDATE failed:", updateErr?.message, "— cleaning up", childAuthId);
       await admin.auth.admin.deleteUser(childAuthId).catch((e: unknown) =>
         console.error("create-child-auth: cleanup deleteUser failed:", e)
       );
       return jsonErr("Account created but setup failed. Please try again.", 500);
     }
+    learnerId = updatedRow.id;
+  } else {
+    // Normal live path — no learners row exists, insert it.
+    const { data: insertedRow, error: insertErr } = await admin
+      .from("learners")
+      .insert({
+        user_id: childAuthId,
+        grade,
+        full_name: fullName,
+        email,
+        invite_status: "active",
+      })
+      .select("id")
+      .single();
 
-    // INSERT succeeded — fall through using insertedRow.
-    const learnerId = insertedRow.id;
-    return await linkAndRespond(admin, parentRecord, learnerId, childAuthId, callerId);
+    if (insertErr || !insertedRow) {
+      console.error("create-child-auth: learners INSERT failed:", insertErr?.message, "— cleaning up", childAuthId);
+      await admin.auth.admin.deleteUser(childAuthId).catch((e: unknown) =>
+        console.error("create-child-auth: cleanup deleteUser failed:", e)
+      );
+      return jsonErr("Account created but setup failed. Please try again.", 500);
+    }
+    learnerId = insertedRow.id;
   }
-
-  const learnerId = learnerRow.id;
 
   // -------------------------------------------------------------------------
   // 5. Append the new learner id to the parent's linked_learners array
