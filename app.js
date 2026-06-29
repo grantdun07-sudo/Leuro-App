@@ -2140,7 +2140,7 @@ function renderConfirmModal() {
 function renderTcModal() {
   return `
     <div class="modal-overlay" data-action="close-tc-modal">
-      <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="modal-sheet" onclick="if (!event.target.closest('[data-action]')) event.stopPropagation()">
         <div class="modal-header">
           <h3>${t("tcModalTitle")}</h3>
           <button class="modal-close" data-action="close-tc-modal">✕</button>
@@ -2210,7 +2210,7 @@ function renderTcModal() {
 function renderPrivacyModal() {
   return `
     <div class="modal-overlay" data-action="close-privacy-modal">
-      <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="modal-sheet" onclick="if (!event.target.closest('[data-action]')) event.stopPropagation()">
         <div class="modal-header">
           <h3>${t("privacyModalTitle")}</h3>
           <button class="modal-close" data-action="close-privacy-modal">✕</button>
