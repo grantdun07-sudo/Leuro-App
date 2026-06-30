@@ -172,6 +172,8 @@ Deno.serve(async (req: Request) => {
         const { data: learnerRow } = await admin
           .from("learners").select("id").eq("user_id", callerId).maybeSingle();
 
+        console.log("[safety] learnerRow.id =", learnerRow?.id, "| callerId =", callerId, "| sending learner_id =", learnerRow?.id ?? null);
+
         try {
           const flagRes = await fetch(`${supabaseUrl}/functions/v1/save-content-flag`, {
             method: "POST",
