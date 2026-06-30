@@ -119,7 +119,11 @@ Deno.serve(async (req: Request) => {
       return jsonRes({ success: false, reason: "invalid_reference" }, 200);
     }
 
-    // 5. Security check — the caller must own this learner.
+    // 5. Security check — confirm the learner row exists AND the caller owns it.
+    // Select-then-update (not update-and-hope): a learner row must be confirmed
+    // to exist before we ever report success, since a mismatched/garbage id in
+    // the reference (e.g. a user_id instead of a learners.id) must never be
+    // allowed to silently no-op into a false "success".
     const { data: learner, error: learnerErr } = await admin
       .from("learners")
       .select("id, user_id, subscription_tier")
@@ -128,12 +132,12 @@ Deno.serve(async (req: Request) => {
 
     if (learnerErr || !learner) {
       console.error("verify-and-store-payment: learner lookup failed:", learnerErr?.message, "id:", learnerId);
-      return jsonRes({ success: false, reason: "not_found" }, 200);
+      return jsonRes({ success: false, reason: "learner_not_found" }, 200);
     }
 
     if (learner.user_id !== callerId) {
       console.warn("verify-and-store-payment: caller", callerId, "does not own learner", learnerId);
-      return jsonRes({ success: false, reason: "forbidden" }, 403);
+      return jsonRes({ success: false, reason: "learner_not_found" }, 403);
     }
 
     const tierFrom = learner.subscription_tier ?? null;
@@ -161,7 +165,11 @@ Deno.serve(async (req: Request) => {
       return jsonRes({ success: false, reason: "server_error" }, 200);
     }
 
-    const { error: learnerUpdateErr } = await admin
+    // .select() on the update forces PostgREST to return the rows it actually
+    // touched — if the row vanished between the lookup above and this write
+    // (or the id was somehow wrong despite the lookup), we get an empty array
+    // back rather than silently reporting success with nothing written.
+    const { data: updatedLearners, error: learnerUpdateErr } = await admin
       .from("learners")
       .update({
         subscription_tier: tier,
@@ -169,11 +177,17 @@ Deno.serve(async (req: Request) => {
         next_payment_date: nextPaymentIso,
         last_charge_at: nowIso,
       })
-      .eq("id", learnerId);
+      .eq("id", learnerId)
+      .select("id");
 
     if (learnerUpdateErr) {
       console.error("verify-and-store-payment: learners update failed:", learnerUpdateErr.message);
       return jsonRes({ success: false, reason: "server_error" }, 200);
+    }
+
+    if (!updatedLearners || updatedLearners.length === 0) {
+      console.error("verify-and-store-payment: learners update affected 0 rows for id:", learnerId);
+      return jsonRes({ success: false, reason: "learner_not_found" }, 200);
     }
 
     const { error: historyErr } = await admin
