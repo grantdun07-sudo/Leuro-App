@@ -6802,12 +6802,17 @@ function handleChildUpgrade(learnerId, tier) {
       referral_code: state.profile.referral_code_used || "",
     },
     callback(response) {
+      console.log("[CHILD-CB] callback entered, ref:", response?.reference);
       // Don't trust the popup alone — confirm + store token server-side.
       showToast(t("paymentVerifyingMsg") || "Confirming payment…", "info");
       (async () => {
+        console.log("[CHILD-CB] async wrapper started");
         try {
+          console.log("[CHILD-CB] about to getSession, sbClient is:", typeof sbClient);
           const { data: sess } = await sbClient.auth.getSession();
           const token = sess?.session?.access_token;
+          console.log("[CHILD-CB] got token:", token ? "YES" : "NO", "URL:", SUPABASE_URL);
+          console.log("[CHILD-CB] about to fetch verify-and-store-payment");
           const res = await fetch(`${SUPABASE_URL}/functions/v1/verify-and-store-payment`, {
             method: "POST",
             headers: {
@@ -6824,7 +6829,7 @@ function handleChildUpgrade(learnerId, tier) {
             showToast("We couldn't confirm your payment yet. If you were charged, contact hello@leuroai.co.za — we'll sort it out.", "error");
           }
         } catch (e) {
-          console.error("verify-and-store-payment call failed:", e);
+          console.error("[CHILD-CB] threw:", e);
           showToast("We couldn't confirm your payment yet. If you were charged, contact hello@leuroai.co.za — we'll sort it out.", "error");
         } finally {
           state.childUpgradeModalOpen = false;
@@ -6832,7 +6837,9 @@ function handleChildUpgrade(learnerId, tier) {
           await loadParentData();
           render();
         }
-      })();
+      })().catch((err) => {
+        console.error("[CHILD-CB] outer throw:", err);
+      });
     },
     onClose() {
       showToast(t("paymentCancelledMsg"), "info");
