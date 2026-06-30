@@ -6188,9 +6188,6 @@ function renderAccountTab() {
   const profile = state.profile;
   const learner = state.learner;
   const isLearner = profile.role === "learner";
-  const tier = profile.subscription_tier || "free";
-  const tierBadgeClass =
-    tier === "premium" ? "tier-badge-premium" : tier === "basic" ? "tier-badge-basic" : "tier-badge-free";
 
   return `
     <h3 class="screen-title" style="margin:0 0 14px;">${t("accountHeading")}</h3>
@@ -6207,21 +6204,6 @@ function renderAccountTab() {
 
     <!-- 2. Change email (parent only) -->
     ${!isLearner ? renderChangeEmailSection() : ""}
-
-    <!-- 3a. Subscription (learner only — parents use per-child billing) -->
-    ${isLearner ? `
-    <div class="card">
-      <div class="account-section-row">
-        <span class="account-section-label">${t("subscriptionLabel")}</span>
-        <span class="tier-badge ${tierBadgeClass}">${t(tier)}</span>
-      </div>
-      ${
-        tier === "free"
-          ? `<button class="btn btn-gold btn-block" style="margin-top:14px;" data-action="account-upgrade">${t("upgradeLabel")}</button>`
-          : ""
-      }
-    </div>
-    ` : ""}
 
     <!-- 3. Language -->
     <div class="card">
@@ -6254,7 +6236,6 @@ function renderAccountTab() {
     <!-- 5. Logout -->
     <button class="btn btn-danger btn-block" data-action="logout" style="margin-top:6px;">${t("btnLogout")}</button>
 
-    ${isLearner && state.upgradeModalOpen ? renderUpgradeModal() : ""}
     ${state.tcModalOpen ? renderTcModal() : ""}
     ${state.privacyModalOpen ? renderPrivacyModal() : ""}
   `;
