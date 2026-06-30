@@ -6811,6 +6811,7 @@ function handleChildUpgrade(learnerId, tier) {
     currency: "ZAR",
     ref: reference,
     label: `Leuro ${capitalize(tier)} Monthly`,
+    channels: ["card"],
     metadata: {
       tier,
       learner_id: learnerId,
@@ -6818,11 +6819,37 @@ function handleChildUpgrade(learnerId, tier) {
       referral_code: state.profile.referral_code_used || "",
     },
     callback(response) {
-      console.log("Paystack success:", response.reference);
-      showToast(t("paymentSuccessMsg"), "success");
-      state.childUpgradeModalOpen = false;
-      state.upgradeTargetLearnerId = null;
-      render();
+      // Don't trust the popup alone — confirm + store token server-side.
+      showToast(t("paymentVerifyingMsg") || "Confirming payment…", "info");
+      (async () => {
+        try {
+          const { data: sess } = await sbClient.auth.getSession();
+          const token = sess?.session?.access_token;
+          const res = await fetch(`${SUPABASE_URL}/functions/v1/verify-and-store-payment`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`,
+              "apikey": SUPABASE_ANON_KEY,
+            },
+            body: JSON.stringify({ reference: response.reference }),
+          });
+          const result = await res.json();
+          if (result.success) {
+            showToast(t("paymentSuccessMsg"), "success");
+          } else {
+            showToast("We couldn't confirm your payment yet. If you were charged, contact hello@leuroai.co.za — we'll sort it out.", "error");
+          }
+        } catch (e) {
+          console.error("verify-and-store-payment call failed:", e);
+          showToast("We couldn't confirm your payment yet. If you were charged, contact hello@leuroai.co.za — we'll sort it out.", "error");
+        } finally {
+          state.childUpgradeModalOpen = false;
+          state.upgradeTargetLearnerId = null;
+          await loadParentData();
+          render();
+        }
+      })();
     },
     onClose() {
       showToast(t("paymentCancelledMsg"), "info");
