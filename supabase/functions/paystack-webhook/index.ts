@@ -15,7 +15,23 @@
 // Reference format (INITIAL charge only): LEURO-{learner_id}-{timestamp}
 //   learner_id is the UUID from the learners table (NOT the parent user_id).
 //   Renewal charges (month 2+) carry a Paystack-generated reference with no
-//   LEURO prefix — those are mapped via paystack_customer_code instead.
+//   LEURO prefix — those are mapped via subscription_code first, customer_code
+//   only as a fallback (see below for why customer_code alone is unsafe).
+//
+// IMPORTANT — why subscription_code, not just customer_code:
+//   Paystack deduplicates customers by email. Since every one of a parent's
+//   children subscribes using the PARENT's email, ALL of a parent's children
+//   share the exact same Paystack customer_code. customer_code therefore
+//   cannot distinguish which of a parent's several paid children a given
+//   subscription/event belongs to — only subscription_code is unique per
+//   learner. subscription_code is captured two ways: (1) actively fetched and
+//   claimed right after the INITIAL charge (see handleChargeSuccess), rather
+//   than relying on the subscription.create webhook event, which we've
+//   confirmed doesn't reliably fire/deliver. (2) On RENEWAL charges, used as
+//   the PRIMARY mapping key when present on the event; customer_code is only
+//   a fallback, and if that fallback matches more than one learner (i.e. two
+//   siblings on paid tiers with no subscription_code recorded on the event),
+//   the handler refuses to guess and does not write anything.
 //
 // Ground truth confirmed from real production logs:
 //   - charge.success fires FIRST for the initial subscription payment, with
@@ -132,6 +148,15 @@ const corsHeaders = {
 };
 
 type Learner = { id: string; user_id: string; subscription_tier: string | null };
+type LearnerClaim = { id: string; subscription_code: string | null };
+
+type PaystackSubscriptionListItem = {
+  subscription_code?: string;
+  email_token?: string;
+  status?: string;
+  createdAt?: string;
+  plan?: { plan_code?: string };
+};
 
 async function updateLearner(learnerId: string, fields: Record<string, unknown>): Promise<void> {
   const { error } = await supabase.from("learners").update(fields).eq("id", learnerId);
@@ -183,6 +208,98 @@ async function findLearnerBySubscriptionCode(subscriptionCode: string): Promise<
   return data as Learner;
 }
 
+// Returns EVERY learner matching this customer_code — unlike
+// findLearnerByCustomerCode (.maybeSingle()), this is used specifically to
+// DETECT ambiguity (siblings sharing one Paystack customer), not to resolve
+// a single row.
+async function findLearnersByCustomerCode(customerCode: string): Promise<Learner[]> {
+  const { data, error } = await supabase
+    .from("learners")
+    .select("id, user_id, subscription_tier")
+    .eq("paystack_customer_code", customerCode);
+  if (error || !data) return [];
+  return data as Learner[];
+}
+
+// Used when claiming a subscription_code for a newly-activated learner, to
+// exclude any candidate subscription already claimed by a DIFFERENT learner
+// row (a sibling on the same plan).
+async function findLearnersBySubscriptionCodes(subscriptionCodes: string[]): Promise<LearnerClaim[]> {
+  if (subscriptionCodes.length === 0) return [];
+  const { data, error } = await supabase
+    .from("learners")
+    .select("id, subscription_code")
+    .in("subscription_code", subscriptionCodes);
+  if (error || !data) return [];
+  return data as LearnerClaim[];
+}
+
+// Actively fetches this customer's subscription list from Paystack and
+// claims the one that belongs to THIS learner, rather than trusting
+// data.subscription_code on the charge event blindly — Paystack customer
+// records are shared across siblings, so the list can contain a sibling's
+// subscription too. Filters to this plan + excludes codes already claimed by
+// OTHER learner rows, then picks the most recently created remaining
+// candidate. Best-effort only: returns null (never throws) on any failure so
+// tier activation in the caller is never blocked by this.
+async function resolveSubscriptionCodeForNewLearner(
+  numericCustomerId: number,
+  planCode: string,
+  thisLearnerId: string,
+): Promise<string | null> {
+  try {
+    const paystackSecret = Deno.env.get("PAYSTACK_TEST_SECRET") ?? "";
+    const listRes = await fetch(
+      `https://api.paystack.co/subscription?customer=${numericCustomerId}`,
+      { method: "GET", headers: { Authorization: `Bearer ${paystackSecret}` } },
+    );
+    const listBody = await listRes.json();
+    const subs: PaystackSubscriptionListItem[] = Array.isArray(listBody?.data) ? listBody.data : [];
+
+    const candidates = subs.filter((s) => s.status === "active" && s.plan?.plan_code === planCode);
+    if (candidates.length === 0) {
+      console.warn(
+        "paystack-webhook: charge.success (initial) — no active subscriptions matching plan", planCode,
+        "found at Paystack for customer", numericCustomerId, "| raw list:", JSON.stringify(listBody),
+      );
+      return null;
+    }
+
+    const candidateCodes = candidates.map((c) => c.subscription_code).filter((c): c is string => !!c);
+    const claims = await findLearnersBySubscriptionCodes(candidateCodes);
+    const claimedByOthers = new Set(
+      claims.filter((l) => l.id !== thisLearnerId && l.subscription_code).map((l) => l.subscription_code as string),
+    );
+
+    const unclaimed = candidates.filter((c) => c.subscription_code && !claimedByOthers.has(c.subscription_code));
+    if (unclaimed.length === 0) {
+      console.warn(
+        "paystack-webhook: charge.success (initial) — all", candidates.length,
+        "candidate subscription(s) for customer", numericCustomerId, "plan", planCode,
+        "are already claimed by sibling learners — cannot claim one for learner", thisLearnerId,
+      );
+      return null;
+    }
+
+    unclaimed.sort((a, b) => {
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bTime - aTime;
+    });
+
+    const chosen = unclaimed[0];
+    console.log(
+      "paystack-webhook: charge.success (initial) — claimed subscription_code", chosen.subscription_code,
+      "for learner", thisLearnerId, "(", candidates.length, "candidate(s) total,", claimedByOthers.size, "already claimed by siblings)",
+    );
+    return chosen.subscription_code ?? null;
+  } catch (e) {
+    const eMsg = e instanceof Error ? e.message : String(e);
+    console.error("paystack-webhook: charge.success (initial) — subscription_code resolution threw:", eMsg);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // charge.success — the anchor event. Initial charges carry the LEURO
 // reference and MUST set the tier + store customer_code/subscription_code.
@@ -197,6 +314,7 @@ async function handleChargeSuccess(data: Record<string, unknown>): Promise<void>
   const reference = String(data.reference ?? "");
   const customer = data.customer as Record<string, unknown> | undefined;
   const customerCode = (customer?.customer_code as string) ?? null;
+  const customerNumericId = typeof customer?.id === "number" ? customer.id : null;
   const subscriptionCode = (data.subscription_code as string) ?? null;
   const planCode = extractPlanCode(data);
   const amountRand = Number(data.amount ?? 0) / 100;
@@ -204,6 +322,7 @@ async function handleChargeSuccess(data: Record<string, unknown>): Promise<void>
   console.log(
     "paystack-webhook: charge.success — ref:", reference,
     "| customer_code:", customerCode,
+    "| customer numeric id:", customerNumericId,
     "| subscription_code present:", subscriptionCode != null, "value:", subscriptionCode,
     "| plan_code:", planCode,
   );
@@ -230,7 +349,7 @@ async function handleChargeSuccess(data: Record<string, unknown>): Promise<void>
     }
 
     const tier = tierFromPlanCode(planCode);
-    if (!tier) {
+    if (!tier || !planCode) {
       console.error(
         "paystack-webhook: charge.success (initial) — cannot determine tier, unrecognised/missing plan_code:",
         planCode, "— skipping activation for learner", learnerIdFromRef,
@@ -240,14 +359,36 @@ async function handleChargeSuccess(data: Record<string, unknown>): Promise<void>
 
     const tierFrom = learner.subscription_tier ?? null;
 
-    await updateLearner(learnerIdFromRef, {
+    // Actively fetch-and-claim THIS learner's subscription_code rather than
+    // trusting data.subscription_code blindly: paystack_customer_code is
+    // shared across all of a parent's children (Paystack dedupes customers
+    // by email), so the customer's subscription list at Paystack can contain
+    // a sibling's subscription too. See resolveSubscriptionCodeForNewLearner.
+    let resolvedSubscriptionCode: string | null = null;
+    if (customerNumericId != null) {
+      resolvedSubscriptionCode = await resolveSubscriptionCodeForNewLearner(customerNumericId, planCode, learnerIdFromRef);
+    } else {
+      console.warn(
+        "paystack-webhook: charge.success (initial) — no numeric customer id (data.customer.id) on event, cannot claim subscription_code for learner",
+        learnerIdFromRef,
+      );
+    }
+
+    const learnerUpdateFields: Record<string, unknown> = {
       subscription_tier: tier,
       subscription_status: "active",
       last_charge_at: nowIso,
       next_payment_date: nextPaymentDate,
       paystack_customer_code: customerCode,
-      subscription_code: subscriptionCode,
-    });
+    };
+    // Best-effort enrichment only — tier activation must succeed even if this
+    // failed. Omitting the field (rather than writing null) also protects a
+    // previously-successful claim from being wiped out on a webhook retry.
+    if (resolvedSubscriptionCode) {
+      learnerUpdateFields.subscription_code = resolvedSubscriptionCode;
+    }
+
+    await updateLearner(learnerIdFromRef, learnerUpdateFields);
 
     await insertSubscriptionHistory({
       userId: learner.user_id,
@@ -258,19 +399,62 @@ async function handleChargeSuccess(data: Record<string, unknown>): Promise<void>
       paymentRef: reference,
     });
 
-    console.log(`paystack-webhook: charge.success (initial) — activated learner ${learnerIdFromRef} → ${tier}`);
+    console.log(
+      `paystack-webhook: charge.success (initial) — activated learner ${learnerIdFromRef} → ${tier}`,
+      resolvedSubscriptionCode
+        ? `(subscription_code claimed: ${resolvedSubscriptionCode})`
+        : "(subscription_code NOT claimed — best-effort enrichment failed, tier activation still succeeded)",
+    );
   } else {
-    // RENEWAL charge — no LEURO reference, map by customer_code instead.
-    if (!customerCode) {
-      console.error("paystack-webhook: charge.success (renewal) — no customer_code on event, cannot map. ref:", reference);
+    // RENEWAL charge — no LEURO reference. subscription_code (when present
+    // on the event) is the ONLY unambiguous mapping key: paystack_customer_code
+    // is shared across all of a parent's children, so customer_code alone
+    // cannot tell siblings apart. Fallback to customer_code is only used
+    // when the event has no subscription_code at all, and even then a
+    // customer_code match against MORE THAN ONE learner is refused rather
+    // than guessed.
+    let learner: Learner | null = null;
+    let pathUsed = "none";
+
+    if (subscriptionCode) {
+      learner = await findLearnerBySubscriptionCode(subscriptionCode);
+      if (learner) {
+        pathUsed = "subscription_code";
+      } else {
+        console.error(
+          "paystack-webhook: charge.success (renewal) — subscription_code present but no learner found for it:",
+          subscriptionCode, "— NOT falling back to customer_code (would be ambiguous across siblings). ref:", reference,
+        );
+        return;
+      }
+    } else if (customerCode) {
+      const matches = await findLearnersByCustomerCode(customerCode);
+      if (matches.length === 0) {
+        console.error("paystack-webhook: charge.success (renewal) — no learner found for customer_code:", customerCode);
+        return;
+      }
+      if (matches.length > 1) {
+        console.error(
+          "paystack-webhook: charge.success (renewal) — AMBIGUOUS: customer_code", customerCode,
+          "matches", matches.length, "learners (ids:", matches.map((m) => m.id).join(", "),
+          ") and the event has no subscription_code to disambiguate. Refusing to guess — no write performed. Raw event data:",
+          JSON.stringify(data),
+        );
+        return;
+      }
+      learner = matches[0];
+      pathUsed = "paystack_customer_code (single match)";
+    } else {
+      console.error("paystack-webhook: charge.success (renewal) — no subscription_code and no customer_code on event, cannot map. ref:", reference);
       return;
     }
 
-    const learner = await findLearnerByCustomerCode(customerCode);
     if (!learner) {
-      console.error("paystack-webhook: charge.success (renewal) — no learner found for customer_code:", customerCode);
+      console.error("paystack-webhook: charge.success (renewal) — unexpected: no learner resolved after mapping logic. ref:", reference);
       return;
     }
+
+    console.log("paystack-webhook: charge.success (renewal) — mapped via:", pathUsed, "| learner:", learner.id);
 
     await updateLearner(learner.id, {
       subscription_status: "active",
