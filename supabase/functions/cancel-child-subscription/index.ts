@@ -1,6 +1,8 @@
 // Supabase Edge Function: cancel-child-subscription
 // (self-contained, no _shared imports)
-// DEPLOY: supabase functions deploy cancel-child-subscription --no-verify-jwt
+// DEPLOY: paste via Supabase dashboard — Verify JWT must be ON (this function
+// relies on auth.getUser() to identify the calling parent; do NOT disable JWT
+// verification for this function).
 // SECRETS: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY, PAYSTACK_TEST_SECRET
 //
 // Parent-triggered cancellation for a child's native Paystack subscription.
