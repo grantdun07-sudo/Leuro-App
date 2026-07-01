@@ -372,6 +372,7 @@ const translations = {
     upgradeChildModalTitle: "Upgrade {name}'s Plan",
     upgradeChildIntro: "Choose a plan for {name}.",
     btnUpgrade: "Upgrade",
+    btnCancelSubscription: "Cancel Subscription",
 
     loading: "Loading...",
     errorGeneric: "Something went wrong. Please try again.",
@@ -382,6 +383,7 @@ const translations = {
     confirmCloseExam: "Close exam? Your progress will be lost and the exam won't be scored.",
     confirmRetakeDiagnostic: "Retake the diagnostic? This will replace your current level.",
     confirmFreezeAccount: "Freeze this account? The user will be locked out immediately.",
+    confirmCancelChildSubscription: "Cancel this child's subscription? They'll keep access until the current billing period ends, then drop to the Free tier.",
     changeEmailHeading: "Change Email Address",
     changeEmailBtn: "Change email",
     changeEmailNewLabel: "New email address",
@@ -772,6 +774,7 @@ const translations = {
     upgradeChildModalTitle: "Gradeer {name} se Plan op",
     upgradeChildIntro: "Kies 'n plan vir {name}.",
     btnUpgrade: "Gradeer op",
+    btnCancelSubscription: "Kanselleer Subskripsie",
 
     loading: "Laai...",
     errorGeneric: "Iets het verkeerd geloop. Probeer asseblief weer.",
@@ -782,6 +785,7 @@ const translations = {
     confirmCloseExam: "Eksamen sluit? Jou vordering sal verlore gaan en die eksamen sal nie gegradeer word nie.",
     confirmRetakeDiagnostic: "Diagnose herhaal? Dit sal jou huidige vlak vervang.",
     confirmFreezeAccount: "Hierdie rekening bevries? Die gebruiker sal onmiddellik uitgeskakel word.",
+    confirmCancelChildSubscription: "Kanselleer hierdie kind se subskripsie? Hulle behou toegang tot die huidige faktureringstydperk eindig, en val dan terug na die Gratis vlak.",
     changeEmailHeading: "Verander e-posadres",
     changeEmailBtn: "Verander e-pos",
     changeEmailNewLabel: "Nuwe e-posadres",
@@ -6498,19 +6502,26 @@ function renderLinkedChildCard(learner) {
   const tierBadgeClass = tier === "premium" ? "tier-badge-premium" : tier === "basic" ? "tier-badge-basic" : "tier-badge-free";
   const isPending = learner.invite_status === "pending";
   const canUpgrade = !isPending && tier !== "premium";
+  const canCancel = !isPending && tier !== "free";
   return `
     <div class="linked-child-card">
       <div>
         <div style="font-weight:700;">${escapeHtml(learner.full_name)}</div>
         <div class="muted">${t("gradeLabel")} ${learner.grade}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        ${isPending
-          ? `<span class="tier-badge" style="background:var(--border);color:var(--text-muted);">${t("inviteStatusPending")}</span>`
-          : `<span class="tier-badge ${tierBadgeClass}">${t(tier)}</span>`
-        }
-        ${canUpgrade
-          ? `<button class="btn btn-gold btn-sm" data-action="open-child-upgrade-modal" data-learner-id="${learner.id}">${t("btnUpgrade")}</button>`
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${isPending
+            ? `<span class="tier-badge" style="background:var(--border);color:var(--text-muted);">${t("inviteStatusPending")}</span>`
+            : `<span class="tier-badge ${tierBadgeClass}">${t(tier)}</span>`
+          }
+          ${canUpgrade
+            ? `<button class="btn btn-gold btn-sm" data-action="open-child-upgrade-modal" data-learner-id="${learner.id}">${t("btnUpgrade")}</button>`
+            : ""
+          }
+        </div>
+        ${canCancel
+          ? `<button class="btn-link" style="font-size:12px;" data-action="cancel-child-subscription-confirm" data-learner-id="${learner.id}">${t("btnCancelSubscription")}</button>`
           : ""
         }
       </div>
@@ -6817,6 +6828,36 @@ function handleChildUpgrade(learnerId, tier) {
   handler.openIframe();
 }
 
+async function handleCancelChildSubscription(learnerId) {
+  showToast("Cancelling subscription…", "info");
+  try {
+    const { data: sess } = await sbClient.auth.getSession();
+    const token = sess?.session?.access_token;
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/cancel-child-subscription`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "apikey": SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ learnerId }),
+    });
+    const result = await res.json();
+    if (result.success) {
+      showToast(result.message || "Subscription cancelled.", "success");
+    } else {
+      showToast("Couldn't cancel subscription. Please try again or contact hello@leuroai.co.za.", "error");
+      console.error("cancel-child-subscription failed:", result);
+    }
+  } catch (e) {
+    console.error("cancel-child-subscription call failed:", e);
+    showToast("Couldn't cancel subscription. Please try again or contact hello@leuroai.co.za.", "error");
+  } finally {
+    await loadParentData();
+    render();
+  }
+}
+
 // ---------------------------------------------------------------------
 // GLOBAL EVENT DISPATCHER
 // ---------------------------------------------------------------------
@@ -6880,6 +6921,14 @@ function attachGlobalListeners() {
       case "child-subscribe":
         state.childUpgradeModalOpen = false;
         handleChildUpgrade(target.dataset.learnerId, target.dataset.tier);
+        break;
+      case "cancel-child-subscription-confirm":
+        state.confirmModal = {
+          message: t("confirmCancelChildSubscription"),
+          confirmAction: "cancel-child-subscription-confirmed",
+          learnerId: target.dataset.learnerId,
+        };
+        render();
         break;
       case "admin-toggle-referral-code":
         adminToggleReferralCode(target.dataset.codeId);
@@ -7130,11 +7179,12 @@ function attachGlobalListeners() {
         render();
         break;
       case "confirm-modal-ok": {
-        const { confirmAction, userId: confirmUserId } = state.confirmModal || {};
+        const { confirmAction, userId: confirmUserId, learnerId: confirmLearnerId } = state.confirmModal || {};
         state.confirmModal = null;
         if (confirmAction === "exam-close-confirmed") examClose();
         else if (confirmAction === "retake-diagnostic-confirmed") retakeDiagnostic();
         else if (confirmAction === "admin-freeze-confirmed") adminToggleFreeze(confirmUserId, false, null);
+        else if (confirmAction === "cancel-child-subscription-confirmed") handleCancelChildSubscription(confirmLearnerId);
         render();
         break;
       }
