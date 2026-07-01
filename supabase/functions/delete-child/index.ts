@@ -282,7 +282,8 @@ Deno.serve(async (req: Request) => {
     if (deleteUserErr) {
       console.error(
         "delete-child: step h (deleteUser) failed for learner", learnerId,
-        "childAuthId", childAuthId, ":", deleteUserErr.message,
+        "childAuthId", childAuthId,
+        "| full error:", JSON.stringify(deleteUserErr, Object.getOwnPropertyNames(deleteUserErr)),
       );
       return jsonRes({ success: false, reason: "deletion_incomplete", detail: deleteUserErr.message }, 200);
     }
