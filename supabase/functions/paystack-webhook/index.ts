@@ -173,6 +173,16 @@ async function findLearnerByCustomerCode(customerCode: string): Promise<Learner 
   return data as Learner;
 }
 
+async function findLearnerBySubscriptionCode(subscriptionCode: string): Promise<Learner | null> {
+  const { data, error } = await supabase
+    .from("learners")
+    .select("id, user_id, subscription_tier")
+    .eq("subscription_code", subscriptionCode)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as Learner;
+}
+
 // ---------------------------------------------------------------------------
 // charge.success — the anchor event. Initial charges carry the LEURO
 // reference and MUST set the tier + store customer_code/subscription_code.
@@ -376,25 +386,44 @@ async function handleInvoicePaymentFailed(data: Record<string, unknown>, event: 
 
 // ---------------------------------------------------------------------------
 // subscription.disable / subscription.not_renew — payload shape NOT yet
-// confirmed from real logs. Same fail-safe logging approach as above.
+// confirmed from real logs. Looks up primarily via paystack_customer_code
+// (the field proven reliably present on every event so far), falling back
+// to subscription_code only if that lookup finds nothing — subscription_code
+// is usually null on our learner rows since subscription.create (the only
+// event that backfills it) doesn't reliably arrive. Relying on
+// subscription_code as the primary key would silently fail to cancel a real
+// subscription, leaving the learner marked as a paid tier indefinitely.
 // ---------------------------------------------------------------------------
 async function handleSubscriptionCancelled(data: Record<string, unknown>, event: unknown, eventType: string): Promise<void> {
   console.log(`paystack-webhook: ${eventType} event:`, JSON.stringify(event));
 
+  const customer = data.customer as Record<string, unknown> | undefined;
+  const customerCode = (customer?.customer_code as string) ?? null;
   const subscriptionCode = (data.subscription_code as string) ?? null;
-  if (!subscriptionCode) {
-    console.error(`paystack-webhook: ${eventType} — no subscription_code on event, cannot map`);
-    return;
+
+  let learner: Learner | null = null;
+  let pathUsed = "none";
+
+  if (customerCode) {
+    learner = await findLearnerByCustomerCode(customerCode);
+    if (learner) pathUsed = "paystack_customer_code";
   }
 
-  const { data: learner, error } = await supabase
-    .from("learners")
-    .select("id, user_id, subscription_tier")
-    .eq("subscription_code", subscriptionCode)
-    .maybeSingle();
+  if (!learner && subscriptionCode) {
+    learner = await findLearnerBySubscriptionCode(subscriptionCode);
+    if (learner) pathUsed = "subscription_code (fallback)";
+  }
 
-  if (error || !learner) {
-    console.error(`paystack-webhook: ${eventType} — no learner found for subscription_code:`, subscriptionCode);
+  console.log(
+    `paystack-webhook: ${eventType} — lookup resolved via:`, pathUsed,
+    "| customer_code:", customerCode, "| subscription_code:", subscriptionCode,
+  );
+
+  if (!learner) {
+    console.error(
+      `paystack-webhook: ${eventType} — no learner found via customer_code or subscription_code. Raw event:`,
+      JSON.stringify(event),
+    );
     return;
   }
 
@@ -411,7 +440,7 @@ async function handleSubscriptionCancelled(data: Record<string, unknown>, event:
     paymentRef: null,
   });
 
-  console.log(`paystack-webhook: ${eventType} — cancelled learner`, learner.id);
+  console.log(`paystack-webhook: ${eventType} — cancelled learner`, learner.id, `(matched via ${pathUsed})`);
 }
 
 Deno.serve(async (req: Request) => {
