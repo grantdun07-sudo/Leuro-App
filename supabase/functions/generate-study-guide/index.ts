@@ -314,7 +314,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const [{ data: learner, error: learnerErr }, { data: profile }] = await Promise.all([
-      supabase.from("learners").select("id, grade, diagnostic_level").eq("user_id", userData.user.id).single(),
+      supabase.from("learners").select("id, grade, diagnostic_level, subscription_status").eq("user_id", userData.user.id).single(),
       supabase.from("profiles").select("subscription_tier, lang").eq("id", userData.user.id).single(),
     ]);
 
@@ -325,10 +325,17 @@ Deno.serve(async (req: Request) => {
     const lang = profile?.lang ?? "en";
     const tier = profile?.subscription_tier ?? "free";
 
+    // A failed/cancelled renewal (learners.subscription_status) overrides
+    // subscription_tier: the tier column can lag briefly before the webhook
+    // clears it, so status is the authoritative signal for whether premium
+    // access should still apply.
+    const isPastDueOrCancelled = learner.subscription_status === "past_due" || learner.subscription_status === "cancelled";
+    const effectivelyPremium = tier === "premium" && !isPastDueOrCancelled;
+
     // Study Guide and Exam Refresher (all phases) are Premium-only features.
     // Gate them server-side so the limit cannot be bypassed by calling the
     // function directly, mirroring the premium check in generate-mock-exam.
-    if (["studyguide", "refresher", "refresher-feedback"].includes(body.phase) && tier !== "premium") {
+    if (["studyguide", "refresher", "refresher-feedback"].includes(body.phase) && !effectivelyPremium) {
       return jsonResponse(
         {
           error: "premium_required",

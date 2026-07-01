@@ -177,7 +177,7 @@ Deno.serve(async (req: Request) => {
     const [{ data: learner, error: learnerErr }, { data: profile }] = await Promise.all([
       supabase
         .from("learners")
-        .select("id, grade, diagnostic_level")
+        .select("id, grade, diagnostic_level, subscription_status")
         .eq("id", learnerId)
         .eq("user_id", userData.user.id)
         .single(),
@@ -191,8 +191,15 @@ Deno.serve(async (req: Request) => {
     const tier = profile?.subscription_tier ?? "free";
     const lang = profile?.lang ?? "en";
 
+    // A failed/cancelled renewal (learners.subscription_status) overrides
+    // subscription_tier: the tier column can lag briefly before the webhook
+    // clears it, so status is the authoritative signal for whether premium
+    // access should still apply.
+    const isPastDueOrCancelled = learner.subscription_status === "past_due" || learner.subscription_status === "cancelled";
+    const effectivelyPremium = tier === "premium" && !isPastDueOrCancelled;
+
     // "low" difficulty is available on every tier; "medium"/"high" are Premium-only.
-    if (difficulty !== "low" && tier !== "premium") {
+    if (difficulty !== "low" && !effectivelyPremium) {
       return jsonResponse(
         {
           error: "premium_required",

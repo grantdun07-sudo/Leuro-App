@@ -373,6 +373,7 @@ const translations = {
     upgradeChildIntro: "Choose a plan for {name}.",
     btnUpgrade: "Upgrade",
     btnCancelSubscription: "Cancel Subscription",
+    pastDueBannerMsg: "Payment issue — please renew to keep Premium access.",
 
     loading: "Loading...",
     errorGeneric: "Something went wrong. Please try again.",
@@ -775,6 +776,7 @@ const translations = {
     upgradeChildIntro: "Kies 'n plan vir {name}.",
     btnUpgrade: "Gradeer op",
     btnCancelSubscription: "Kanselleer Subskripsie",
+    pastDueBannerMsg: "Betalingprobleem — hernu asseblief om Premium-toegang te behou.",
 
     loading: "Laai...",
     errorGeneric: "Iets het verkeerd geloop. Probeer asseblief weer.",
@@ -3914,7 +3916,7 @@ function getAvailableSubjects() {
 }
 
 function renderLearnTab() {
-  const tier = state.profile.subscription_tier;
+  const tier = getEffectiveLearnerTier();
   const limitReached = tier === "free" && state.sessionsToday >= 3;
   const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
 
@@ -4020,7 +4022,7 @@ async function openTopicSession(topicId) {
   const topic = state.topics.find((tp) => tp.id === topicId);
   if (!topic) return;
 
-  const tier = state.profile.subscription_tier;
+  const tier = getEffectiveLearnerTier();
   if (tier === "free" && (state.sessionsToday >= 3 || getLocalSessionCount() >= 3)) {
     showToast(t("limitReachedMsg"), "error");
     return;
@@ -4324,6 +4326,30 @@ function renderExamsTab() {
   `;
 }
 
+// A failed/cancelled renewal (learners.subscription_status) overrides
+// subscription_tier client-side too: the tier column can lag briefly before
+// the webhook clears it, so status is the authoritative signal. This is a
+// UX mirror only — the real enforcement is server-side in generate-study-guide
+// and generate-mock-exam.
+function getEffectiveLearnerTier() {
+  const status = state.learner?.subscription_status;
+  if (status === "past_due" || status === "cancelled") return "free";
+  return state.profile.subscription_tier;
+}
+
+// Small "please renew" banner shown on the learner's Study Guide / Mock Exam
+// sections when their subscription is past_due. Reuses the existing
+// alert-banner-danger styling from the parent dashboard's alert banners.
+function renderPastDueBanner() {
+  if (state.learner?.subscription_status !== "past_due") return "";
+  return `
+    <div class="alert-banner alert-banner-danger">
+      <span class="alert-banner-icon">⚠️</span>
+      <span>${t("pastDueBannerMsg")}</span>
+    </div>
+  `;
+}
+
 // Renders a "Premium feature" lock card with an upgrade CTA, mirroring how the
 // Mock Exam tab steers free/basic learners to the Account tab to upgrade.
 function renderPremiumGate(messageKey) {
@@ -4340,8 +4366,8 @@ function renderPremiumGate(messageKey) {
 }
 
 function renderStudyGuideSection() {
-  if (state.profile.subscription_tier !== "premium") {
-    return renderPremiumGate("studyGuidePremiumMsg");
+  if (getEffectiveLearnerTier() !== "premium") {
+    return renderPastDueBanner() + renderPremiumGate("studyGuidePremiumMsg");
   }
 
   const sg = state.studyGuide;
@@ -4529,7 +4555,7 @@ function renderFlashcardResults(fc) {
 const EXAM_DIFF_STAT = { low: "examStatLow", medium: "examStatMedium", high: "examStatHigh" };
 
 function renderMockExamSection() {
-  const tier = state.profile.subscription_tier;
+  const tier = getEffectiveLearnerTier();
   const isPremium = tier === "premium";
   const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
   const completedExams = state.exams.filter((e) => e.completed_at);
@@ -4538,6 +4564,7 @@ function renderMockExamSection() {
   const selectedDifficulty = isPremium ? mx.difficulty || "low" : "low";
 
   return `
+    ${renderPastDueBanner()}
     <div class="card">
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
@@ -4615,7 +4642,7 @@ function examsSwitchView(view) {
 }
 
 async function generateStudyGuide() {
-  if (state.profile.subscription_tier !== "premium") {
+  if (getEffectiveLearnerTier() !== "premium") {
     showToast(t("studyGuidePremiumMsg"), "error");
     return;
   }
@@ -4902,8 +4929,8 @@ function flashcardRestart() {
 let refresherTimerId = null;
 
 function renderRefresherSection() {
-  if (state.profile.subscription_tier !== "premium") {
-    return renderPremiumGate("refresherPremiumMsg");
+  if (getEffectiveLearnerTier() !== "premium") {
+    return renderPastDueBanner() + renderPremiumGate("refresherPremiumMsg");
   }
 
   const r = state.refresher;
@@ -5027,7 +5054,7 @@ function refresherSetLevel(level) {
 }
 
 async function refresherStart() {
-  if (state.profile.subscription_tier !== "premium") {
+  if (getEffectiveLearnerTier() !== "premium") {
     showToast(t("refresherPremiumMsg"), "error");
     return;
   }
@@ -5628,6 +5655,7 @@ const ALERT_ICONS = {
   safety_flag_language: "🚨",
   low_performance: "📉",
   study_streak: "🔥",
+  payment_failed: "💳",
 };
 
 function renderChildSelector() {
@@ -6522,6 +6550,10 @@ function renderLinkedChildCard(learner) {
         </div>
         ${canCancel
           ? `<button class="btn-link" style="font-size:12px;" data-action="cancel-child-subscription-confirm" data-learner-id="${learner.id}">${t("btnCancelSubscription")}</button>`
+          : ""
+        }
+        ${learner.subscription_status === "past_due"
+          ? `<div class="muted" style="color:var(--danger);font-size:12px;text-align:right;">⚠️ ${t("pastDueBannerMsg")}</div>`
           : ""
         }
       </div>

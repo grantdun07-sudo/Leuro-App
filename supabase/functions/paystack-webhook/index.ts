@@ -147,7 +147,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type Learner = { id: string; user_id: string; subscription_tier: string | null };
+type Learner = { id: string; user_id: string; subscription_tier: string | null; full_name: string | null };
 type LearnerClaim = { id: string; subscription_code: string | null };
 
 type PaystackSubscriptionListItem = {
@@ -191,7 +191,7 @@ async function insertSubscriptionHistory(row: {
 async function findLearnerByCustomerCode(customerCode: string): Promise<Learner | null> {
   const { data, error } = await supabase
     .from("learners")
-    .select("id, user_id, subscription_tier")
+    .select("id, user_id, subscription_tier, full_name")
     .eq("paystack_customer_code", customerCode)
     .maybeSingle();
   if (error || !data) return null;
@@ -201,7 +201,7 @@ async function findLearnerByCustomerCode(customerCode: string): Promise<Learner 
 async function findLearnerBySubscriptionCode(subscriptionCode: string): Promise<Learner | null> {
   const { data, error } = await supabase
     .from("learners")
-    .select("id, user_id, subscription_tier")
+    .select("id, user_id, subscription_tier, full_name")
     .eq("subscription_code", subscriptionCode)
     .maybeSingle();
   if (error || !data) return null;
@@ -215,10 +215,49 @@ async function findLearnerBySubscriptionCode(subscriptionCode: string): Promise<
 async function findLearnersByCustomerCode(customerCode: string): Promise<Learner[]> {
   const { data, error } = await supabase
     .from("learners")
-    .select("id, user_id, subscription_tier")
+    .select("id, user_id, subscription_tier, full_name")
     .eq("paystack_customer_code", customerCode);
   if (error || !data) return [];
   return data as Learner[];
+}
+
+// Notifies every parent linked to a learner by inserting parent_alerts rows
+// directly via the service_role client, rather than calling the
+// create_parent_alert() RPC used by notify-parent for learner-initiated
+// safety alerts. That RPC's SECURITY DEFINER body requires
+// `auth.uid() = learners.user_id` — it's designed to be called with the
+// LEARNER's own JWT in the request. This webhook has no end-user session at
+// all (service_role only), so auth.uid() would resolve to NULL there and
+// that check would ALWAYS fail, meaning the RPC would throw "not authorized"
+// on every call and never actually create an alert. Since service_role
+// already bypasses RLS, we replicate the RPC's actual insert directly
+// instead — same shape (parent_id, learner_id, alert_type, message), same
+// "every parent whose linked_learners contains this learner" targeting.
+async function notifyParentsDirectly(learnerId: string, alertType: string, message: string): Promise<void> {
+  const { data: parents, error: parentsErr } = await supabase
+    .from("parents")
+    .select("id")
+    .contains("linked_learners", [learnerId]);
+
+  if (parentsErr) {
+    console.error("paystack-webhook: notifyParentsDirectly — parent lookup failed:", parentsErr.message);
+    return;
+  }
+
+  if (!parents || parents.length === 0) {
+    console.warn("paystack-webhook: notifyParentsDirectly — no parents linked to learner", learnerId, "— alert not created");
+    return;
+  }
+
+  const { error: alertErr } = await supabase
+    .from("parent_alerts")
+    .insert(parents.map((p: { id: string }) => ({ parent_id: p.id, learner_id: learnerId, alert_type: alertType, message })));
+
+  if (alertErr) {
+    console.error("paystack-webhook: notifyParentsDirectly — parent_alerts insert failed:", alertErr.message);
+  } else {
+    console.log("paystack-webhook: notifyParentsDirectly — notified", parents.length, "parent(s) for learner", learnerId, "| alert_type:", alertType);
+  }
 }
 
 // Used when claiming a subscription_code for a newly-activated learner, to
@@ -564,6 +603,13 @@ async function handleInvoicePaymentFailed(data: Record<string, unknown>, event: 
     amountPaid: 0,
     paymentRef: null,
   });
+
+  const learnerName = learner.full_name || "your child";
+  await notifyParentsDirectly(
+    learner.id,
+    "payment_failed",
+    `Payment failed for ${learnerName} — please renew to avoid losing Premium access.`,
+  );
 
   console.log("paystack-webhook: invoice.payment_failed — marked learner", learner.id, "past_due");
 }
