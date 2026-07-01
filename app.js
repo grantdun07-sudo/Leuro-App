@@ -374,6 +374,11 @@ const translations = {
     btnUpgrade: "Upgrade",
     btnCancelSubscription: "Cancel Subscription",
     pastDueBannerMsg: "Payment issue — please renew to keep Premium access.",
+    btnDeleteChild: "Delete Child",
+    deleteChildModalTitle: "Delete {name}?",
+    deleteChildWarning: "This permanently deletes ALL of {name}'s data — study history, progress, exam results, everything. This cannot be undone.",
+    deleteChildTypePrompt: "Type {name} to confirm:",
+    btnDeleteChildConfirm: "Delete Permanently",
 
     loading: "Loading...",
     errorGeneric: "Something went wrong. Please try again.",
@@ -777,6 +782,11 @@ const translations = {
     btnUpgrade: "Gradeer op",
     btnCancelSubscription: "Kanselleer Subskripsie",
     pastDueBannerMsg: "Betalingprobleem — hernu asseblief om Premium-toegang te behou.",
+    btnDeleteChild: "Skrap Kind",
+    deleteChildModalTitle: "Skrap {name}?",
+    deleteChildWarning: "Dit skrap ALLE data van {name} permanent — studiegeskiedenis, vordering, eksamenuitslae, alles. Dit kan nie ongedaan gemaak word nie.",
+    deleteChildTypePrompt: "Tik {name} om te bevestig:",
+    btnDeleteChildConfirm: "Skrap Permanent",
 
     loading: "Laai...",
     errorGeneric: "Iets het verkeerd geloop. Probeer asseblief weer.",
@@ -865,6 +875,7 @@ const state = {
   upgradeModalOpen: false,
   childUpgradeModalOpen: false,
   upgradeTargetLearnerId: null,
+  deleteChildTarget: null,
   promoCode: null,
   tcModalOpen: false,
   privacyModalOpen: false,
@@ -5750,6 +5761,7 @@ function renderParentHomeTab() {
 
     ${state.showAddChildModal ? renderAddChildModal() : ""}
     ${state.childUpgradeModalOpen ? renderChildUpgradeModal() : ""}
+    ${renderDeleteChildModal()}
   `;
 }
 
@@ -6529,6 +6541,7 @@ function renderParentAccountExtras() {
 
     ${state.showAddChildModal ? renderAddChildModal() : ""}
     ${state.childUpgradeModalOpen ? renderChildUpgradeModal() : ""}
+    ${renderDeleteChildModal()}
   `;
 }
 
@@ -6563,6 +6576,39 @@ function renderLinkedChildCard(learner) {
           ? `<div class="muted" style="color:var(--danger);font-size:12px;text-align:right;">⚠️ ${t("pastDueBannerMsg")}</div>`
           : ""
         }
+        <button class="btn-link" style="font-size:12px;color:var(--danger);font-weight:700;" data-action="open-delete-child-modal" data-learner-id="${learner.id}">${t("btnDeleteChild")}</button>
+      </div>
+    </div>
+  `;
+}
+
+// Type-to-confirm modal for permanently deleting a linked child. Not the
+// simple Yes/No confirmModal pattern — this is irreversible data deletion,
+// so the Delete button stays disabled until the parent types the child's
+// exact full name (validated live via the global "input" listener, no
+// re-render, matching the updatePasswordHint() pattern).
+function renderDeleteChildModal() {
+  const target = state.deleteChildTarget;
+  if (!target) return "";
+  const name = escapeHtml(target.full_name || "");
+  return `
+    <div class="modal-overlay">
+      <div class="modal-sheet" style="max-width:400px;">
+        <div class="modal-header">
+          <h3>${t("deleteChildModalTitle").replace("{name}", name)}</h3>
+          <button class="modal-close" data-action="close-delete-child-modal">✕</button>
+        </div>
+        <div class="modal-body">
+          <p style="color:var(--danger);font-weight:600;">${t("deleteChildWarning").replace("{name}", name)}</p>
+          <div class="field">
+            <label>${t("deleteChildTypePrompt").replace("{name}", name)}</label>
+            <input type="text" id="delete-child-confirm-input" autocomplete="off" data-expected-name="${name}" />
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex;gap:10px;">
+          <button class="btn btn-outline" style="flex:1;" data-action="close-delete-child-modal">${t("cancel")}</button>
+          <button class="btn btn-danger" style="flex:1;" id="delete-child-confirm-btn" data-action="confirm-delete-child" data-learner-id="${target.id}" disabled>${t("btnDeleteChildConfirm")}</button>
+        </div>
       </div>
     </div>
   `;
@@ -6897,6 +6943,36 @@ async function handleCancelChildSubscription(learnerId) {
   }
 }
 
+async function handleDeleteChild(learnerId) {
+  showToast("Deleting…", "info");
+  try {
+    const { data: sess } = await sbClient.auth.getSession();
+    const token = sess?.session?.access_token;
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/delete-child`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "apikey": SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ learnerId }),
+    });
+    const result = await res.json();
+    if (result.success) {
+      showToast("Child deleted.", "success");
+    } else {
+      showToast(`Couldn't delete: ${result.reason || "unknown error"}. Contact hello@leuroai.co.za if this persists.`, "error");
+      console.error("delete-child failed:", result);
+    }
+  } catch (e) {
+    console.error("delete-child call failed:", e);
+    showToast("Couldn't delete child. Please try again or contact hello@leuroai.co.za.", "error");
+  } finally {
+    await loadParentData();
+    render();
+  }
+}
+
 // ---------------------------------------------------------------------
 // GLOBAL EVENT DISPATCHER
 // ---------------------------------------------------------------------
@@ -6969,6 +7045,25 @@ function attachGlobalListeners() {
         };
         render();
         break;
+      case "open-delete-child-modal": {
+        const learnerToDelete = state.linkedLearners.find((l) => l.id === target.dataset.learnerId);
+        state.deleteChildTarget = learnerToDelete
+          ? { id: learnerToDelete.id, full_name: learnerToDelete.full_name }
+          : null;
+        render();
+        break;
+      }
+      case "close-delete-child-modal":
+        state.deleteChildTarget = null;
+        render();
+        break;
+      case "confirm-delete-child": {
+        const learnerId = target.dataset.learnerId;
+        state.deleteChildTarget = null;
+        render();
+        handleDeleteChild(learnerId);
+        break;
+      }
       case "admin-toggle-referral-code":
         adminToggleReferralCode(target.dataset.codeId);
         break;
@@ -7367,6 +7462,12 @@ function attachGlobalListeners() {
     if (target.name === "password" || target.name === "confirm") {
       const recoveryForm = target.closest('form[data-action="set-new-password-form"]');
       if (recoveryForm) updateRecoveryHints(recoveryForm);
+    }
+    if (target.id === "delete-child-confirm-input") {
+      const expected = (target.dataset.expectedName || "").trim();
+      const typed = target.value.trim();
+      const confirmBtn = document.getElementById("delete-child-confirm-btn");
+      if (confirmBtn) confirmBtn.disabled = typed.length === 0 || typed !== expected;
     }
   });
 
