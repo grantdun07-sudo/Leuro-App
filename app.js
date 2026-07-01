@@ -6659,6 +6659,11 @@ const PAYSTACK_KOBO = {
   premium: { full: 19900, discounted: 15920 },
 };
 
+const PAYSTACK_PLANS = {
+  basic: "PLN_x2bz5sdsky99bk5",
+  premium: "PLN_gmx6yhgo5ikqg64",
+};
+
 // Returns true when the parent has an active promo code AND is still within
 // the discount window anchored on discount_started_at (set when code applied).
 function isDiscountActive() {
@@ -6782,15 +6787,12 @@ function handleChildUpgrade(learnerId, tier) {
     return;
   }
 
-  const fullKobo = PAYSTACK_KOBO[tier].full;
-  const pct = isDiscountActive() ? (state.promoCode?.discount_percent ?? 20) : 0;
-  const amountKobo = pct > 0 ? Math.round(fullKobo * (1 - pct / 100)) : fullKobo;
   const reference = `LEURO-${learnerId}-${Date.now()}`;
 
   const handler = window.PaystackPop.setup({
     key: PAYSTACK_CONFIG.publicKey,
     email: state.profile.email,
-    amount: amountKobo,
+    plan: PAYSTACK_PLANS[tier],
     currency: "ZAR",
     ref: reference,
     label: `Leuro ${capitalize(tier)} Monthly`,
@@ -6802,44 +6804,11 @@ function handleChildUpgrade(learnerId, tier) {
       referral_code: state.profile.referral_code_used || "",
     },
     callback(response) {
-      console.log("[CHILD-CB] callback entered, ref:", response?.reference);
-      // Don't trust the popup alone — confirm + store token server-side.
-      showToast(t("paymentVerifyingMsg") || "Confirming payment…", "info");
-      (async () => {
-        console.log("[CHILD-CB] async wrapper started");
-        try {
-          console.log("[CHILD-CB] about to getSession, sbClient is:", typeof sbClient);
-          const { data: sess } = await sbClient.auth.getSession();
-          const token = sess?.session?.access_token;
-          console.log("[CHILD-CB] got token:", token ? "YES" : "NO", "URL:", SUPABASE_URL);
-          console.log("[CHILD-CB] about to fetch verify-and-store-payment");
-          const res = await fetch(`${SUPABASE_URL}/functions/v1/verify-and-store-payment`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${token}`,
-              "apikey": SUPABASE_ANON_KEY,
-            },
-            body: JSON.stringify({ reference: response.reference }),
-          });
-          const result = await res.json();
-          if (result.success) {
-            showToast(t("paymentSuccessMsg"), "success");
-          } else {
-            showToast("We couldn't confirm your payment yet. If you were charged, contact hello@leuroai.co.za — we'll sort it out.", "error");
-          }
-        } catch (e) {
-          console.error("[CHILD-CB] threw:", e);
-          showToast("We couldn't confirm your payment yet. If you were charged, contact hello@leuroai.co.za — we'll sort it out.", "error");
-        } finally {
-          state.childUpgradeModalOpen = false;
-          state.upgradeTargetLearnerId = null;
-          await loadParentData();
-          render();
-        }
-      })().catch((err) => {
-        console.error("[CHILD-CB] outer throw:", err);
-      });
+      console.log("[SUBSCRIBE] popup succeeded, ref:", response?.reference);
+      showToast(t("paymentSuccessMsg"), "success");
+      state.childUpgradeModalOpen = false;
+      state.upgradeTargetLearnerId = null;
+      render();
     },
     onClose() {
       showToast(t("paymentCancelledMsg"), "info");
