@@ -277,7 +277,9 @@ Deno.serve(async (req: Request) => {
     // study_sessions, mock_exams (+ mock_exam_questions + mock_exam_responses),
     // diagnostic_attempts, learner_subjects and billing_tokens automatically
     // via ON DELETE CASCADE.
-    const { error: deleteUserErr } = await admin.auth.admin.deleteUser(childAuthId);
+    const deleteUserResult = await admin.auth.admin.deleteUser(childAuthId);
+    console.log("delete-child: step h raw deleteUser result:", JSON.stringify(deleteUserResult));
+    const deleteUserErr = deleteUserResult.error;
 
     if (deleteUserErr) {
       console.error(
