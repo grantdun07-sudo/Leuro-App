@@ -4079,6 +4079,8 @@ async function runSessionPhase(phase, learnerInput, context) {
   render();
   scrollChatToBottom();
 
+  let wasWeakAttempt = false;
+
   try {
     const data = await callStudyGuide(phase, learnerInput, context);
     if (data.safety_flag) {
@@ -4093,8 +4095,13 @@ async function runSessionPhase(phase, learnerInput, context) {
         s.exampleText = data.response;
       } else if (phase === "attempt") {
         s.attemptQuestion = data.response;
+      } else if (phase === "feedback") {
+        wasWeakAttempt = !!data.wasWeakAttempt;
       }
-      s.messages.push({ role: "ai", phase, text, answerBox: phase === "attempt" });
+      // A weak attempt re-shows the answer box on this same feedback/hint
+      // message, reusing the existing answerBox/answered fields so the
+      // learner can retry the same question right where the hint appears.
+      s.messages.push({ role: "ai", phase, text, answerBox: phase === "attempt" || wasWeakAttempt });
     }
 
     if (phase === "explain") incrementLocalSessionCount();
@@ -4112,7 +4119,7 @@ async function runSessionPhase(phase, learnerInput, context) {
       await runSessionPhase("example", null, { explainText: s.explainText });
     } else if (phase === "example") {
       await runSessionPhase("attempt", null, { exampleText: s.exampleText });
-    } else if (phase === "feedback") {
+    } else if (phase === "feedback" && !wasWeakAttempt) {
       await finalizeStructuredSession();
     }
   }

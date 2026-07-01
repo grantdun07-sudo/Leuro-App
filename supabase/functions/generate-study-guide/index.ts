@@ -99,6 +99,35 @@ interface RequestBody {
   };
 }
 
+// Plain heuristic (no AI call) that classifies a learner's practice-question
+// answer as "weak" (nothing substantive to evaluate) or "genuine" (a real
+// attempt, however short or wrong). Used so the feedback phase can scaffold
+// with a hint instead of revealing the answer when there's no real attempt.
+//
+// Errs toward "genuine": a short real answer ("42", "no", "yes") must NOT be
+// classified weak just for being short - only a single character, a
+// repeated-character/keyboard mash ("aaaa", "kkkkkk"), or punctuation/
+// whitespace with no letters or digits at all counts as weak. Note: this
+// uses a length-2 (not length-3) floor specifically so "no"/"42" (both 2
+// characters) still count as genuine, matching the intent that short real
+// answers are never penalised - only true single-character non-attempts are.
+function classifyAttempt(answer: string): "weak" | "genuine" {
+  const trimmed = answer.trim();
+
+  // A single character is never a genuine attempt (e.g. "a", ".", "9").
+  if (trimmed.length < 2) return "weak";
+
+  // Repeated-character / keyboard-mash: fewer than 2 distinct characters
+  // once whitespace is ignored, e.g. "aaaa", "kkkkkk", "!!!!".
+  const distinctChars = new Set(trimmed.toLowerCase().replace(/\s+/g, "")).size;
+  if (distinctChars < 2) return "weak";
+
+  // Only punctuation/whitespace - no letters or digits anywhere.
+  if (!/[a-zA-Z0-9]/.test(trimmed)) return "weak";
+
+  return "genuine";
+}
+
 function buildUserPrompt(
   body: RequestBody,
   topicTitle: string,
@@ -106,6 +135,7 @@ function buildUserPrompt(
   grade: number,
   level: number,
   lang: string,
+  wasWeakAttempt = false,
 ): string {
   const levelText = level > 0 ? `${level}/5` : "1/5 (not yet diagnosed, assume a beginner)";
   const header = `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | Learner level: ${levelText}\n${langInstruction(lang)}\n\n`;
@@ -146,6 +176,23 @@ function buildUserPrompt(
     case "feedback": {
       const question = body.context?.attemptQuestion ?? "(question not available)";
       const answer = body.learnerInput ?? "(no answer provided)";
+
+      if (wasWeakAttempt) {
+        return (
+          header +
+          `The practice question was: """${question}"""\n` +
+          `The learner's response was: """${answer}"""\n\n` +
+          `The learner's response doesn't show a genuine attempt yet (Bloom's: ` +
+          `Understand + Apply - they need help getting started, not evaluation ` +
+          `of a full answer). Do NOT reveal the correct answer or full solution, ` +
+          `and do NOT give evaluative feedback since there is nothing substantive ` +
+          `to evaluate. Instead, warmly acknowledge that they seem stuck, offer ` +
+          `ONE small hint or a simpler guiding sub-question related to the ` +
+          `practice question to help them get started, and encourage them to give ` +
+          `it a real try. Keep the tone warm and encouraging, never scolding.`
+        );
+      }
+
       return (
         header +
         `The practice question was: """${question}"""\n` +
@@ -567,6 +614,10 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ response: safeResponse, phase: body.phase, tokensUsed: 0, safety_flag: true });
     }
 
+    // Only meaningful for phase "feedback" - classifies the learner's answer
+    // to decide whether to scaffold with a hint instead of full evaluation.
+    const wasWeakAttempt = body.phase === "feedback" && classifyAttempt(body.learnerInput ?? "") === "weak";
+
     const userPrompt = buildUserPrompt(
       body,
       topic.title,
@@ -574,6 +625,7 @@ Deno.serve(async (req: Request) => {
       learner.grade,
       learner.diagnostic_level ?? 0,
       lang,
+      wasWeakAttempt,
     );
 
     let responseText: string;
@@ -600,7 +652,11 @@ Deno.serve(async (req: Request) => {
       completed_at: new Date().toISOString(),
     });
 
-    if (body.phase === "feedback") {
+    // Skip the completion counters on a weak-attempt (scaffolded) response -
+    // the client keeps the session open for a retry rather than finalizing
+    // it, so counting it here would double-count once the learner eventually
+    // gives a genuine answer for the same question.
+    if (body.phase === "feedback" && !wasWeakAttempt) {
       const { data: topicRow } = await supabase
         .from("topics")
         .select("times_studied")
@@ -628,7 +684,7 @@ Deno.serve(async (req: Request) => {
         .eq("id", learner.id);
     }
 
-    return jsonResponse({ response: responseText, phase: body.phase, tokensUsed });
+    return jsonResponse({ response: responseText, phase: body.phase, tokensUsed, wasWeakAttempt });
   } catch (err) {
     console.error("generate-study-guide error:", err);
     return jsonResponse({ error: "Internal server error" }, 500);
