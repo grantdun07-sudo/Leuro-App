@@ -4131,12 +4131,12 @@ function renderLearnTab() {
         <span class="level-pill">${state.learner.diagnostic_level}</span>
       </div>
       <div class="divider"></div>
-      ${
-        tier === "free"
-          ? `<span class="badge ${limitReached ? "badge-danger" : "badge-muted"}">${t("sessionsToday")}: ${state.sessionsToday}/3</span>`
-          : `<span class="badge badge-success">${t("unlimitedSessions")}</span>`
-      }
-      <div class="text-center" style="margin-top:12px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+        ${
+          tier === "free"
+            ? `<span class="badge ${limitReached ? "badge-danger" : "badge-muted"}">${t("sessionsToday")}: ${state.sessionsToday}/3</span>`
+            : `<span class="badge badge-success">${t("unlimitedSessions")}</span>`
+        }
         <button class="link-btn" data-action="retake-diagnostic-confirm">${t("retakeDiagnostic")}</button>
       </div>
     </div>
