@@ -4902,15 +4902,28 @@ async function downloadStudyGuidePdf() {
 
   try {
     // Exclude UI-only action buttons (Download PDF, Save Guide) from the
-    // capture entirely - they're page controls, not exportable content.
-    // Excluding the element also means the "Generating…" label this
-    // function sets on the button above can never leak into the export,
-    // since the whole button is skipped regardless of its current text.
+    // capture - they're page controls, not exportable content, and this
+    // also means the "Generating…" label this function sets on the
+    // button above can never leak into the export regardless of its
+    // current text. Hidden via visibility (not removed/ignored) so the
+    // cloned document html2canvas renders keeps the exact same layout
+    // widths as the live page - ignoreElements previously removed these
+    // buttons from the clone's flex layout entirely (the sibling <h3> in
+    // .study-guide-card-header has flex:1), which reflowed the header and
+    // was the likely cause of text getting clipped at the right edge.
+    // width/windowWidth are pinned explicitly too, as defense-in-depth
+    // against html2canvas guessing a too-narrow capture width.
     const canvas = await html2canvas(card, {
       scale: 2,
       useCORS: true,
       backgroundColor: "#ffffff",
-      ignoreElements: (el) => el.classList?.contains("pdf-exclude"),
+      width: card.scrollWidth,
+      windowWidth: card.scrollWidth,
+      onclone: (clonedDoc) => {
+        clonedDoc.querySelectorAll(".pdf-exclude").forEach((el) => {
+          el.style.visibility = "hidden";
+        });
+      },
     });
     const { jsPDF } = window.jspdf;
 
