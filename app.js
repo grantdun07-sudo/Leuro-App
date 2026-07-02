@@ -266,6 +266,10 @@ const translations = {
     sessionsCompletedLabel: "Sessions completed",
     activityHeading: "Recent Activity",
     markRead: "Mark as read",
+    btnAcknowledgeFlag: "Acknowledge & Reactivate",
+    flagAcknowledgedMsg: "Account reactivated.",
+    flagAlreadyAcknowledgedMsg: "This was already acknowledged.",
+    flagAcknowledgeFailedMsg: "Couldn't acknowledge this. Please try again or contact hello@leuroai.co.za.",
 
     navActivity: "Activity",
     navGoals: "Goals",
@@ -413,7 +417,7 @@ const translations = {
     acknowledgeReactivated: "Your child's account has been reactivated.",
     acknowledgeSupportMsg: "Please speak with your child and ensure they have the support they need.",
     acknowledgeSadag: "SADAG: 0800 21 22 23",
-    acknowledgeError: "This link is invalid or has expired. Please contact Leuro™ support.",
+    acknowledgeError: "This link no longer works on its own. Please log in to your Leuro™ account and check your notifications to reactivate your child's account.",
     btnGoToLeuro: "Go to leuroai.co.za",
 
     upgradeTo: "Upgrade to",
@@ -680,6 +684,10 @@ const translations = {
     sessionsCompletedLabel: "Sessies voltooi",
     activityHeading: "Onlangse Aktiwiteit",
     markRead: "Merk as gelees",
+    btnAcknowledgeFlag: "Bevestig & Heraktiveer",
+    flagAcknowledgedMsg: "Rekening heraktiveer.",
+    flagAlreadyAcknowledgedMsg: "Dit is reeds bevestig.",
+    flagAcknowledgeFailedMsg: "Kon nie dit bevestig nie. Probeer asseblief weer of kontak hello@leuroai.co.za.",
 
     navActivity: "Aktiwiteit",
     navGoals: "Doelwitte",
@@ -827,7 +835,7 @@ const translations = {
     acknowledgeReactivated: "Jou kind se rekening is heraktiveer.",
     acknowledgeSupportMsg: "Praat asseblief met jou kind en maak seker hulle kry die ondersteuning wat hulle nodig het.",
     acknowledgeSadag: "SADAG: 0800 21 22 23",
-    acknowledgeError: "Hierdie skakel is ongeldig of het verval. Kontak asseblief Leuro™-ondersteuning.",
+    acknowledgeError: "Hierdie skakel werk nie meer op sy eie nie. Meld asseblief by jou Leuro™-rekening aan en gaan jou kennisgewings na om jou kind se rekening te heraktiveer.",
     btnGoToLeuro: "Gaan na leuroai.co.za",
 
     upgradeTo: "Gradeer op na",
@@ -1184,7 +1192,9 @@ async function flagContent(text, severity, context, learnerId) {
   const userId = session?.user?.id || state.user?.id || null;
   console.log("flagContent: start", { severity, context, learnerId, userId });
 
-  let flagId = null;
+  // save-content-flag intentionally returns only { success: true } — it
+  // never hands back the flag's own id, since this caller is the flagged
+  // learner's own browser (see save-content-flag's header comment for why).
   try {
     const payload = {
       user_id: userId,
@@ -1208,10 +1218,6 @@ async function flagContent(text, severity, context, learnerId) {
     console.log("flagContent: save-content-flag raw response", res.status, raw);
     if (!res.ok) {
       console.error("flagContent: save-content-flag failed", res.status, raw);
-    } else {
-      const flagData = JSON.parse(raw);
-      flagId = flagData?.id ?? null;
-      console.log("flagContent: save-content-flag returned flagId", flagId);
     }
   } catch (err) {
     console.error("flagContent: save-content-flag request failed", err);
@@ -1251,7 +1257,7 @@ async function flagContent(text, severity, context, learnerId) {
     }
 
     if (learnerId) {
-      console.log("flagContent: calling notify-parent with flagId", flagId);
+      console.log("flagContent: calling notify-parent");
       const res = await fetchWithTimeout(`${FN_URL}/notify-parent`, {
         method: "POST",
         headers: {
@@ -1264,7 +1270,6 @@ async function flagContent(text, severity, context, learnerId) {
           severity,
           flaggedText: text,
           context,
-          flagId,
         }),
       });
       if (!res.ok) {
@@ -6029,13 +6034,24 @@ function linkifyAlertMessage(message) {
 }
 
 function renderAlertItem(alert) {
+  // Safety-flag alerts (the ones that can freeze an account) get an
+  // in-app "Acknowledge & Reactivate" action instead of the old public
+  // /acknowledge?token= email link, which now requires parent auth and can
+  // no longer be honored as a bare URL. Wired to the caller's OWN logged-in
+  // session (see handleAcknowledgeFlag()) — a logged-out visitor or a
+  // parent not linked to this learner cannot trigger it; the edge function
+  // re-verifies both server-side regardless of what this button sends.
+  const isSafetyFlag = alert.alert_type === "safety_flag_crisis" || alert.alert_type === "safety_flag_language";
   return `
     <div class="alert-item ${alert.read_at ? "" : "unread"}">
       <span class="alert-icon">${ALERT_ICONS[alert.alert_type] || "🔔"}</span>
       <div style="flex:1;">
         <div>${linkifyAlertMessage(alert.message)}</div>
         <div class="alert-meta">${formatDateTime(alert.created_at)}</div>
-        ${!alert.read_at ? `<button class="link-btn" data-action="mark-alert-read" data-alert-id="${alert.id}">${t("markRead")}</button>` : ""}
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:4px;">
+          ${!alert.read_at ? `<button class="link-btn" data-action="mark-alert-read" data-alert-id="${alert.id}">${t("markRead")}</button>` : ""}
+          ${isSafetyFlag ? `<button class="link-btn" data-action="acknowledge-flag" data-learner-id="${alert.learner_id}">${t("btnAcknowledgeFlag")}</button>` : ""}
+        </div>
       </div>
     </div>
   `;
@@ -6049,6 +6065,42 @@ async function markAlertRead(alertId) {
   } catch (err) {
     console.error(err);
     showToast(t("errorGeneric"), "error");
+  }
+}
+
+// Acknowledges the most recent pending safety flag for a linked child and
+// reactivates their account. Uses the logged-in parent's OWN session token -
+// the edge function independently re-verifies both that the caller is a
+// parent and that learnerId is in their own linked_learners before doing
+// anything, so this can never be used against a learner that isn't the
+// caller's own child, regardless of what learnerId this button sends.
+async function handleAcknowledgeFlag(learnerId, btn) {
+  if (btn) setButtonLoading(btn, true);
+  try {
+    const { data: sess } = await sbClient.auth.getSession();
+    const token = sess?.session?.access_token;
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/acknowledge-flag`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "apikey": SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ learnerId }),
+    });
+    const result = await res.json();
+    if (result.success) {
+      showToast(result.alreadyAcknowledged ? t("flagAlreadyAcknowledgedMsg") : t("flagAcknowledgedMsg"), "success");
+    } else {
+      showToast(t("flagAcknowledgeFailedMsg"), "error");
+      console.error("acknowledge-flag failed:", result);
+    }
+  } catch (e) {
+    console.error("acknowledge-flag call failed:", e);
+    showToast(t("flagAcknowledgeFailedMsg"), "error");
+  } finally {
+    await loadParentData();
+    render();
   }
 }
 
@@ -7353,6 +7405,9 @@ function attachGlobalListeners() {
         break;
       case "mark-alert-read":
         markAlertRead(target.dataset.alertId);
+        break;
+      case "acknowledge-flag":
+        handleAcknowledgeFlag(target.dataset.learnerId, target);
         break;
       case "copy-referral":
         copyReferralCode();

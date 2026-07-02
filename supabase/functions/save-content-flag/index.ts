@@ -14,8 +14,17 @@
 // later by acknowledge-flag to reactivate the account).
 //
 // On a tier 1 (self-harm) flag the learner's profile is frozen as well.
-// Returns { id: flag.id } - the real UUID that becomes the acknowledgment
-// token in the parent notification.
+//
+// SECURITY: this function's response must NEVER include the flag's own id.
+// It used to return { id: flag.id }, and since the CALLER of this function
+// is the flagged learner's own browser, that id was directly observable in
+// their own network response / console log — which let a flagged learner
+// read their own content_flags.id and self-reactivate their own frozen
+// account via the old public acknowledge-flag endpoint, completely
+// bypassing the parent review the freeze exists to require. Only a generic
+// { success: true } is returned now. acknowledge-flag (now parent-JWT-gated
+// and ownership-checked) resolves which flag to act on server-side instead
+// of trusting an id handed back to the client.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -113,8 +122,8 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    console.log("save-content-flag: success, returning id:", flag.id);
-    return jsonResponse({ id: flag.id });
+    console.log("save-content-flag: success, flag id:", flag.id, "(not returned to caller)");
+    return jsonResponse({ success: true });
   } catch (err) {
     console.error("save-content-flag error:", err);
     return jsonResponse({ error: "Internal server error", details: String(err) }, 500);
