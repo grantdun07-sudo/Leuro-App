@@ -18,6 +18,13 @@ const PAYSTACK_CONFIG = {
 
 const TIER_PRICES = { basic: 99, premium: 199 };
 
+// Cloudflare Turnstile — site key is public/safe to embed. Verification
+// happens server-side inside Supabase Auth itself when captchaToken is
+// passed to signUp() (Supabase checks it against Turnstile's siteverify
+// API using the secret key configured in the Supabase Auth dashboard).
+const TURNSTILE_SITE_KEY = "0x4AAAAAADun3qqu0CAy78jv";
+let turnstileWidgetId = null;
+
 const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ---------------------------------------------------------------------
@@ -74,6 +81,7 @@ const translations = {
     linkPrivacy: "Privacy Policy",
     checkboxConsent: "I am 18 or older, or I am the parent/guardian completing this registration on behalf of a minor.",
     checkboxTcRequired: "Please accept the Terms & Conditions, Privacy Policy, and age confirmation to continue.",
+    turnstileRequired: "Please complete the verification.",
     legalHeading: "Legal",
     tcModalTitle: "Terms & Conditions",
     privacyModalTitle: "Privacy Policy",
@@ -493,6 +501,7 @@ const translations = {
     linkPrivacy: "Privaatheidsbeleid",
     checkboxConsent: "Ek is 18 jaar of ouer, of ek is die ouer/voog wat hierdie registrasie namens 'n minderjarige voltooi.",
     checkboxTcRequired: "Aanvaar asseblief die Bepalings en Voorwaardes, Privaatheidsbeleid en ouderdomsbevestiging om voort te gaan.",
+    turnstileRequired: "Voltooi asseblief die verifikasie.",
     legalHeading: "Regsake",
     tcModalTitle: "Bepalings en Voorwaardes",
     privacyModalTitle: "Privaatheidsbeleid",
@@ -2480,6 +2489,9 @@ function renderSignupForm() {
         <label>${t("labelReferral")}</label>
         <input type="text" name="referredBy" placeholder="${t("placeholderReferral")}" maxlength="32" style="text-transform:uppercase;" />
       </div>
+      <div class="field">
+        <div id="turnstile-container" class="cf-turnstile" data-sitekey="${TURNSTILE_SITE_KEY}"></div>
+      </div>
       <div class="legal-checkboxes">
         <label class="checkbox-label">
           <input type="checkbox" name="tcAccepted" />
@@ -2493,6 +2505,22 @@ function renderSignupForm() {
       <button type="submit" class="btn btn-primary btn-block" disabled>${t("btnCreateAccount")}</button>
     </form>
   `;
+}
+
+// Explicitly (re)renders the Turnstile widget into the signup form's
+// container. render() replaces app.innerHTML wholesale on every tab
+// switch/state change, which destroys any previously-rendered widget
+// along with its container element — Turnstile's own automatic DOM scan
+// only runs once, at script-load time (long before the signup form ever
+// exists in the DOM), so it never picks up containers added afterwards.
+// Called from render() via requestAnimationFrame whenever the signup tab
+// is showing, so this must be idempotent per container instance.
+function initTurnstileWidget() {
+  const container = document.getElementById("turnstile-container");
+  if (!container || typeof turnstile === "undefined") return;
+  if (container.dataset.turnstileRendered === "true") return;
+  container.dataset.turnstileRendered = "true";
+  turnstileWidgetId = turnstile.render(container, { sitekey: TURNSTILE_SITE_KEY });
 }
 
 async function handleLogin(form) {
@@ -2585,6 +2613,16 @@ async function handleSignup(form) {
       return;
     }
 
+    // Turnstile injects a hidden `cf-turnstile-response` input inside its
+    // container once the challenge is solved; read it here rather than
+    // gating the submit button, so a failed/expired widget produces a
+    // clear message instead of a confusing raw Supabase Auth error.
+    const turnstileToken = form.querySelector('[name="cf-turnstile-response"]')?.value || "";
+    if (!turnstileToken) {
+      showToast(t("turnstileRequired"), "error");
+      return;
+    }
+
     const metaData = {
       role: "parent",
       full_name: fullName,
@@ -2614,7 +2652,7 @@ async function handleSignup(form) {
     const { data, error } = await sbClient.auth.signUp({
       email,
       password,
-      options: { data: metaData },
+      options: { data: metaData, captchaToken: turnstileToken },
     });
     if (error) throw error;
 
@@ -2691,6 +2729,12 @@ async function handleSignup(form) {
   } catch (err) {
     console.error(err);
     showToast(err.message || t("errorGeneric"), "error");
+    // Turnstile tokens are single-use and expire quickly — reset the
+    // still-mounted widget (no full page reload) so the user gets a fresh
+    // token to retry with, e.g. after "email already registered".
+    if (typeof turnstile !== "undefined" && turnstileWidgetId !== null) {
+      turnstile.reset(turnstileWidgetId);
+    }
   } finally {
     setButtonLoading(btn, false);
   }
@@ -2824,6 +2868,9 @@ function render() {
 
   if (!state.user || !state.profile) {
     app.innerHTML = renderAuthScreen();
+    if (authTab === "signup") {
+      requestAnimationFrame(() => initTurnstileWidget());
+    }
     return;
   }
 
