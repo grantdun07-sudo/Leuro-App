@@ -251,8 +251,8 @@ const translations = {
     premiumOnlyMsg: "Mock exams are part of the Premium plan.",
     studyGuidePremiumMsg: "Study Guides are part of the Premium plan.",
     refresherPremiumMsg: "The Exam Refresher is part of the Premium plan.",
+    flashcardsPremiumMsg: "Flashcards are part of the Premium plan.",
     btnUpgradeToPremium: "Upgrade to Premium",
-    mediumHighPremiumNote: "🔒 Medium and High difficulty exams are a Premium feature.",
     completedExams: "Completed Exams",
     noExams: "No mock exams yet.",
     examOf: "of {n}",
@@ -671,8 +671,8 @@ const translations = {
     premiumOnlyMsg: "Toetseksamens is deel van die Premium-plan.",
     studyGuidePremiumMsg: "Studiegidse is deel van die Premium-plan.",
     refresherPremiumMsg: "Die Eksamenopfrisser is deel van die Premium-plan.",
+    flashcardsPremiumMsg: "Flitskaarte is deel van die Premium-plan.",
     btnUpgradeToPremium: "Gradeer op na Premium",
-    mediumHighPremiumNote: "🔒 Medium- en Hoë-moeilikheidsgraad-eksamens is 'n Premium-funksie.",
     completedExams: "Voltooide Eksamens",
     noExams: "Nog geen toetseksamens nie.",
     examOf: "van {n}",
@@ -4638,6 +4638,10 @@ function renderStudyGuideCard(sg) {
 // FLASHCARD GAME
 // ---------------------------------------------------------------------
 function renderFlashcardSection() {
+  if (getEffectiveLearnerTier() !== "premium") {
+    return renderPastDueBanner() + renderPremiumGate("flashcardsPremiumMsg");
+  }
+
   const fc = state.flashcard;
   if (fc.step === "game") return renderFlashcardGame(fc);
   if (fc.step === "results") return renderFlashcardResults(fc);
@@ -4762,16 +4766,17 @@ function renderFlashcardResults(fc) {
 const EXAM_DIFF_STAT = { low: "examStatLow", medium: "examStatMedium", high: "examStatHigh" };
 
 function renderMockExamSection() {
-  const tier = getEffectiveLearnerTier();
-  const isPremium = tier === "premium";
+  if (getEffectiveLearnerTier() !== "premium") {
+    return renderPastDueBanner() + renderPremiumGate("premiumOnlyMsg");
+  }
+
   const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
   const completedExams = state.exams.filter((e) => e.completed_at);
   const mx = state.mockExamSetup;
   const selectedSubjectId = mx.subjectId ?? getAvailableSubjects()[0]?.id;
-  const selectedDifficulty = isPremium ? mx.difficulty || "low" : "low";
+  const selectedDifficulty = mx.difficulty || "low";
 
   return `
-    ${renderPastDueBanner()}
     <div class="card">
       <div class="field">
         <label>${t("selectSubjectLabel")}</label>
@@ -4797,18 +4802,12 @@ function renderMockExamSection() {
         <label>${t("selectDifficultyLabel")}</label>
         <select id="exam-difficulty" data-action="exam-difficulty-change">
           <option value="low" ${selectedDifficulty === "low" ? "selected" : ""}>${t("diffLow")}</option>
-          <option value="medium" ${isPremium ? "" : "disabled"} ${selectedDifficulty === "medium" ? "selected" : ""}>${t("diffMedium")}</option>
-          <option value="high" ${isPremium ? "" : "disabled"} ${selectedDifficulty === "high" ? "selected" : ""}>${t("diffHigh")}</option>
+          <option value="medium" ${selectedDifficulty === "medium" ? "selected" : ""}>${t("diffMedium")}</option>
+          <option value="high" ${selectedDifficulty === "high" ? "selected" : ""}>${t("diffHigh")}</option>
         </select>
         <p class="muted mock-exam-stat">${t(EXAM_DIFF_STAT[selectedDifficulty] || EXAM_DIFF_STAT.low)}</p>
       </div>
       <button class="btn btn-primary btn-block" data-action="start-exam">${t("btnStartExam")}</button>
-      ${
-        !isPremium
-          ? `<p class="muted" style="margin-top:10px;">${t("mediumHighPremiumNote")}</p>
-             <button class="btn btn-gold btn-block" data-action="switch-tab" data-tab="account">${t("btnUpgradeToPremium")}</button>`
-          : ""
-      }
     </div>
 
     <div class="section-title">${t("completedExams")}</div>
@@ -5113,6 +5112,11 @@ function flashcardNext() {
 }
 
 async function generateFlashcards() {
+  if (getEffectiveLearnerTier() !== "premium") {
+    showToast(t("flashcardsPremiumMsg"), "error");
+    return;
+  }
+
   const subjectSelect = document.getElementById("flashcard-subject");
   const topicInput = document.getElementById("flashcard-topic");
   const topicTitle = topicInput ? topicInput.value.trim() : state.flashcard.topicTitle;
@@ -5672,6 +5676,11 @@ function examSetTerm(term) {
 }
 
 async function startMockExam() {
+  if (getEffectiveLearnerTier() !== "premium") {
+    showToast(t("premiumOnlyMsg"), "error");
+    return;
+  }
+
   const subjectSelect = document.getElementById("exam-subject");
   const difficultySelect = document.getElementById("exam-difficulty");
   const topicsTextarea = document.getElementById("exam-topics");

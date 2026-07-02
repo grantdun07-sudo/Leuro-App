@@ -243,15 +243,15 @@ Deno.serve(async (req: Request) => {
     const isPastDueOrCancelled = learner.subscription_status === "past_due" || learner.subscription_status === "cancelled";
     const effectivelyPremium = tier === "premium" && !isPastDueOrCancelled;
 
-    // "low" difficulty is available on every tier; "medium"/"high" are Premium-only.
-    if (difficulty !== "low" && !effectivelyPremium) {
+    // Mock Exam (every difficulty) is Premium-only.
+    if (!effectivelyPremium) {
       return jsonResponse(
         {
           error: "premium_required",
           message:
             lang === "af"
-              ? "Medium- en hoë-moeilikheidsgraad-toetseksamens is 'n Premium-funksie. Gradeer op om toegang te kry."
-              : "Medium and high difficulty mock exams are a Premium feature. Upgrade to unlock them.",
+              ? "Toetseksamens is 'n Premium-funksie. Gradeer op om toegang te kry."
+              : "Mock exams are a Premium feature. Upgrade to unlock them.",
         },
         403,
       );

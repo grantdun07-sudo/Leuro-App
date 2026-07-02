@@ -119,11 +119,39 @@ Deno.serve(async (req) => {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("lang")
+      .select("lang, subscription_tier")
       .eq("id", user.user.id)
       .single();
 
     const lang = profile?.lang || "en";
+
+    // Flashcards is Premium-only. A failed/cancelled renewal
+    // (learners.subscription_status) overrides subscription_tier: the
+    // tier column can lag briefly before the webhook clears it, so status
+    // is the authoritative signal for whether premium access still applies
+    // (same pattern as generate-mock-exam / generate-study-guide).
+    const { data: learner } = await supabase
+      .from("learners")
+      .select("subscription_status")
+      .eq("user_id", user.user.id)
+      .single();
+
+    const tier = profile?.subscription_tier || "free";
+    const isPastDueOrCancelled = learner?.subscription_status === "past_due" || learner?.subscription_status === "cancelled";
+    const effectivelyPremium = tier === "premium" && !isPastDueOrCancelled;
+
+    if (!effectivelyPremium) {
+      return new Response(
+        JSON.stringify({
+          error: "premium_required",
+          message:
+            lang === "af"
+              ? "Flitskaarte is 'n Premium-funksie. Gradeer op om toegang te kry."
+              : "Flashcards are a Premium feature. Upgrade to unlock them.",
+        }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     const { data: subject } = await supabase
       .from("subjects")
