@@ -4610,7 +4610,7 @@ function renderStudyGuideCard(sg) {
     <div class="card study-guide-card">
       <div class="study-guide-card-header">
         <h3 class="mt-0">${escapeHtml(r.topicTitle || sg.topicTitle || "")}</h3>
-        <button class="btn btn-gold btn-sm study-guide-download-btn" data-action="download-study-guide">${t("btnDownloadPdf")}</button>
+        <button class="btn btn-gold btn-sm study-guide-download-btn pdf-exclude" data-action="download-study-guide">${t("btnDownloadPdf")}</button>
       </div>
 
       <div class="section-title" style="margin-top:0;">${t("keyConceptsLabel")}</div>
@@ -4627,7 +4627,7 @@ function renderStudyGuideCard(sg) {
         <textarea id="study-guide-answer" rows="3" placeholder="${t("yourAnswerLabel")}">${escapeHtml(sg.answer || "")}</textarea>
       </div>
 
-      <button class="btn btn-primary btn-block" data-action="save-study-guide" ${sg.saving ? "disabled" : ""}>
+      <button class="btn btn-primary btn-block pdf-exclude" data-action="save-study-guide" ${sg.saving ? "disabled" : ""}>
         ${sg.saving ? `<span class="spinner"></span> ${t("loading")}` : sg.saved ? t("btnSaved") : t("btnSaveGuide")}
       </button>
     </div>
@@ -4901,30 +4901,58 @@ async function downloadStudyGuidePdf() {
   if (btn) { btn.disabled = true; btn.textContent = "Generating…"; }
 
   try {
-    const canvas = await html2canvas(card, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+    // Exclude UI-only action buttons (Download PDF, Save Guide) from the
+    // capture entirely - they're page controls, not exportable content.
+    // Excluding the element also means the "Generating…" label this
+    // function sets on the button above can never leak into the export,
+    // since the whole button is skipped regardless of its current text.
+    const canvas = await html2canvas(card, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      ignoreElements: (el) => el.classList?.contains("pdf-exclude"),
+    });
     const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ unit: "px", format: "a4", orientation: "portrait" });
 
-    const pdfW = pdf.internal.pageSize.getWidth();
-    const pdfH = pdf.internal.pageSize.getHeight();
-    const imgW = pdfW;
-    const imgH = (canvas.height * pdfW) / canvas.width;
-    let yOffset = 0;
+    // A4 at 96dpi, in px (matches this function's existing "px" unit).
+    const PAGE_WIDTH = 794;
+    const PAGE_HEIGHT = 1123;
+    const imgW = PAGE_WIDTH;
+    const imgH = (canvas.height * PAGE_WIDTH) / canvas.width;
 
-    while (yOffset < imgH) {
-      if (yOffset > 0) pdf.addPage();
-      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, -yOffset, imgW, imgH);
+    // Small footer watermark instead of a giant diagonal one fixed at
+    // page-center - the old one sat directly on top of whatever content
+    // happened to be there, most often the Self-Check box.
+    const drawFooterWatermark = (targetPdf, pageW, pageH) => {
+      targetPdf.saveGraphicsState();
+      targetPdf.setGState(new targetPdf.GState({ opacity: 0.35 }));
+      targetPdf.setFont("helvetica", "normal");
+      targetPdf.setFontSize(9);
+      targetPdf.setTextColor(90, 62, 118);
+      targetPdf.text("Leuro™ · leuroai.co.za", pageW / 2, pageH - 14, { align: "center" });
+      targetPdf.restoreGraphicsState();
+    };
 
-      // Watermark centered on each page
-      pdf.saveGraphicsState();
-      pdf.setGState(new pdf.GState({ opacity: 0.08 }));
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(72);
-      pdf.setTextColor(90, 62, 118);
-      pdf.text("Leuro", pdfW / 2, pdfH / 2, { align: "center", angle: 45 });
-      pdf.restoreGraphicsState();
-
-      yOffset += pdfH;
+    let pdf;
+    if (imgH <= PAGE_HEIGHT) {
+      // Short guide (the common case): one page sized exactly to the
+      // content - no fixed A4 page height, so no trailing blank space.
+      pdf = new jsPDF({ unit: "px", format: [imgW, imgH], orientation: "portrait" });
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, imgW, imgH);
+      drawFooterWatermark(pdf, imgW, imgH);
+    } else {
+      // Long guide (e.g. a multi-topic Grade 11 study guide covering
+      // several exam topics) - falls back to tiling across fixed
+      // A4-height pages, same as before, just with the same footer
+      // watermark instead of the old page-center one.
+      pdf = new jsPDF({ unit: "px", format: [PAGE_WIDTH, PAGE_HEIGHT], orientation: "portrait" });
+      let yOffset = 0;
+      while (yOffset < imgH) {
+        if (yOffset > 0) pdf.addPage();
+        pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, -yOffset, imgW, imgH);
+        drawFooterWatermark(pdf, PAGE_WIDTH, PAGE_HEIGHT);
+        yOffset += PAGE_HEIGHT;
+      }
     }
 
     pdf.save(filename);
