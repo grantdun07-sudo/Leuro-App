@@ -4933,41 +4933,19 @@ async function downloadStudyGuidePdf() {
       },
     });
 
-    // TEMPORARY debug step: download the raw captured canvas as its own
-    // PNG, separate from the PDF, so we can see whether clipping is
-    // already present in html2canvas's own capture (before it ever
-    // reaches jsPDF) or only appears once the image is placed into the
-    // PDF page.
-    const debugLink = document.createElement("a");
-    debugLink.href = canvas.toDataURL("image/png");
-    debugLink.download = `debug-canvas-${timestamp}.png`;
-    document.body.appendChild(debugLink);
-    debugLink.click();
-    document.body.removeChild(debugLink);
-
-    // TEMPORARY diagnostic logging - please check the browser console on
-    // your next test export and paste back these numbers, whether or not
-    // clipping still occurs. This replaces guessing with real data.
-    console.log("[study-guide-pdf-debug]", {
-      cardScrollWidth: card.scrollWidth,
-      cardScrollHeight: card.scrollHeight,
-      cardOffsetWidth: card.offsetWidth,
-      canvasWidth: canvas.width,
-      canvasHeight: canvas.height,
-      canvasAspect: canvas.width / canvas.height,
-      windowInnerWidth: window.innerWidth,
-      devicePixelRatio: window.devicePixelRatio,
-    });
-
     const { jsPDF } = window.jspdf;
 
     // A4 at 96dpi, in px (matches this function's existing "px" unit).
     const PAGE_WIDTH = 794;
     const PAGE_HEIGHT = 1123;
-    const imgW = PAGE_WIDTH;
-    const imgH = (canvas.height * PAGE_WIDTH) / canvas.width;
-
-    console.log("[study-guide-pdf-debug] page math", { PAGE_WIDTH, PAGE_HEIGHT, imgW, imgH, willTile: imgH > PAGE_HEIGHT });
+    // The canvas's true aspect ratio - the one authoritative source for
+    // how tall the drawn image should be relative to its width. Used to
+    // decide single- vs multi-page below, and re-derived from the
+    // page's real width (not trusted from pageSize.getHeight() directly)
+    // wherever the image is actually drawn, so the drawn image is always
+    // exactly proportional to the source canvas.
+    const contentAspect = canvas.height / canvas.width;
+    const imgH = PAGE_WIDTH * contentAspect;
 
     // Small footer watermark instead of a giant diagonal one fixed at
     // page-center - the old one sat directly on top of whatever content
@@ -4986,23 +4964,20 @@ async function downloadStudyGuidePdf() {
     if (imgH <= PAGE_HEIGHT) {
       // Short guide (the common case): one page sized exactly to the
       // content - no fixed A4 page height, so no trailing blank space.
-      pdf = new jsPDF({ unit: "px", format: [imgW, imgH], orientation: "portrait" });
-      // Read the page size back from jsPDF itself rather than reusing
-      // imgW/imgH directly - a custom format array's internal unit
+      pdf = new jsPDF({ unit: "px", format: [PAGE_WIDTH, imgH], orientation: "portrait" });
+      // Read the page WIDTH back from jsPDF itself rather than trusting
+      // PAGE_WIDTH directly - a custom format array's internal unit
       // handling isn't guaranteed to round-trip identically to the
-      // coordinate space addImage draws in. pageSize.getWidth()/Height()
-      // is always in the doc's actual coordinate space, so this is the
-      // one guaranteed-consistent source for both. This was the actual
-      // bug: passing independently-computed imgW/imgH straight to
-      // addImage (rather than reading them back like the original code
-      // did for its "a4" page) let the image get drawn larger than the
-      // page's real size, which a PDF hard-clips at the page edge -
-      // matching the uniform right-edge cut confirmed against a clean
-      // source canvas.
+      // coordinate space addImage draws in, which was the clipping bug.
+      // But then re-derive the DRAWN height from that authoritative width
+      // and the canvas's true aspect ratio - trusting
+      // pageSize.getHeight() independently let jsPDF's internal rounding
+      // apply a very slightly different scale to each axis, stretching
+      // the image's aspect ratio even after the clipping fix.
       const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, pageW, pageH);
-      drawFooterWatermark(pdf, pageW, pageH);
+      const drawH = pageW * contentAspect;
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, pageW, drawH);
+      drawFooterWatermark(pdf, pageW, drawH);
     } else {
       // Long guide (e.g. a multi-topic Grade 11 study guide covering
       // several exam topics) - falls back to tiling across fixed
@@ -5011,10 +4986,11 @@ async function downloadStudyGuidePdf() {
       pdf = new jsPDF({ unit: "px", format: [PAGE_WIDTH, PAGE_HEIGHT], orientation: "portrait" });
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
+      const drawH = pageW * contentAspect; // full image height at the authoritative width
       let yOffset = 0;
-      while (yOffset < imgH) {
+      while (yOffset < drawH) {
         if (yOffset > 0) pdf.addPage();
-        pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, -yOffset, pageW, imgH);
+        pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, -yOffset, pageW, drawH);
         drawFooterWatermark(pdf, pageW, pageH);
         yOffset += pageH;
       }
