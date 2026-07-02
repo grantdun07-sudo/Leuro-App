@@ -4907,24 +4907,46 @@ async function downloadStudyGuidePdf() {
     // button above can never leak into the export regardless of its
     // current text. Hidden via visibility (not removed/ignored) so the
     // cloned document html2canvas renders keeps the exact same layout
-    // widths as the live page - ignoreElements previously removed these
-    // buttons from the clone's flex layout entirely (the sibling <h3> in
-    // .study-guide-card-header has flex:1), which reflowed the header and
-    // was the likely cause of text getting clipped at the right edge.
-    // width/windowWidth are pinned explicitly too, as defense-in-depth
-    // against html2canvas guessing a too-narrow capture width.
+    // widths as the live page.
+    //
+    // IMPORTANT: do NOT pass width/windowWidth here. windowWidth tells
+    // html2canvas to re-render the page inside a simulated browser window
+    // of that width - forcing it to card.scrollWidth (measured in the
+    // REAL viewport) caused the whole page to re-layout under a narrower
+    // simulated window, where this app's own responsive breakpoints can
+    // resolve differently, so the card's true re-rendered width no longer
+    // matched the `width` canvas-buffer size we'd also pinned - the
+    // excess got hard-clipped at the canvas edge. That caused the
+    // widespread right-edge clipping confirmed on retest (worse than
+    // before this pair of options was added). Leaving both unset lets
+    // html2canvas use its real defaults (real window.innerWidth, and the
+    // element's actual offsetWidth within it), which is what correctly
+    // reproduces the live page.
     const canvas = await html2canvas(card, {
       scale: 2,
       useCORS: true,
       backgroundColor: "#ffffff",
-      width: card.scrollWidth,
-      windowWidth: card.scrollWidth,
       onclone: (clonedDoc) => {
         clonedDoc.querySelectorAll(".pdf-exclude").forEach((el) => {
           el.style.visibility = "hidden";
         });
       },
     });
+
+    // TEMPORARY diagnostic logging - please check the browser console on
+    // your next test export and paste back these numbers, whether or not
+    // clipping still occurs. This replaces guessing with real data.
+    console.log("[study-guide-pdf-debug]", {
+      cardScrollWidth: card.scrollWidth,
+      cardScrollHeight: card.scrollHeight,
+      cardOffsetWidth: card.offsetWidth,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      canvasAspect: canvas.width / canvas.height,
+      windowInnerWidth: window.innerWidth,
+      devicePixelRatio: window.devicePixelRatio,
+    });
+
     const { jsPDF } = window.jspdf;
 
     // A4 at 96dpi, in px (matches this function's existing "px" unit).
@@ -4932,6 +4954,8 @@ async function downloadStudyGuidePdf() {
     const PAGE_HEIGHT = 1123;
     const imgW = PAGE_WIDTH;
     const imgH = (canvas.height * PAGE_WIDTH) / canvas.width;
+
+    console.log("[study-guide-pdf-debug] page math", { PAGE_WIDTH, PAGE_HEIGHT, imgW, imgH, willTile: imgH > PAGE_HEIGHT });
 
     // Small footer watermark instead of a giant diagonal one fixed at
     // page-center - the old one sat directly on top of whatever content
