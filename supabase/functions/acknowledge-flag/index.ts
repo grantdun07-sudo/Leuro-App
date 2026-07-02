@@ -178,7 +178,7 @@ Deno.serve(async (req: Request) => {
       .select("id, user_id")
       .or(`learner_id.eq.${learnerId},user_id.eq.${childAuthId}`)
       .eq("parent_acknowledged", false)
-      .order("created_at", { ascending: false })
+      .order("flagged_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
