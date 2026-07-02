@@ -56,6 +56,17 @@ create table if not exists public.parents (
   created_at timestamp default now()
 );
 
+-- Migration for existing databases: user_id had no unique constraint,
+-- which meant handle_new_user()'s `insert into public.parents (user_id)
+-- values (new.id) on conflict (user_id) do nothing` had no constraint to
+-- target and threw 42P10 on every parent signup, rolling back the whole
+-- signup transaction. Every other parents.user_id query in this codebase
+-- already assumes exactly one row per user_id (e.g. .eq("user_id",
+-- x).single() in loadParentData, delete-child, delete-parent-account,
+-- acknowledge-flag, create-child-auth, cancel-child-subscription) - this
+-- constraint makes that assumption actually enforced, not just implicit.
+alter table public.parents add constraint parents_user_id_key unique (user_id);
+
 create table if not exists public.subjects (
   id uuid primary key default gen_random_uuid(),
   name text not null,
