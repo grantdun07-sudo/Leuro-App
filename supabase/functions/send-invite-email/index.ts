@@ -3,13 +3,41 @@
 // Sends a child invite email via Resend when a parent adds a child
 // in "Send invite" mode.
 //
+// *** SECURITY FIX ***
+// This function used to accept and email ANY { email, name, token } with
+// zero validation — no auth, no check that the token corresponded to a
+// real invite. Anyone who could reach this URL could make it send a real
+// "Activate My Account" email, from Leuro's trusted domain, to any inbox,
+// embedding any token value they chose. Beyond spam/phishing-from-a-
+// trusted-domain abuse: if an attacker already had a genuine, still-
+// PENDING invite_token (e.g. leaked from a prior email, or from the
+// child themselves), they could redirect where the activation link is
+// delivered to their own inbox and take over that child's account — a
+// real account-takeover path, not just noise.
+//
+// Fix: before sending anything, the token must resolve to a real,
+// currently-pending learners row (the same lookup accept-child-invite
+// itself performs before consuming the token), and the destination email
+// must match that row's own stored email — so this function can no
+// longer be used to email an arbitrary/guessed token to an arbitrary
+// inbox. This doesn't require full JWT auth (the child has no session yet
+// at invite time) — the invite token, now actually checked, IS the
+// validation, exactly as it's meant to function.
+//
 // DEPLOY:
 //   supabase functions deploy send-invite-email --no-verify-jwt
 //
 // SET SECRETS:
 //   supabase secrets set RESEND_API_KEY=re_...
+//   (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are auto-provided)
 //
 // Expected body: { email: string, name: string, token: string }
+// Responses:
+//   200 { ok: true }
+//   400 { error: "..." }  — missing fields, invite not pending, email mismatch
+//   500 { error: "..." }  — server / email-provider errors
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,6 +63,49 @@ Deno.serve(async (req: Request) => {
     const { email, name, token } = await req.json();
     if (!email || !token) {
       return jsonResponse({ error: "Missing email or token" }, 400);
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    if (!supabaseUrl || !serviceRoleKey) {
+      console.error("send-invite-email: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set");
+      return jsonResponse({ error: "Server configuration error" }, 500);
+    }
+
+    const admin = createClient(supabaseUrl, serviceRoleKey, {
+      global: { headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    // Validate the token genuinely corresponds to a real, still-pending
+    // invite — the same check accept-child-invite performs before
+    // consuming it. This is what stops the endpoint from emailing an
+    // arbitrary/blank/already-used token.
+    const { data: learner, error: lookupErr } = await admin
+      .from("learners")
+      .select("id, email, invite_status")
+      .eq("invite_token", token)
+      .maybeSingle();
+
+    if (lookupErr) {
+      console.error("send-invite-email: learners lookup failed:", lookupErr.message);
+      return jsonResponse({ error: "Could not process invite. Please try again." }, 500);
+    }
+
+    if (!learner || learner.invite_status !== "pending") {
+      console.warn("send-invite-email: rejected — token not found or not pending. requested email:", email);
+      return jsonResponse({ error: "Invalid or already-used invite token" }, 400);
+    }
+
+    // The destination must match the invite's own stored email — otherwise
+    // a valid pending token could be replayed to deliver the activation
+    // link to a different inbox than the one it was actually issued for.
+    if (learner.email && learner.email.toLowerCase() !== String(email).toLowerCase()) {
+      console.warn(
+        "send-invite-email: rejected — email does not match invite record. requested:", email,
+        "expected:", learner.email,
+      );
+      return jsonResponse({ error: "Email does not match this invite" }, 400);
     }
 
     const inviteUrl = `${APP_URL}/accept-invite?token=${token}`;
