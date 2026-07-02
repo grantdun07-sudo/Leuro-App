@@ -4933,6 +4933,18 @@ async function downloadStudyGuidePdf() {
       },
     });
 
+    // TEMPORARY debug step: download the raw captured canvas as its own
+    // PNG, separate from the PDF, so we can see whether clipping is
+    // already present in html2canvas's own capture (before it ever
+    // reaches jsPDF) or only appears once the image is placed into the
+    // PDF page.
+    const debugLink = document.createElement("a");
+    debugLink.href = canvas.toDataURL("image/png");
+    debugLink.download = `debug-canvas-${timestamp}.png`;
+    document.body.appendChild(debugLink);
+    debugLink.click();
+    document.body.removeChild(debugLink);
+
     // TEMPORARY diagnostic logging - please check the browser console on
     // your next test export and paste back these numbers, whether or not
     // clipping still occurs. This replaces guessing with real data.
