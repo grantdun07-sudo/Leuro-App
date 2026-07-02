@@ -6300,7 +6300,7 @@ function renderAccountTab() {
     <!-- 5. Logout -->
     <button class="btn btn-danger btn-block" data-action="logout" style="margin-top:6px;">${t("btnLogout")}</button>
     ${!isLearner
-      ? `<button class="btn-link text-center" style="display:block;width:100%;margin-top:10px;color:var(--danger);font-weight:700;font-size:12px;" data-action="open-delete-account-step1">${t("btnDeleteAccount")}</button>`
+      ? `<button class="btn btn-danger btn-block" style="margin-top:10px;" data-action="open-delete-account-step1">${t("btnDeleteAccount")}</button>`
       : ""
     }
 
@@ -6587,14 +6587,14 @@ function renderLinkedChildCard(learner) {
           }
         </div>
         ${canCancel
-          ? `<button class="btn-link" style="font-size:12px;" data-action="cancel-child-subscription-confirm" data-learner-id="${learner.id}">${t("btnCancelSubscription")}</button>`
+          ? `<button class="btn btn-danger btn-sm" data-action="cancel-child-subscription-confirm" data-learner-id="${learner.id}">${t("btnCancelSubscription")}</button>`
           : ""
         }
         ${learner.subscription_status === "past_due"
           ? `<div class="muted" style="color:var(--danger);font-size:12px;text-align:right;">⚠️ ${t("pastDueBannerMsg")}</div>`
           : ""
         }
-        <button class="btn-link" style="font-size:12px;color:var(--danger);font-weight:700;" data-action="open-delete-child-modal" data-learner-id="${learner.id}">${t("btnDeleteChild")}</button>
+        <button class="btn btn-danger btn-sm" data-action="open-delete-child-modal" data-learner-id="${learner.id}">${t("btnDeleteChild")}</button>
       </div>
     </div>
   `;
