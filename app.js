@@ -379,6 +379,12 @@ const translations = {
     deleteChildWarning: "This permanently deletes ALL of {name}'s data — study history, progress, exam results, everything. This cannot be undone.",
     deleteChildTypePrompt: "Type {name} to confirm:",
     btnDeleteChildConfirm: "Delete Permanently",
+    btnDeleteAccount: "Delete Account",
+    confirmDeleteAccountStep1: "Delete your account? This will also permanently delete all your linked children and their data. This cannot be undone.",
+    deleteAccountModalTitle: "Delete your account?",
+    deleteAccountWarning: "This permanently deletes YOUR account and ALL linked children{children} — everything, forever. This cannot be undone.",
+    deleteAccountTypePrompt: "Type {name} to confirm:",
+    btnDeleteAccountConfirm: "Delete My Account Permanently",
 
     loading: "Loading...",
     errorGeneric: "Something went wrong. Please try again.",
@@ -787,6 +793,12 @@ const translations = {
     deleteChildWarning: "Dit skrap ALLE data van {name} permanent — studiegeskiedenis, vordering, eksamenuitslae, alles. Dit kan nie ongedaan gemaak word nie.",
     deleteChildTypePrompt: "Tik {name} om te bevestig:",
     btnDeleteChildConfirm: "Skrap Permanent",
+    btnDeleteAccount: "Skrap Rekening",
+    confirmDeleteAccountStep1: "Skrap jou rekening? Dit sal ook al jou gekoppelde kinders en hul data permanent skrap. Dit kan nie ongedaan gemaak word nie.",
+    deleteAccountModalTitle: "Skrap jou rekening?",
+    deleteAccountWarning: "Dit skrap JOU rekening en ALLE gekoppelde kinders{children} permanent — alles, vir altyd. Dit kan nie ongedaan gemaak word nie.",
+    deleteAccountTypePrompt: "Tik {name} om te bevestig:",
+    btnDeleteAccountConfirm: "Skrap My Rekening Permanent",
 
     loading: "Laai...",
     errorGeneric: "Iets het verkeerd geloop. Probeer asseblief weer.",
@@ -876,6 +888,7 @@ const state = {
   childUpgradeModalOpen: false,
   upgradeTargetLearnerId: null,
   deleteChildTarget: null,
+  deleteAccountModalOpen: false,
   promoCode: null,
   tcModalOpen: false,
   privacyModalOpen: false,
@@ -6286,9 +6299,14 @@ function renderAccountTab() {
 
     <!-- 5. Logout -->
     <button class="btn btn-danger btn-block" data-action="logout" style="margin-top:6px;">${t("btnLogout")}</button>
+    ${!isLearner
+      ? `<button class="btn-link text-center" style="display:block;width:100%;margin-top:10px;color:var(--danger);font-weight:700;font-size:12px;" data-action="open-delete-account-step1">${t("btnDeleteAccount")}</button>`
+      : ""
+    }
 
     ${state.tcModalOpen ? renderTcModal() : ""}
     ${state.privacyModalOpen ? renderPrivacyModal() : ""}
+    ${renderDeleteAccountModal()}
   `;
 }
 
@@ -6608,6 +6626,40 @@ function renderDeleteChildModal() {
         <div class="modal-footer" style="display:flex;gap:10px;">
           <button class="btn btn-outline" style="flex:1;" data-action="close-delete-child-modal">${t("cancel")}</button>
           <button class="btn btn-danger" style="flex:1;" id="delete-child-confirm-btn" data-action="confirm-delete-child" data-learner-id="${target.id}" disabled>${t("btnDeleteChildConfirm")}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Step 2 of the two-step account-deletion flow (step 1 is the simple
+// confirmModal Yes/No prompt). Modeled directly on renderDeleteChildModal():
+// type-to-confirm, Delete button disabled until the parent types their own
+// full name (falling back to email) exactly, validated live via the global
+// "input" listener (direct DOM toggle, no re-render, so focus is preserved).
+function renderDeleteAccountModal() {
+  if (!state.deleteAccountModalOpen) return "";
+  const parentName = state.profile?.full_name || state.profile?.email || "";
+  const nameEsc = escapeHtml(parentName);
+  const childNames = state.linkedLearners.map((l) => l.full_name).filter(Boolean);
+  const childList = childNames.length > 0 ? ` (${childNames.map((n) => escapeHtml(n)).join(", ")})` : "";
+  return `
+    <div class="modal-overlay">
+      <div class="modal-sheet" style="max-width:420px;">
+        <div class="modal-header">
+          <h3>${t("deleteAccountModalTitle")}</h3>
+          <button class="modal-close" data-action="close-delete-account-modal">✕</button>
+        </div>
+        <div class="modal-body">
+          <p style="color:var(--danger);font-weight:600;">${t("deleteAccountWarning").replace("{children}", childList)}</p>
+          <div class="field">
+            <label>${t("deleteAccountTypePrompt").replace("{name}", nameEsc)}</label>
+            <input type="text" id="delete-account-confirm-input" autocomplete="off" data-expected-name="${nameEsc}" />
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex;gap:10px;">
+          <button class="btn btn-outline" style="flex:1;" data-action="close-delete-account-modal">${t("cancel")}</button>
+          <button class="btn btn-danger" style="flex:1;" id="delete-account-confirm-btn" data-action="confirm-delete-account" disabled>${t("btnDeleteAccountConfirm")}</button>
         </div>
       </div>
     </div>
@@ -6973,6 +7025,47 @@ async function handleDeleteChild(learnerId) {
   }
 }
 
+async function handleDeleteParentAccount() {
+  showToast("Deleting your account…", "info");
+  try {
+    const { data: sess } = await sbClient.auth.getSession();
+    const token = sess?.session?.access_token;
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/delete-parent-account`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "apikey": SUPABASE_ANON_KEY,
+      },
+    });
+    const result = await res.json();
+    if (result.success) {
+      showToast("Your account has been deleted.", "success");
+      // Same reset sequence as handleLogout() — the session is now genuinely
+      // invalid, so drop every piece of loaded state and return to the
+      // auth/login screen.
+      await sbClient.auth.signOut();
+      state.session = null;
+      state.user = null;
+      state.profile = null;
+      state.promoCode = null;
+      state.learner = null;
+      state.parent = null;
+      state.topics = [];
+      state.exams = [];
+      state.linkedLearners = [];
+      state.currentTab = "home";
+      render();
+    } else {
+      showToast(`Couldn't delete account: ${result.reason || "unknown error"}. Contact hello@leuroai.co.za.`, "error");
+      console.error("delete-parent-account failed:", result);
+    }
+  } catch (e) {
+    console.error("delete-parent-account call failed:", e);
+    showToast("Couldn't delete your account. Please try again or contact hello@leuroai.co.za.", "error");
+  }
+}
+
 // ---------------------------------------------------------------------
 // GLOBAL EVENT DISPATCHER
 // ---------------------------------------------------------------------
@@ -7064,6 +7157,22 @@ function attachGlobalListeners() {
         handleDeleteChild(learnerId);
         break;
       }
+      case "open-delete-account-step1":
+        state.confirmModal = {
+          message: t("confirmDeleteAccountStep1"),
+          confirmAction: "delete-account-step1-confirmed",
+        };
+        render();
+        break;
+      case "close-delete-account-modal":
+        state.deleteAccountModalOpen = false;
+        render();
+        break;
+      case "confirm-delete-account":
+        state.deleteAccountModalOpen = false;
+        render();
+        handleDeleteParentAccount();
+        break;
       case "admin-toggle-referral-code":
         adminToggleReferralCode(target.dataset.codeId);
         break;
@@ -7319,6 +7428,7 @@ function attachGlobalListeners() {
         else if (confirmAction === "retake-diagnostic-confirmed") retakeDiagnostic();
         else if (confirmAction === "admin-freeze-confirmed") adminToggleFreeze(confirmUserId, false, null);
         else if (confirmAction === "cancel-child-subscription-confirmed") handleCancelChildSubscription(confirmLearnerId);
+        else if (confirmAction === "delete-account-step1-confirmed") state.deleteAccountModalOpen = true;
         render();
         break;
       }
@@ -7467,6 +7577,12 @@ function attachGlobalListeners() {
       const expected = (target.dataset.expectedName || "").trim();
       const typed = target.value.trim();
       const confirmBtn = document.getElementById("delete-child-confirm-btn");
+      if (confirmBtn) confirmBtn.disabled = typed.length === 0 || typed !== expected;
+    }
+    if (target.id === "delete-account-confirm-input") {
+      const expected = (target.dataset.expectedName || "").trim();
+      const typed = target.value.trim();
+      const confirmBtn = document.getElementById("delete-account-confirm-btn");
       if (confirmBtn) confirmBtn.disabled = typed.length === 0 || typed !== expected;
     }
   });
