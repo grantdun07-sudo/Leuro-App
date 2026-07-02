@@ -4987,20 +4987,36 @@ async function downloadStudyGuidePdf() {
       // Short guide (the common case): one page sized exactly to the
       // content - no fixed A4 page height, so no trailing blank space.
       pdf = new jsPDF({ unit: "px", format: [imgW, imgH], orientation: "portrait" });
-      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, imgW, imgH);
-      drawFooterWatermark(pdf, imgW, imgH);
+      // Read the page size back from jsPDF itself rather than reusing
+      // imgW/imgH directly - a custom format array's internal unit
+      // handling isn't guaranteed to round-trip identically to the
+      // coordinate space addImage draws in. pageSize.getWidth()/Height()
+      // is always in the doc's actual coordinate space, so this is the
+      // one guaranteed-consistent source for both. This was the actual
+      // bug: passing independently-computed imgW/imgH straight to
+      // addImage (rather than reading them back like the original code
+      // did for its "a4" page) let the image get drawn larger than the
+      // page's real size, which a PDF hard-clips at the page edge -
+      // matching the uniform right-edge cut confirmed against a clean
+      // source canvas.
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, pageW, pageH);
+      drawFooterWatermark(pdf, pageW, pageH);
     } else {
       // Long guide (e.g. a multi-topic Grade 11 study guide covering
       // several exam topics) - falls back to tiling across fixed
       // A4-height pages, same as before, just with the same footer
       // watermark instead of the old page-center one.
       pdf = new jsPDF({ unit: "px", format: [PAGE_WIDTH, PAGE_HEIGHT], orientation: "portrait" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
       let yOffset = 0;
       while (yOffset < imgH) {
         if (yOffset > 0) pdf.addPage();
-        pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, -yOffset, imgW, imgH);
-        drawFooterWatermark(pdf, PAGE_WIDTH, PAGE_HEIGHT);
-        yOffset += PAGE_HEIGHT;
+        pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, -yOffset, pageW, imgH);
+        drawFooterWatermark(pdf, pageW, pageH);
+        yOffset += pageH;
       }
     }
 
