@@ -13,6 +13,10 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const MODEL = "claude-haiku-4-5-20251001";
 
+// Rate limiting.
+const RATE_LIMIT_HOURLY_CAP = 15;
+const RATE_LIMIT_DAILY_CAP = 50;
+
 function langInstruction(lang: string): string {
   return lang === "af"
     ? "Generate ALL content in Afrikaans (questions, options, and explanations)."
@@ -61,6 +65,55 @@ Deno.serve(async (req) => {
 
     const { data: user } = await supabase.auth.getUser(token);
     if (!user?.user) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+
+    // --- Rate limit check: generate-flashcards ---
+    // Runs before any Claude call so we never bill for a call we're about
+    // to reject. `supabase` here is already the service-role client (see
+    // top of file), which is what api_rate_limits grants access to.
+    // Fail-closed: if the check itself errors, block the request rather
+    // than silently letting it through as unlimited.
+    const rateLimitUserId = user.user.id;
+
+    const { count: hourlyCount, error: hourlyErr } = await supabase
+      .from("api_rate_limits")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", rateLimitUserId)
+      .eq("function_name", "generate-flashcards")
+      .gte("created_at", new Date(Date.now() - 60 * 60 * 1000).toISOString());
+
+    const { count: dailyCount, error: dailyErr } = await supabase
+      .from("api_rate_limits")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", rateLimitUserId)
+      .eq("function_name", "generate-flashcards")
+      .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+    if (hourlyErr || dailyErr) {
+      console.error("generate-flashcards: rate limit check failed:", hourlyErr ?? dailyErr);
+      return new Response(JSON.stringify({ error: "Rate limit check failed, please try again" }), {
+        status: 503,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if ((hourlyCount ?? 0) >= RATE_LIMIT_HOURLY_CAP || (dailyCount ?? 0) >= RATE_LIMIT_DAILY_CAP) {
+      return new Response(
+        JSON.stringify({
+          error: "rate_limit_exceeded",
+          message: "You've reached your usage limit. Please try again later.",
+        }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // Log this call before the Claude API call - worst case we log a call
+    // that then fails downstream, which just makes the limit slightly more
+    // conservative, which is safe.
+    await supabase.from("api_rate_limits").insert({
+      user_id: rateLimitUserId,
+      function_name: "generate-flashcards",
+    });
+    // --- End rate limit check ---
 
     const { subjectId, topicTitle, cardCount } = await req.json();
 

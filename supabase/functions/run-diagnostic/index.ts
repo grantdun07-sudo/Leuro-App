@@ -17,8 +17,15 @@ import { langInstruction, JSON_KEYS_ENGLISH_NOTE } from "../_shared/prompts.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const QUESTION_COUNT = 10;
+
+// Rate limiting - api_rate_limits only grants access to service_role, so
+// this needs its own admin client (run-diagnostic otherwise only uses the
+// caller-scoped anon+JWT client).
+const RATE_LIMIT_HOURLY_CAP = 10;
+const RATE_LIMIT_DAILY_CAP = 30;
 
 const SYSTEM_PROMPT =
   "You are a CAPS-aligned South African education assessment tool. Return ONLY valid JSON, no markdown fences.";
@@ -87,6 +94,48 @@ Deno.serve(async (req: Request) => {
     if (userErr || !userData?.user) {
       return jsonResponse({ error: "Invalid or expired session" }, 401);
     }
+
+    // --- Rate limit check: run-diagnostic ---
+    // Runs before any Claude call so we never bill for a call we're about
+    // to reject. Fail-closed: if the check itself errors, block the
+    // request rather than silently letting it through as unlimited.
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const rateLimitUserId = userData.user.id;
+
+    const { count: hourlyCount, error: hourlyErr } = await supabaseAdmin
+      .from("api_rate_limits")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", rateLimitUserId)
+      .eq("function_name", "run-diagnostic")
+      .gte("created_at", new Date(Date.now() - 60 * 60 * 1000).toISOString());
+
+    const { count: dailyCount, error: dailyErr } = await supabaseAdmin
+      .from("api_rate_limits")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", rateLimitUserId)
+      .eq("function_name", "run-diagnostic")
+      .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+    if (hourlyErr || dailyErr) {
+      console.error("run-diagnostic: rate limit check failed:", hourlyErr ?? dailyErr);
+      return jsonResponse({ error: "Rate limit check failed, please try again" }, 503);
+    }
+
+    if ((hourlyCount ?? 0) >= RATE_LIMIT_HOURLY_CAP || (dailyCount ?? 0) >= RATE_LIMIT_DAILY_CAP) {
+      return jsonResponse(
+        { error: "rate_limit_exceeded", message: "You've reached your usage limit. Please try again later." },
+        429,
+      );
+    }
+
+    // Log this call before the Claude API call - worst case we log a call
+    // that then fails downstream, which just makes the limit slightly more
+    // conservative, which is safe.
+    await supabaseAdmin.from("api_rate_limits").insert({
+      user_id: rateLimitUserId,
+      function_name: "run-diagnostic",
+    });
+    // --- End rate limit check ---
 
     // Confirm the learner belongs to the authenticated user.
     const { data: learner, error: learnerErr } = await supabase

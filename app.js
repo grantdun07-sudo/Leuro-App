@@ -5036,7 +5036,7 @@ async function generateFlashcards() {
     }, 60000);
 
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || t("errorFlashcardGeneration"));
+    if (!res.ok) throw new Error(data.message || data.error || t("errorFlashcardGeneration"));
 
     fc.cards = data.cards;
     fc.step = "game";

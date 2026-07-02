@@ -28,6 +28,10 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const TOTAL_MARKS = 30;
 
+// Rate limiting.
+const RATE_LIMIT_HOURLY_CAP = 10;
+const RATE_LIMIT_DAILY_CAP = 30;
+
 const SYSTEM_PROMPT = `You are Leuro™, a CAPS expert exam-setter for South African school
 learners (Grades 4-12).
 
@@ -173,6 +177,47 @@ Deno.serve(async (req: Request) => {
     if (userErr || !userData?.user) {
       return jsonResponse({ error: "Invalid or expired session" }, 401);
     }
+
+    // --- Rate limit check: generate-mock-exam ---
+    // Runs before any Claude call so we never bill for a call we're about
+    // to reject. Fail-closed: if the check itself errors, block the
+    // request rather than silently letting it through as unlimited.
+    const rateLimitUserId = userData.user.id;
+
+    const { count: hourlyCount, error: hourlyErr } = await supabaseAdmin
+      .from("api_rate_limits")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", rateLimitUserId)
+      .eq("function_name", "generate-mock-exam")
+      .gte("created_at", new Date(Date.now() - 60 * 60 * 1000).toISOString());
+
+    const { count: dailyCount, error: dailyErr } = await supabaseAdmin
+      .from("api_rate_limits")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", rateLimitUserId)
+      .eq("function_name", "generate-mock-exam")
+      .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+    if (hourlyErr || dailyErr) {
+      console.error("generate-mock-exam: rate limit check failed:", hourlyErr ?? dailyErr);
+      return jsonResponse({ error: "Rate limit check failed, please try again" }, 503);
+    }
+
+    if ((hourlyCount ?? 0) >= RATE_LIMIT_HOURLY_CAP || (dailyCount ?? 0) >= RATE_LIMIT_DAILY_CAP) {
+      return jsonResponse(
+        { error: "rate_limit_exceeded", message: "You've reached your usage limit. Please try again later." },
+        429,
+      );
+    }
+
+    // Log this call before the Claude API call - worst case we log a call
+    // that then fails downstream, which just makes the limit slightly more
+    // conservative, which is safe.
+    await supabaseAdmin.from("api_rate_limits").insert({
+      user_id: rateLimitUserId,
+      function_name: "generate-mock-exam",
+    });
+    // --- End rate limit check ---
 
     const [{ data: learner, error: learnerErr }, { data: profile }] = await Promise.all([
       supabase

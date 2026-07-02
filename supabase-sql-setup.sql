@@ -248,6 +248,27 @@ create table if not exists public.saved_guides (
   created_at timestamp default now()
 );
 
+-- API rate limiting: one row per AI-generation call, counted via indexed
+-- range queries by the calling edge function (run-diagnostic,
+-- generate-flashcards, generate-mock-exam, generate-study-guide) before it
+-- calls Claude. Log-per-call by design (keeps history) - no cleanup/
+-- retention job yet, deferred as a post-launch follow-up; the table will
+-- accumulate rows indefinitely until that's built.
+create table if not exists public.api_rate_limits (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  function_name text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_rate_limits_lookup
+  on public.api_rate_limits (user_id, function_name, created_at desc);
+
+-- Only service_role reads/writes this table (checked from inside the edge
+-- functions with a service-role client) - no anon/authenticated access and
+-- no RLS policy needed since those roles get no grant at all.
+grant select, insert on public.api_rate_limits to service_role;
+
 -- ---------------------------------------------------------------------
 -- INDEXES
 -- ---------------------------------------------------------------------
