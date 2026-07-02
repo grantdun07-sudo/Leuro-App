@@ -21,10 +21,18 @@
 // their own network response / console log — which let a flagged learner
 // read their own content_flags.id and self-reactivate their own frozen
 // account via the old public acknowledge-flag endpoint, completely
-// bypassing the parent review the freeze exists to require. Only a generic
-// { success: true } is returned now. acknowledge-flag (now parent-JWT-gated
-// and ownership-checked) resolves which flag to act on server-side instead
-// of trusting an id handed back to the client.
+// bypassing the parent review the freeze exists to require. Only
+// { success, frozen } is returned now. acknowledge-flag (now parent-JWT-
+// gated and ownership-checked) resolves which flag to act on server-side
+// instead of trusting an id handed back to the client.
+//
+// RESPONSE SHAPE: { success: boolean, frozen: boolean }. `success` reflects
+// whether the content_flags row was saved; `frozen` reflects whether
+// profiles.account_frozen was actually persisted (severity-1 only — these
+// are two separate writes that can fail independently). The client's
+// tier-1 safety check treats the freeze as confirmed ONLY when
+// success === true AND frozen === true — it must not show a frozen/paused
+// state the DB doesn't actually reflect.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -53,7 +61,7 @@ Deno.serve(async (req: Request) => {
   try {
     if (req.method !== "POST") {
       console.error("save-content-flag: bad method:", req.method);
-      return jsonResponse({ error: "Method not allowed" }, 405);
+      return jsonResponse({ success: false, frozen: false, error: "Method not allowed" }, 405);
     }
 
     const body = await req.json();
@@ -71,11 +79,11 @@ Deno.serve(async (req: Request) => {
 
     if (severity !== 1 && severity !== 2) {
       console.error("save-content-flag: invalid severity:", severity);
-      return jsonResponse({ error: "severity (1 or 2) is required" }, 400);
+      return jsonResponse({ success: false, frozen: false, error: "severity (1 or 2) is required" }, 400);
     }
     if (!flagged_text) {
       console.error("save-content-flag: missing flagged_text");
-      return jsonResponse({ error: "flagged_text is required" }, 400);
+      return jsonResponse({ success: false, frozen: false, error: "flagged_text is required" }, 400);
     }
 
     console.log("save-content-flag: creating service-role client");
@@ -100,13 +108,19 @@ Deno.serve(async (req: Request) => {
     if (insertErr || !flag) {
       console.error("save-content-flag: insert failed:", JSON.stringify(insertErr));
       return jsonResponse(
-        { error: "Failed to save content flag", details: insertErr?.message },
+        { success: false, frozen: false, error: "Failed to save content flag", details: insertErr?.message },
         500,
       );
     }
 
     console.log("save-content-flag: inserted flag id:", flag.id);
 
+    // The content_flags insert and the profiles freeze update are two
+    // separate writes that can fail independently. `frozen` tells the
+    // caller definitively whether the freeze was actually persisted — the
+    // client relies on this to fail closed (never optimistically show a
+    // frozen/paused state the DB doesn't actually reflect).
+    let frozen = false;
     if (severity === 1 && user_id) {
       const { error: freezeErr } = await supabase
         .from("profiles")
@@ -118,14 +132,15 @@ Deno.serve(async (req: Request) => {
       if (freezeErr) {
         console.error("save-content-flag: failed to freeze profile:", JSON.stringify(freezeErr));
       } else {
+        frozen = true;
         console.log("save-content-flag: froze profile:", user_id);
       }
     }
 
-    console.log("save-content-flag: success, flag id:", flag.id, "(not returned to caller)");
-    return jsonResponse({ success: true });
+    console.log("save-content-flag: success, flag id:", flag.id, "(not returned to caller), frozen:", frozen);
+    return jsonResponse({ success: true, frozen });
   } catch (err) {
     console.error("save-content-flag error:", err);
-    return jsonResponse({ error: "Internal server error", details: String(err) }, 500);
+    return jsonResponse({ success: false, frozen: false, error: "Internal server error", details: String(err) }, 500);
   }
 });

@@ -411,6 +411,7 @@ const translations = {
     safetyCrisisMessage: "Your feelings are valid and important. Please talk to a trusted adult or your parent right away. You can also call the SADAG helpline anytime — it's free: 0800 21 22 23 (available 24 hours).",
     safetyTier2Message: "This type of language isn't allowed on Leuro™.",
     accountFrozenMessage: "Your account has been temporarily paused. Your parent or guardian has been notified and will need to confirm before you can continue.",
+    safetyCheckErrorMessage: "Something went wrong — please try again in a moment.",
     btnClose: "Close",
 
     acknowledgeThankYou: "Thank you for confirming.",
@@ -829,6 +830,7 @@ const translations = {
     safetyCrisisMessage: "Jou gevoelens is geldig en belangrik. Praat asseblief dadelik met 'n vertroude volwassene of jou ouer. Jy kan ook die SADAG-hulplyn enige tyd skakel — dit is gratis: 0800 21 22 23 (24 uur beskikbaar).",
     safetyTier2Message: "Hierdie tipe taal is nie op Leuro™ toegelaat nie.",
     accountFrozenMessage: "Jou rekening is tydelik gepauzeer. Jou ouer of voog is ingelig en sal moet bevestig voordat jy kan voortgaan.",
+    safetyCheckErrorMessage: "Iets het verkeerd geloop — probeer asseblief oor 'n oomblik weer.",
     btnClose: "Sluit",
 
     acknowledgeThankYou: "Dankie dat jy bevestig het.",
@@ -1159,14 +1161,7 @@ async function checkContent(text, context, learnerId) {
   if (!text || !text.trim()) return true;
 
   if (containsTier1Language(text)) {
-    await flagContent(text, 1, context, learnerId);
-    if (state.profile) {
-      state.profile.account_frozen = true;
-      state.profile.freeze_reason = "Self-harm content detected";
-    }
-    state.safetyOverlay = { severity: 1 };
-    render();
-    return false;
+    return await handleTier1Flag(text, context, learnerId);
   }
 
   if (TIER2_REGEX.test(text)) {
@@ -1178,8 +1173,116 @@ async function checkContent(text, context, learnerId) {
   return true;
 }
 
-// Records a content safety flag, freezes the account when required, and
-// notifies the learner's parent/guardian.
+// Tier-1 (self-harm/crisis) content is a fail-closed safety check: the
+// paused screen is shown ONLY once save-content-flag has confirmed (via its
+// `frozen` response field) that profiles.account_frozen was actually
+// persisted server-side — never optimistically. A single automatic retry
+// covers transient failures; if both attempts fail we block the learner's
+// message and show an error instead of a fake paused screen that would
+// simply vanish on refresh, since nothing would actually have been written
+// to the DB (see the July 2026 investigation into this exact failure mode).
+async function handleTier1Flag(text, context, learnerId) {
+  // state.session may not be populated yet at this point, so fetch the
+  // current session fresh from Supabase rather than relying on it.
+  const { data: { session } } = await sbClient.auth.getSession();
+  const accessToken = session?.access_token || SUPABASE_ANON_KEY;
+  const userId = session?.user?.id || state.user?.id || null;
+  const payload = {
+    user_id: userId,
+    learner_id: learnerId || null,
+    severity: 1,
+    flagged_text: text,
+    context,
+    account_frozen: true,
+  };
+
+  console.log("handleTier1Flag: calling save-content-flag (attempt 1)", payload);
+  let result = await saveTier1Flag(payload, accessToken);
+
+  if (!result.frozen) {
+    console.error("handleTier1Flag: freeze not confirmed on first attempt, retrying once", { context, learnerId });
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    result = await saveTier1Flag(payload, accessToken);
+  }
+
+  if (!result.frozen) {
+    console.error("handleTier1Flag: freeze NOT confirmed after retry — failing closed, message blocked", { context, learnerId, userId });
+    showToast(t("safetyCheckErrorMessage"), "error");
+    return false;
+  }
+
+  if (state.profile) {
+    state.profile.account_frozen = true;
+    state.profile.freeze_reason = "Self-harm content detected";
+  }
+  state.safetyOverlay = { severity: 1 };
+  render();
+
+  if (learnerId) {
+    await notifyParentOfFlag(learnerId, 1, text, context, accessToken);
+  }
+
+  return false;
+}
+
+// Single save-content-flag attempt for tier-1 content. Returns
+// { frozen: true } ONLY when the server response confirms
+// profiles.account_frozen was actually persisted — never on a bare
+// HTTP 200/{success:true}, since the content_flags insert and the profile
+// freeze update are two separate steps on the server that can fail
+// independently (see save-content-flag's response shape).
+async function saveTier1Flag(payload, accessToken) {
+  try {
+    const res = await fetchWithTimeout(`${FN_URL}/save-content-flag`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify(payload),
+    });
+    const raw = await res.text();
+    console.log("saveTier1Flag: save-content-flag raw response", res.status, raw);
+    let data = null;
+    try { data = JSON.parse(raw); } catch { /* non-JSON body */ }
+    if (!res.ok || !data || data.success !== true) {
+      console.error("saveTier1Flag: save-content-flag did not succeed", res.status, raw);
+      return { frozen: false };
+    }
+    return { frozen: data.frozen === true };
+  } catch (err) {
+    console.error("saveTier1Flag: request failed", err);
+    return { frozen: false };
+  }
+}
+
+// Notifies the learner's linked parent(s) that a content-safety flag was
+// raised. Best-effort — failures are logged but never block the caller.
+async function notifyParentOfFlag(learnerId, severity, text, context, accessToken) {
+  console.log("notifyParentOfFlag: calling notify-parent");
+  try {
+    const res = await fetchWithTimeout(`${FN_URL}/notify-parent`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ learnerId, severity, flaggedText: text, context }),
+    });
+    if (!res.ok) {
+      console.error("notifyParentOfFlag: notify-parent failed", res.status, await res.text());
+    } else {
+      console.log("notifyParentOfFlag: notify-parent ok");
+    }
+  } catch (err) {
+    console.error("notifyParentOfFlag: request failed", err);
+  }
+}
+
+// Records a tier-2 content safety flag, freezes the account after 3 flags
+// within 7 days, and notifies the learner's parent/guardian.
 async function flagContent(text, severity, context, learnerId) {
   // The browser can't INSERT into content_flags directly - RLS blocks it
   // (403). The save-content-flag edge function performs the write with the
@@ -1192,7 +1295,7 @@ async function flagContent(text, severity, context, learnerId) {
   const userId = session?.user?.id || state.user?.id || null;
   console.log("flagContent: start", { severity, context, learnerId, userId });
 
-  // save-content-flag intentionally returns only { success: true } — it
+  // save-content-flag intentionally returns only { success, frozen } — it
   // never hands back the flag's own id, since this caller is the flagged
   // learner's own browser (see save-content-flag's header comment for why).
   try {
@@ -1202,7 +1305,7 @@ async function flagContent(text, severity, context, learnerId) {
       severity,
       flagged_text: text,
       context,
-      account_frozen: severity === 1,
+      account_frozen: false,
     };
     console.log("flagContent: calling save-content-flag", payload);
     const res = await fetchWithTimeout(`${FN_URL}/save-content-flag`, {
@@ -1224,59 +1327,41 @@ async function flagContent(text, severity, context, learnerId) {
   }
 
   try {
-    if (severity === 2) {
-      // Freeze the account only after 3 tier-2 flags within the last 7 days.
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      let countQuery = sbClient
-        .from("content_flags")
-        .select("id", { count: "exact", head: true })
-        .eq("severity", 2)
-        .gte("created_at", sevenDaysAgo);
-      countQuery = learnerId
-        ? countQuery.eq("learner_id", learnerId)
-        : countQuery.eq("user_id", state.user?.id);
+    // Freeze the account only after 3 tier-2 flags within the last 7 days.
+    // This path already gates the client-side mutation on a successful,
+    // awaited profiles UPDATE (never optimistic) — same fail-closed
+    // principle as tier-1, confirmed still true as of this fix.
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    let countQuery = sbClient
+      .from("content_flags")
+      .select("id", { count: "exact", head: true })
+      .eq("severity", 2)
+      .gte("created_at", sevenDaysAgo);
+    countQuery = learnerId
+      ? countQuery.eq("learner_id", learnerId)
+      : countQuery.eq("user_id", state.user?.id);
 
-      const { count, error: countErr } = await countQuery;
-      if (countErr) {
-        console.error("flagContent: failed to count tier-2 flags", countErr);
-      }
+    const { count, error: countErr } = await countQuery;
+    if (countErr) {
+      console.error("flagContent: failed to count tier-2 flags", countErr);
+    }
 
-      if ((count || 0) >= 3) {
-        const { error: freezeErr } = await sbClient
-          .from("profiles")
-          .update({ account_frozen: true, freeze_reason: "Repeated inappropriate language" })
-          .eq("id", state.user.id);
-        if (freezeErr) {
-          console.error("flagContent: failed to freeze account (severity 2)", freezeErr);
-        } else if (state.profile) {
-          state.profile.account_frozen = true;
-          state.profile.freeze_reason = "Repeated inappropriate language";
-          render();
-        }
+    if ((count || 0) >= 3) {
+      const { error: freezeErr } = await sbClient
+        .from("profiles")
+        .update({ account_frozen: true, freeze_reason: "Repeated inappropriate language" })
+        .eq("id", state.user.id);
+      if (freezeErr) {
+        console.error("flagContent: failed to freeze account (severity 2)", freezeErr);
+      } else if (state.profile) {
+        state.profile.account_frozen = true;
+        state.profile.freeze_reason = "Repeated inappropriate language";
+        render();
       }
     }
 
     if (learnerId) {
-      console.log("flagContent: calling notify-parent");
-      const res = await fetchWithTimeout(`${FN_URL}/notify-parent`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-          apikey: SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify({
-          learnerId,
-          severity,
-          flaggedText: text,
-          context,
-        }),
-      });
-      if (!res.ok) {
-        console.error("flagContent: notify-parent failed", res.status, await res.text());
-      } else {
-        console.log("flagContent: notify-parent ok");
-      }
+      await notifyParentOfFlag(learnerId, severity, text, context, accessToken);
     }
   } catch (err) {
     console.error("flagContent error:", err);
