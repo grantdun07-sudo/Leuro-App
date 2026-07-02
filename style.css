@@ -580,6 +580,17 @@ h1, h2, h3, h4 {
 .badge-danger { background: rgba(217, 83, 79, 0.12); color: var(--danger); }
 .badge-muted { background: var(--border); color: var(--text-muted); }
 
+/* A <button> can wear the same pill look as a status .badge (e.g. Retake
+   Diagnostic sitting alongside the Sessions-today badge) - this just resets
+   the browser's default button chrome so the badge/badge-* rules render
+   identically on a button as on a span. */
+button.badge {
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+button.badge:hover { opacity: 0.75; }
+
 .level-pill {
   display: inline-flex;
   align-items: center;

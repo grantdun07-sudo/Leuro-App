@@ -4137,7 +4137,7 @@ function renderLearnTab() {
             ? `<span class="badge ${limitReached ? "badge-danger" : "badge-muted"}">${t("sessionsToday")}: ${state.sessionsToday}/3</span>`
             : `<span class="badge badge-success">${t("unlimitedSessions")}</span>`
         }
-        <button class="link-btn" data-action="retake-diagnostic-confirm">${t("retakeDiagnostic")}</button>
+        <button class="badge badge-purple" data-action="retake-diagnostic-confirm">${t("retakeDiagnostic")}</button>
       </div>
     </div>
 
