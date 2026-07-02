@@ -1960,6 +1960,9 @@ function renderLoginForm() {
         <input type="checkbox" name="keepSignedIn" ${keepChecked ? "checked" : ""} />
         <span>${t("keepMeSignedIn")}</span>
       </label>
+      <div class="field">
+        <div id="turnstile-container" class="cf-turnstile" data-sitekey="${TURNSTILE_SITE_KEY}"></div>
+      </div>
       <button type="submit" class="btn btn-primary btn-block">${t("btnLogin")}</button>
     </form>
     <p class="forgot-link"><button class="btn-link" data-action="show-forgot">${t("forgotPassword")}</button></p>
@@ -2041,6 +2044,9 @@ function renderForgotForm() {
         <label>${t("labelEmail")}</label>
         <input type="email" name="email" required autocomplete="email" />
       </div>
+      <div class="field">
+        <div id="turnstile-container" class="cf-turnstile" data-sitekey="${TURNSTILE_SITE_KEY}"></div>
+      </div>
       <button type="submit" class="btn btn-primary btn-block">${t("btnSendResetLink")}</button>
     </form>
     <p class="forgot-link"><button class="btn-link" data-action="back-to-login">${t("tabLogin")}</button></p>
@@ -2052,8 +2058,18 @@ async function handleResetPasswordRequest(form) {
   setButtonLoading(btn, true);
   try {
     const email = form.email.value.trim();
+
+    // Same Turnstile requirement as login/signup — Supabase Auth's CAPTCHA
+    // protection, once enabled project-wide, also covers /recover.
+    const turnstileToken = form.querySelector('[name="cf-turnstile-response"]')?.value || "";
+    if (!turnstileToken) {
+      showToast(t("turnstileRequired"), "error");
+      return;
+    }
+
     await sbClient.auth.resetPasswordForEmail(email, {
       redirectTo: window.location.origin,
+      captchaToken: turnstileToken,
     });
     // Always show the same neutral message — don't leak whether the email exists.
     resetEmailSent = true;
@@ -2061,6 +2077,9 @@ async function handleResetPasswordRequest(form) {
   } catch (err) {
     console.error(err);
     showToast(err.message || t("errorGeneric"), "error");
+    if (typeof turnstile !== "undefined" && turnstileWidgetId !== null) {
+      turnstile.reset(turnstileWidgetId);
+    }
   } finally {
     setButtonLoading(btn, false);
   }
@@ -2532,7 +2551,21 @@ async function handleLogin(form) {
     const keep = form.querySelector('[name="keepSignedIn"]')?.checked ?? true;
     localStorage.setItem("leuro_keep_signed_in", keep ? "true" : "false");
 
-    const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
+    // Turnstile injects a hidden `cf-turnstile-response` input inside its
+    // container once the challenge is solved (see the signup form for the
+    // same pattern) — Supabase Auth's CAPTCHA protection, once enabled
+    // project-wide, is enforced on sign-in the same as sign-up.
+    const turnstileToken = form.querySelector('[name="cf-turnstile-response"]')?.value || "";
+    if (!turnstileToken) {
+      showToast(t("turnstileRequired"), "error");
+      return;
+    }
+
+    const { data, error } = await sbClient.auth.signInWithPassword({
+      email,
+      password,
+      options: { captchaToken: turnstileToken },
+    });
     if (error) throw error;
 
     // signInWithPassword resolves before the client has finished persisting the
@@ -2574,6 +2607,12 @@ async function handleLogin(form) {
   } catch (err) {
     console.error(err);
     showToast(err.message || t("errorGeneric"), "error");
+    // Turnstile tokens are single-use and expire quickly — reset the
+    // still-mounted widget (no full page reload) so the user gets a fresh
+    // token to retry with, e.g. after "invalid credentials".
+    if (typeof turnstile !== "undefined" && turnstileWidgetId !== null) {
+      turnstile.reset(turnstileWidgetId);
+    }
   } finally {
     setButtonLoading(btn, false);
   }
@@ -2868,7 +2907,7 @@ function render() {
 
   if (!state.user || !state.profile) {
     app.innerHTML = renderAuthScreen();
-    if (authTab === "signup") {
+    if (authTab === "signup" || authTab === "login" || authTab === "forgot") {
       requestAnimationFrame(() => initTurnstileWidget());
     }
     return;
