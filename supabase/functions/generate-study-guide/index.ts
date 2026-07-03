@@ -114,6 +114,15 @@ interface RequestBody {
   };
 }
 
+// South Africa Standard Time is a fixed UTC+2 offset with no DST - this app
+// only operates in SA, so a hardcoded offset is correct (no per-user
+// timezone/DST logic needed). Returns the SAST calendar date as "YYYY-MM-DD"
+// for a given instant, used by the streak counter to define what "a day" is.
+const SAST_OFFSET_MS = 2 * 60 * 60 * 1000;
+function sastDateString(instant: Date): string {
+  return new Date(instant.getTime() + SAST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 // Plain heuristic (no AI call) that classifies a learner's practice-question
 // answer as "weak" (nothing substantive to evaluate) or "genuine" (a real
 // attempt, however short or wrong). Used so the feedback phase can scaffold
@@ -421,7 +430,11 @@ Deno.serve(async (req: Request) => {
     // --- End rate limit check ---
 
     const [{ data: learner, error: learnerErr }, { data: profile }] = await Promise.all([
-      supabase.from("learners").select("id, grade, diagnostic_level, subscription_status").eq("user_id", userData.user.id).single(),
+      supabase
+        .from("learners")
+        .select("id, grade, diagnostic_level, subscription_status, streak_days, streak_last_active_date")
+        .eq("user_id", userData.user.id)
+        .single(),
       supabase.from("profiles").select("subscription_tier, lang").eq("id", userData.user.id).single(),
     ]);
 
@@ -646,6 +659,40 @@ Deno.serve(async (req: Request) => {
         );
       }
     }
+
+    // --- Streak counter ---
+    // Same trigger as the free-tier daily limit above (explain-phase
+    // session starts), but tier-agnostic - runs for every tier, and only
+    // for requests that actually reach this point (a free-tier request
+    // rejected by the 403 above never gets streak credit, since it never
+    // reaches here). A "day" is a fixed SAST calendar date. Only the
+    // FIRST qualifying explain-phase start on a new SAST day moves the
+    // streak; a second (or fifth) session the same day is a no-op, since
+    // streak_last_active_date already equals today.
+    if (body.phase === "explain") {
+      const todaySAST = sastDateString(new Date());
+      const yesterdaySAST = sastDateString(new Date(Date.now() - 24 * 60 * 60 * 1000));
+      const lastActive = learner.streak_last_active_date as string | null;
+
+      if (lastActive !== todaySAST) {
+        // Consecutive with yesterday -> extend the streak. Anything else -
+        // no prior activity (first-ever session) or a gap of a full missed
+        // day (streak was broken) - both start a fresh streak at 1, since
+        // today's session itself is a qualifying day.
+        const isConsecutive = lastActive === yesterdaySAST;
+        const newStreak = isConsecutive ? (learner.streak_days ?? 0) + 1 : 1;
+
+        const { error: streakErr } = await supabase
+          .from("learners")
+          .update({ streak_days: newStreak, streak_last_active_date: todaySAST })
+          .eq("id", learner.id);
+
+        if (streakErr) {
+          console.error("generate-study-guide: failed to update streak for learner", learner.id, ":", streakErr.message);
+        }
+      }
+    }
+    // --- End streak counter ---
 
     // Child-safety screen on learner-submitted text (attempt answers / feedback / chat)
     if (

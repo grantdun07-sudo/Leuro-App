@@ -185,6 +185,13 @@ alter table public.mock_exam_questions add column if not exists correct_answer t
 -- Migration: daily study streak counter shown on the dashboard Home tab.
 alter table public.learners add column if not exists streak_days int default 0;
 
+-- Migration: last SAST calendar date (UTC+2, fixed - no per-user timezone)
+-- the learner had a streak-qualifying explain-phase session start. Needed
+-- alongside streak_days to tell "already counted today" from "consecutive
+-- with yesterday" from "gap - streak broken". Set/read by
+-- generate-study-guide's explain-phase handling.
+alter table public.learners add column if not exists streak_last_active_date date;
+
 -- Migration: Parent Dashboard > Goals tab (visible suggestions for the learner)
 alter table public.learners add column if not exists weekly_session_target int default 3 check (weekly_session_target between 1 and 14);
 alter table public.learners add column if not exists focus_subjects uuid[] default array[]::uuid[];
