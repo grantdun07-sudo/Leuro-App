@@ -32,6 +32,8 @@ interface AnswerKeyEntry {
   explanation?: string;
 }
 
+const VALID_LETTERS = new Set(["A", "B", "C", "D"]);
+
 function parseAnswerKey(raw: string | null): AnswerKeyEntry {
   if (!raw) return {};
   try {
@@ -96,13 +98,20 @@ Deno.serve(async (req: Request) => {
     // Verify the exam belongs to this learner.
     const { data: exam, error: examErr } = await supabase
       .from("mock_exams")
-      .select("id, learner_id, total_marks")
+      .select("id, learner_id, total_marks, completed_at")
       .eq("id", examId)
       .eq("learner_id", learner.id)
       .single();
 
     if (examErr || !exam) {
       return jsonResponse({ error: "Exam not found" }, 404);
+    }
+
+    // One submission per exam — a completed exam cannot be regraded.
+    // Without this, resubmitting inserted duplicate mock_exam_responses
+    // rows and overwrote the recorded score each time.
+    if (exam.completed_at) {
+      return jsonResponse({ error: "This exam has already been submitted" }, 400);
     }
 
     // Load stored answer keys — questions are readable by the learner via JWT.
@@ -117,8 +126,13 @@ Deno.serve(async (req: Request) => {
     }
 
     // Build answer lookup: questionId → submitted letter (uppercase).
+    // Anything that isn't exactly A–D is treated as no answer — the value
+    // is stored and echoed back, so free-form input must never pass through.
     const answerMap = new Map(
-      responses.map((r) => [r.questionId, String(r.answer ?? "").trim().toUpperCase()]),
+      responses.map((r) => {
+        const letter = String(r.answer ?? "").trim().toUpperCase();
+        return [r.questionId, VALID_LETTERS.has(letter) ? letter : ""];
+      }),
     );
 
     // Grade deterministically — no AI call.
@@ -178,13 +192,33 @@ Deno.serve(async (req: Request) => {
       // Non-fatal — grading data is already inserted; return results anyway.
     }
 
-    // Alert parents when performance is below 50%.
+    // Alert parents when performance is below 50%. Direct service-role
+    // insert, NOT the create_parent_alert RPC — that RPC's SECURITY DEFINER
+    // body requires auth.uid() = learners.user_id (a learner's own JWT),
+    // and this admin client has no end-user session, so the RPC raised
+    // "not authorized" on every call and the alert never fired. Same
+    // pattern as paystack-webhook's notifyParentsDirectly().
     if (totalMarks > 0 && totalAwarded / totalMarks < 0.5) {
-      await supabaseAdmin.rpc("create_parent_alert", {
-        p_learner_id: learner.id,
-        p_alert_type: "low_performance",
-        p_message: `A mock exam was completed with a low score: ${totalAwarded}/${totalMarks}.`,
-      });
+      const { data: alertParents, error: alertParentsErr } = await supabaseAdmin
+        .from("parents")
+        .select("id")
+        .contains("linked_learners", [learner.id]);
+
+      if (alertParentsErr) {
+        console.error("grade-mock-exam: low-performance alert parent lookup failed:", alertParentsErr.message);
+      } else if (alertParents && alertParents.length > 0) {
+        const { error: alertInsertErr } = await supabaseAdmin.from("parent_alerts").insert(
+          alertParents.map((p) => ({
+            parent_id: p.id,
+            learner_id: learner.id,
+            alert_type: "low_performance",
+            message: `A mock exam was completed with a low score: ${totalAwarded}/${totalMarks}.`,
+          })),
+        );
+        if (alertInsertErr) {
+          console.error("grade-mock-exam: low-performance alert insert failed:", alertInsertErr.message);
+        }
+      }
     }
 
     return jsonResponse({ totalAwarded, totalMarks, percentage, results: gradedResults });

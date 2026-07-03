@@ -54,6 +54,15 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const APP_URL = "https://leuro-app.vercel.app";
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -109,7 +118,8 @@ Deno.serve(async (req: Request) => {
     }
 
     const inviteUrl = `${APP_URL}/accept-invite?token=${token}`;
-    const firstName = (name || "").split(/\s+/)[0] || "there";
+    // Escaped: `name` is caller-supplied and goes into the email HTML.
+    const firstName = escapeHtml((name || "").split(/\s+/)[0] || "there");
 
     const resendKey = Deno.env.get("RESEND_API_KEY") ?? "";
     if (!resendKey) {

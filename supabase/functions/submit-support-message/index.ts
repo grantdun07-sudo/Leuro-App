@@ -156,9 +156,10 @@ Deno.serve(async (req: Request) => {
     console.log("[safety] caller role:", profile.role);
 
     // 4. Safety detection (learners only)
-    // KNOWN LIMITATION: Tier 2 cumulative "freeze after 3 flags" check is not
-    // performed in this path. The flag is saved and parent notified, but the
-    // threshold counter is not evaluated server-side here.
+    // The Tier 2 cumulative "freeze after 3 flags in 7 days" check is now
+    // evaluated inside save-content-flag itself (moved server-side in the
+    // July 2026 audit), so this path gets the same escalation as every
+    // other flag source.
     if (profile.role === "learner") {
       console.log("[safety] running detection on message, role=" + profile.role);
       const tier1 = containsTier1Language(message);
@@ -175,48 +176,54 @@ Deno.serve(async (req: Request) => {
         console.log("[safety] learnerRow.id =", learnerRow?.id, "| callerId =", callerId, "| sending learner_id =", learnerRow?.id ?? null);
 
         try {
+          // Forward the SUBMITTER's own JWT — save-content-flag now
+          // authenticates its caller and derives user_id from the token
+          // (it no longer trusts a body-supplied user_id).
           const flagRes = await fetch(`${supabaseUrl}/functions/v1/save-content-flag`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${anonKey}`, "apikey": anonKey },
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}`, "apikey": anonKey },
             body: JSON.stringify({
-              user_id: callerId, learner_id: learnerRow?.id ?? null, severity,
-              flagged_text: message, context: "support-message", account_frozen: severity === 1,
+              learner_id: learnerRow?.id ?? null, severity,
+              flagged_text: message, context: "support-message",
             }),
           });
 
           const flagStatus = flagRes.status;
           const flagBody = await flagRes.text();
-          console.log("[safety] save-content-flag status=" + flagStatus + " body=" + flagBody);
+          console.log("[safety] save-content-flag status=" + flagStatus);
 
           if (!flagRes.ok) {
             console.error("submit-support-message: save-content-flag failed:", flagBody);
-          } else {
-            const flagData = JSON.parse(flagBody);
-            const flagId = flagData?.id ?? null;
-            console.log("submit-support-message: flag saved, id:", flagId);
+          }
 
-            if (learnerRow?.id && flagId) {
-              try {
-                const notifyRes = await fetch(`${supabaseUrl}/functions/v1/notify-parent`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}`, "apikey": anonKey },
-                  body: JSON.stringify({
-                    learnerId: learnerRow.id, severity, flaggedText: message,
-                    context: "support-message", flagId,
-                  }),
-                });
-                const notifyStatus = notifyRes.status;
-                const notifyBody = await notifyRes.text();
-                console.log("[safety] notify-parent status=" + notifyStatus + " body=" + notifyBody);
-                if (!notifyRes.ok) {
-                  console.error("submit-support-message: notify-parent failed:", notifyBody);
-                } else {
-                  console.log("submit-support-message: notify-parent ok");
-                }
-              } catch (e) { console.error("submit-support-message: notify-parent threw:", e); }
-            } else {
-              console.log("[safety] skipping notify-parent: learnerRow.id=" + learnerRow?.id + " flagId=" + flagId);
-            }
+          // Notify the parent regardless of the flag insert outcome —
+          // the parent alert/email matters MORE than the audit row. This
+          // used to be gated on a flagId read from save-content-flag's
+          // response, but that function deliberately stopped returning
+          // the flag id (security fix), so the gate silently disabled
+          // parent notification for every support-message flag — a
+          // frozen child with no alert for the parent to acknowledge.
+          if (learnerRow?.id) {
+            try {
+              const notifyRes = await fetch(`${supabaseUrl}/functions/v1/notify-parent`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${jwt}`, "apikey": anonKey },
+                body: JSON.stringify({
+                  learnerId: learnerRow.id, severity, flaggedText: message,
+                  context: "support-message",
+                }),
+              });
+              const notifyStatus = notifyRes.status;
+              const notifyBody = await notifyRes.text();
+              console.log("[safety] notify-parent status=" + notifyStatus + " body=" + notifyBody);
+              if (!notifyRes.ok) {
+                console.error("submit-support-message: notify-parent failed:", notifyBody);
+              } else {
+                console.log("submit-support-message: notify-parent ok");
+              }
+            } catch (e) { console.error("submit-support-message: notify-parent threw:", e); }
+          } else {
+            console.log("[safety] skipping notify-parent: no learners row for caller", callerId);
           }
         } catch (e) { console.error("submit-support-message: safety pipeline threw:", e); }
       } else {

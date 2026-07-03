@@ -433,7 +433,10 @@ const translations = {
     acknowledgeSupportMsg: "Please speak with your child and ensure they have the support they need.",
     acknowledgeSadag: "SADAG: 0800 21 22 23",
     acknowledgeError: "This link no longer works on its own. Please log in to your Leuro™ account and check your notifications to reactivate your child's account.",
+    acknowledgeLoginPrompt: "To review this alert and reactivate your child's account, please log in to your Leuro™ parent account and open the alert on your dashboard.",
     btnGoToLeuro: "Go to leuroai.co.za",
+    parentDataLoadError: "Some information couldn't be loaded, so alerts may be missing here. Please refresh to try again.",
+    learnerUpgradeInfo: "Premium unlocks Study Guides, Mock Exams, Flashcards and the Exam Refresher. Subscriptions are managed from your parent's Leuro account — ask your parent to upgrade you from their dashboard.",
 
     upgradeTo: "Upgrade to",
     featureLearnOnly: "Learn section only",
@@ -859,7 +862,10 @@ const translations = {
     acknowledgeSupportMsg: "Praat asseblief met jou kind en maak seker hulle kry die ondersteuning wat hulle nodig het.",
     acknowledgeSadag: "SADAG: 0800 21 22 23",
     acknowledgeError: "Hierdie skakel werk nie meer op sy eie nie. Meld asseblief by jou Leuro™-rekening aan en gaan jou kennisgewings na om jou kind se rekening te heraktiveer.",
+    acknowledgeLoginPrompt: "Om hierdie kennisgewing na te gaan en jou kind se rekening te heraktiveer, meld asseblief by jou Leuro™-ouerrekening aan en maak die kennisgewing op jou kontroleskerm oop.",
     btnGoToLeuro: "Gaan na leuroai.co.za",
+    parentDataLoadError: "Sommige inligting kon nie gelaai word nie, so kennisgewings mag hier ontbreek. Verfris asseblief om weer te probeer.",
+    learnerUpgradeInfo: "Premium ontsluit Studiegidse, Toetseksamens, Flitskaarte en die Eksamenverfrisser. Subskripsies word vanaf jou ouer se Leuro-rekening bestuur — vra jou ouer om jou vanaf hul kontroleskerm op te gradeer.",
 
     upgradeTo: "Gradeer op na",
     featureLearnOnly: "Slegs leer-afdeling",
@@ -915,7 +921,6 @@ const state = {
   addChildLoading: false,
   acceptInviteToken: null,
   acceptInviteData: null,
-  upgradeModalOpen: false,
   childUpgradeModalOpen: false,
   upgradeTargetLearnerId: null,
   deleteChildTarget: null,
@@ -926,6 +931,9 @@ const state = {
   supportForm: { success: false },
   expandedSessionIds: {},
   expandedDateGroups: new Set(),
+  // True when any of loadParentData()'s queries failed - the parent home
+  // tab must show a warning instead of a false "All looking good".
+  parentDataError: false,
   admin: {
     currentTab: "users",
     users: null,
@@ -1205,19 +1213,22 @@ async function checkContent(text, context, learnerId) {
 async function handleTier1Flag(text, context, learnerId) {
   // state.session may not be populated yet at this point, so fetch the
   // current session fresh from Supabase rather than relying on it.
+  // save-content-flag now authenticates the caller and derives the flagged
+  // user's identity from the JWT itself - user_id/account_frozen are no
+  // longer sent (the server would ignore them). No session token means the
+  // server rejects the call, which correctly fails closed below.
   const { data: { session } } = await sbClient.auth.getSession();
   const accessToken = session?.access_token || SUPABASE_ANON_KEY;
   const userId = session?.user?.id || state.user?.id || null;
   const payload = {
-    user_id: userId,
     learner_id: learnerId || null,
     severity: 1,
     flagged_text: text,
     context,
-    account_frozen: true,
   };
 
-  console.log("handleTier1Flag: calling save-content-flag (attempt 1)", payload);
+  // Deliberately not logging the flagged text - it is sensitive content.
+  console.log("handleTier1Flag: calling save-content-flag (attempt 1)", { context, learnerId, userId });
   let result = await saveTier1Flag(payload, accessToken);
 
   if (!result.frozen) {
@@ -1302,13 +1313,15 @@ async function notifyParentOfFlag(learnerId, severity, text, context, accessToke
   }
 }
 
-// Records a tier-2 content safety flag, freezes the account after 3 flags
-// within 7 days, and notifies the learner's parent/guardian.
+// Records a tier-2 content safety flag and notifies the learner's
+// parent/guardian. The "freeze after 3 tier-2 flags within 7 days"
+// escalation now lives SERVER-SIDE in save-content-flag (July 2026 audit):
+// the client can't be trusted to apply its own escalation, and the
+// profiles.account_frozen column grant was revoked from the authenticated
+// role, so the old client-side freeze write would fail now anyway. The
+// server reports the outcome via the `frozen` response field, which is the
+// only thing this function trusts.
 async function flagContent(text, severity, context, learnerId) {
-  // The browser can't INSERT into content_flags directly - RLS blocks it
-  // (403). The save-content-flag edge function performs the write with the
-  // service role key (JWT off, no auth check). We send user_id/learner_id in
-  // the body so the flag stays linked to the learner's profile.
   // state.session may not be populated yet at this point, so fetch the
   // current session fresh from Supabase rather than relying on it.
   const { data: { session } } = await sbClient.auth.getSession();
@@ -1321,14 +1334,12 @@ async function flagContent(text, severity, context, learnerId) {
   // learner's own browser (see save-content-flag's header comment for why).
   try {
     const payload = {
-      user_id: userId,
       learner_id: learnerId || null,
       severity,
       flagged_text: text,
       context,
-      account_frozen: false,
     };
-    console.log("flagContent: calling save-content-flag", payload);
+    console.log("flagContent: calling save-content-flag", { severity, context, learnerId });
     const res = await fetchWithTimeout(`${FN_URL}/save-content-flag`, {
       method: "POST",
       headers: {
@@ -1339,48 +1350,26 @@ async function flagContent(text, severity, context, learnerId) {
       body: JSON.stringify(payload),
     });
     const raw = await res.text();
-    console.log("flagContent: save-content-flag raw response", res.status, raw);
+    console.log("flagContent: save-content-flag response", res.status, raw);
+    let data = null;
+    try { data = JSON.parse(raw); } catch { /* non-JSON body */ }
     if (!res.ok) {
       console.error("flagContent: save-content-flag failed", res.status, raw);
+    }
+
+    // Server confirmed the tier-2 threshold froze the account — mirror it
+    // locally so the frozen gate shows without a reload. Never assumed
+    // client-side; only ever set from the server's confirmation.
+    if (data && data.frozen === true && state.profile) {
+      state.profile.account_frozen = true;
+      state.profile.freeze_reason = "Repeated inappropriate language";
+      render();
     }
   } catch (err) {
     console.error("flagContent: save-content-flag request failed", err);
   }
 
   try {
-    // Freeze the account only after 3 tier-2 flags within the last 7 days.
-    // This path already gates the client-side mutation on a successful,
-    // awaited profiles UPDATE (never optimistic) — same fail-closed
-    // principle as tier-1, confirmed still true as of this fix.
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    let countQuery = sbClient
-      .from("content_flags")
-      .select("id", { count: "exact", head: true })
-      .eq("severity", 2)
-      .gte("created_at", sevenDaysAgo);
-    countQuery = learnerId
-      ? countQuery.eq("learner_id", learnerId)
-      : countQuery.eq("user_id", state.user?.id);
-
-    const { count, error: countErr } = await countQuery;
-    if (countErr) {
-      console.error("flagContent: failed to count tier-2 flags", countErr);
-    }
-
-    if ((count || 0) >= 3) {
-      const { error: freezeErr } = await sbClient
-        .from("profiles")
-        .update({ account_frozen: true, freeze_reason: "Repeated inappropriate language" })
-        .eq("id", state.user.id);
-      if (freezeErr) {
-        console.error("flagContent: failed to freeze account (severity 2)", freezeErr);
-      } else if (state.profile) {
-        state.profile.account_frozen = true;
-        state.profile.freeze_reason = "Repeated inappropriate language";
-        render();
-      }
-    }
-
     if (learnerId) {
       await notifyParentOfFlag(learnerId, severity, text, context, accessToken);
     }
@@ -1542,78 +1531,30 @@ async function init() {
 }
 
 // ---------------------------------------------------------------------
-// PUBLIC ACKNOWLEDGMENT LINK (/acknowledge?token=...)
+// LEGACY ACKNOWLEDGMENT LINK (/acknowledge?token=...)
 // ---------------------------------------------------------------------
-// Parents/guardians click this link (from a content-safety notification) to
-// reactivate their child's account. Works without being logged in and
-// bypasses the normal app shell entirely - no nav, no tabs.
+// Old safety-alert emails contained a public /acknowledge?token= link.
+// acknowledge-flag has since been hardened to require an authenticated,
+// ownership-verified PARENT session - a bare token can no longer
+// reactivate anything, so the old "POST the token" flow here failed 100%
+// of the time and showed a generic error. Anyone landing on a legacy
+// link now gets told the actual next step: log in to the parent account
+// and acknowledge the alert from the dashboard.
 async function handleAcknowledgeRoute() {
   if (!window.location.pathname.includes("/acknowledge")) return false;
-
-  const app = getApp();
-  const token = new URLSearchParams(window.location.search).get("token");
-
-  if (!token) {
-    app.innerHTML = renderAcknowledgeScreen("error");
-    return true;
-  }
-
-  app.innerHTML = renderAcknowledgeScreen("loading");
-
-  let status = "success";
-  try {
-    const res = await fetchWithTimeout(`${FN_URL}/acknowledge-flag`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        apikey: SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ token }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) status = "error";
-  } catch (err) {
-    console.error("acknowledge-flag request failed:", err);
-    status = "error";
-  }
-
-  app.innerHTML = renderAcknowledgeScreen(status);
+  getApp().innerHTML = renderAcknowledgeScreen();
   return true;
 }
 
-function renderAcknowledgeScreen(status) {
-  let body;
-  if (status === "loading") {
-    body = `
-      <div class="diagnostic-body diagnostic-center">
-        <span class="spinner spinner-purple"></span>
-      </div>
-    `;
-  } else if (status === "error") {
-    body = `
-      <div class="diagnostic-body diagnostic-center">
-        <p class="diagnostic-lead">${escapeHtml(t("acknowledgeError"))}</p>
-        <a class="btn btn-gold btn-block" href="https://leuroai.co.za">${t("btnGoToLeuro")}</a>
-      </div>
-    `;
-  } else {
-    body = `
-      <div class="diagnostic-body diagnostic-center">
-        <h2 class="diagnostic-title">${escapeHtml(t("acknowledgeThankYou"))}</h2>
-        <p class="diagnostic-lead">${escapeHtml(t("acknowledgeReactivated"))}</p>
-        <p class="diagnostic-lead">${escapeHtml(t("acknowledgeSupportMsg"))}</p>
-        <p class="diagnostic-lead">${escapeHtml(t("acknowledgeSadag"))}</p>
-        <a class="btn btn-gold btn-block" href="https://leuroai.co.za">${t("btnGoToLeuro")}</a>
-      </div>
-    `;
-  }
-
+function renderAcknowledgeScreen() {
   return `
     <div class="diagnostic-overlay" id="acknowledge-screen">
       <div class="diagnostic-modal">
         ${diagnosticHeaderBar()}
-        ${body}
+        <div class="diagnostic-body diagnostic-center">
+          <p class="diagnostic-lead">${escapeHtml(t("acknowledgeLoginPrompt"))}</p>
+          <a class="btn btn-gold btn-block" href="/">${t("btnGoToLeuro")}</a>
+        </div>
       </div>
     </div>
   `;
@@ -1810,6 +1751,7 @@ async function loadSessionsToday() {
 }
 
 async function loadParentData() {
+  state.parentDataError = false;
   const { data: parent, error: parentErr } = await sbClient
     .from("parents")
     .select("*")
@@ -1829,7 +1771,18 @@ async function loadParentData() {
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   const sevenDaysAgoIso = sevenDaysAgo.toISOString();
 
-  const [{ data: learners }, { data: profiles }, { data: alerts }, { data: allSubjects }] = await Promise.all([
+  // Every query below captures its error - a failed alerts query rendering
+  // as a green "All looking good" banner is exactly the false-all-clear bug
+  // this guards against. Errors don't abort the load (partial data is still
+  // useful), but they set state.parentDataError so the home tab shows a
+  // "couldn't load everything" warning instead of a clean bill of health.
+  const recordLoadError = (label, error) => {
+    if (!error) return;
+    state.parentDataError = true;
+    console.error(`loadParentData: ${label} query failed:`, error);
+  };
+
+  const [learnersRes, profilesRes, alertsRes, subjectsRes] = await Promise.all([
     sbClient.from("learners").select("*").in("id", learnerIds),
     sbClient.from("profiles").select("id, full_name, email, subscription_tier"),
     sbClient
@@ -1840,13 +1793,21 @@ async function loadParentData() {
       .limit(20),
     sbClient.from("subjects").select("id, name, name_af, grade, curriculum"),
   ]);
+  recordLoadError("learners", learnersRes.error);
+  recordLoadError("profiles", profilesRes.error);
+  recordLoadError("parent_alerts", alertsRes.error);
+  recordLoadError("subjects", subjectsRes.error);
+  const learners = learnersRes.data;
+  const profiles = profilesRes.data;
+  const alerts = alertsRes.data;
+  const allSubjects = subjectsRes.data;
 
   const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
   const subjectMap = new Map((allSubjects || []).map((s) => [s.id, s]));
 
   const enriched = await Promise.all(
     (learners || []).map(async (learner) => {
-      const [{ data: topics }, { data: activity }, { data: weekSessions }, { data: exams }, { data: sessionHistory }] = await Promise.all([
+      const [topicsRes, activityRes, weekSessionsRes, examsRes, sessionHistoryRes] = await Promise.all([
         sbClient.from("topics").select("id").eq("learner_id", learner.id),
         sbClient
           .from("study_sessions")
@@ -1874,6 +1835,16 @@ async function loadParentData() {
           .order("created_at", { ascending: false })
           .limit(50),
       ]);
+      recordLoadError(`topics (learner ${learner.id})`, topicsRes.error);
+      recordLoadError(`activity (learner ${learner.id})`, activityRes.error);
+      recordLoadError(`weekSessions (learner ${learner.id})`, weekSessionsRes.error);
+      recordLoadError(`exams (learner ${learner.id})`, examsRes.error);
+      recordLoadError(`sessionHistory (learner ${learner.id})`, sessionHistoryRes.error);
+      const topics = topicsRes.data;
+      const activity = activityRes.data;
+      const weekSessions = weekSessionsRes.data;
+      const exams = examsRes.data;
+      const sessionHistory = sessionHistoryRes.data;
 
       const profile = profileMap.get(learner.user_id);
 
@@ -2752,11 +2723,15 @@ async function handleSignup(form) {
 
     // The trigger-created profile row has full_name/referral_code from
     // signup metadata, but fill them in explicitly here too - this is what
-    // gives every learner their LEURO-XXXXXX referral code.
+    // gives every learner their LEURO-XXXXXX referral code. Note: role is
+    // NOT set here anymore - the trigger already sets it from the signup
+    // metadata, and the profiles.role column grant was revoked from the
+    // authenticated role in the security hardening migration (a client
+    // writing role would now fail the whole UPDATE).
     const referralCode = `LEURO-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
     const { error: profileUpdateErr } = await sbClient
       .from("profiles")
-      .update({ full_name: fullName, role: "parent", referral_code: referralCode })
+      .update({ full_name: fullName, referral_code: referralCode })
       .eq("id", state.user.id);
     if (profileUpdateErr) {
       console.error("Failed to update profile after signup", profileUpdateErr);
@@ -3245,11 +3220,16 @@ async function adminChangeTier(userId, tier, selectEl) {
   }
 }
 
+// Freeze/unfreeze goes through the admin_set_account_frozen RPC (SECURITY
+// DEFINER) - the direct profiles UPDATE can no longer touch account_frozen
+// since the security hardening migration revoked that column's UPDATE grant
+// from the authenticated role (same pattern as admin_update_tier, and the
+// RPC also fails loudly instead of silently matching 0 rows).
 async function adminToggleFreeze(userId, currentlyFrozen, btn) {
   const next = !currentlyFrozen;
   setButtonLoading(btn, true);
   try {
-    const { error } = await sbClient.from("profiles").update({ account_frozen: next }).eq("id", userId);
+    const { error } = await sbClient.rpc("admin_set_account_frozen", { p_user_id: userId, p_frozen: next });
     if (error) throw error;
     const user = (state.admin.users || []).find((u) => u.id === userId);
     if (user) user.account_frozen = next;
@@ -3362,7 +3342,7 @@ async function adminMarkFlagReviewed(flagId, btn) {
 async function adminUnfreezeFromFlag(flagId, userId, btn) {
   setButtonLoading(btn, true);
   try {
-    const { error } = await sbClient.from("profiles").update({ account_frozen: false }).eq("id", userId);
+    const { error } = await sbClient.rpc("admin_set_account_frozen", { p_user_id: userId, p_frozen: false });
     if (error) throw error;
     (state.admin.flags || []).forEach((f) => {
       if (f.id === flagId) f.account_frozen = false;
@@ -4203,6 +4183,12 @@ async function handleAddTopic(form) {
   const title = form.topicTitle.value.trim();
   if (!title || !subjectSelect || !subjectSelect.value) return;
 
+  // Same content-safety screen as study-guide/mock-exam topics - topic
+  // titles are stored, rendered on the parent dashboard, and sent to
+  // Claude, so they must not bypass the tier-1/tier-2 checks.
+  const safe = await checkContent(title, "learn-topic", state.learner?.id);
+  if (!safe) return;
+
   const btn = form.querySelector("button[type=submit]");
   setButtonLoading(btn, true);
   try {
@@ -4373,6 +4359,8 @@ function sessionRetry() {
   if (!s || !s.retry) return;
   if (s.retry.kind === "attempt") {
     runAttemptPhase(s.retry.retryContext);
+  } else if (s.retry.kind === "complete") {
+    sessionFinishTopic(s.retry.index);
   } else {
     runSessionPhase(s.retry.phase, s.retry.learnerInput, s.retry.context);
   }
@@ -4420,7 +4408,7 @@ function handleSessionMcAnswer(index, answer) {
 function sessionContinueTopic(index) {
   const s = state.activeSession;
   const msg = s.messages[index];
-  if (!msg || msg.completionChosen) return;
+  if (!msg || msg.completionChosen || s.loading) return;
   msg.completionChosen = true;
   render();
   runAttemptPhase({ explainText: s.explainText, exampleText: s.exampleText });
@@ -4428,16 +4416,23 @@ function sessionContinueTopic(index) {
 
 // "Finish topic" - the one and only place sessions_completed/times_studied
 // increment, regardless of how many questions/retries it took to get here.
+// completionChosen is only set on SUCCESS: setting it up front meant a
+// failed complete call removed the Finish/Try-Another buttons forever
+// while the error banner's Retry (still pointing at the last "attempt"
+// retry) fetched a brand-new question instead of retrying completion.
+// The s.loading guard covers the double-click window instead.
 async function sessionFinishTopic(index) {
   const s = state.activeSession;
   const msg = s.messages[index];
-  if (!msg || msg.completionChosen) return;
-  msg.completionChosen = true;
+  if (!msg || msg.completionChosen || s.loading) return;
   s.loading = true;
+  s.error = null;
+  s.retry = { kind: "complete", index };
   render();
 
   try {
     await callStudyGuideApi({ topicId: s.topicId, phase: "complete" });
+    msg.completionChosen = true;
     s.messages.push({ role: "ai", phase: "complete", text: t("topicCompleteMsg") });
     await finalizeStructuredSession();
   } catch (err) {
@@ -5251,6 +5246,10 @@ async function generateFlashcards() {
     return;
   }
 
+  // Same content-safety screen as every other learner-typed topic field.
+  const safe = await checkContent(topicTitle, "flashcard-topic", state.learner?.id);
+  if (!safe) return;
+
   const fc = state.flashcard;
   if (subjectSelect) fc.subjectId = subjectSelect.value;
   fc.topicTitle = topicTitle;
@@ -5986,9 +5985,9 @@ function renderExamModal() {
                 const correct = r?.correct_answer || "";
                 const isCorrect = !!r?.is_correct;
                 const givenText = given
-                  ? `${given}. ${escapeHtml(examOptionText(q, given))}`
+                  ? `${escapeHtml(given)}. ${escapeHtml(examOptionText(q, given))}`
                   : t("examNoAnswer");
-                const correctText = `${correct}. ${escapeHtml(examOptionText(q, correct))}`;
+                const correctText = `${escapeHtml(correct)}. ${escapeHtml(examOptionText(q, correct))}`;
                 return `
                 <div class="exam-question">
                   <div class="q-head">
@@ -6117,13 +6116,23 @@ function renderParentHomeTab() {
     </div>
 
     ${
+      state.parentDataError
+        ? `<div class="alert-banner alert-banner-danger">
+            <span class="alert-banner-icon">⚠️</span>
+            <span>${t("parentDataLoadError")}</span>
+          </div>`
+        : ""
+    }
+    ${
       unreadAlerts.length > 0
         ? `<div class="alert-banner alert-banner-danger">
             <span class="alert-banner-icon">🚨</span>
             <span>${unreadAlerts.length === 1 ? t("alertsActiveBannerOne") : t("alertsActiveBannerMany").replace("{n}", unreadAlerts.length)}</span>
           </div>
           ${unreadAlerts.map((a) => renderAlertItem(a)).join("")}`
-        : `<div class="alert-banner alert-banner-ok">
+        : state.parentDataError
+          ? ""
+          : `<div class="alert-banner alert-banner-ok">
             <span class="alert-banner-icon">✅</span>
             <span>${t("allLookingGood")}</span>
           </div>`
@@ -6707,6 +6716,11 @@ function renderAccountTab() {
     <!-- 4. Stats -->
     ${isLearner && learner ? renderAccountStats(learner) : ""}
 
+    <!-- Current plan (learners only) - every "Upgrade to Premium" CTA
+         lands here, so this card must explain how upgrades actually work
+         (parent-managed billing) rather than being a dead end. -->
+    ${isLearner ? renderLearnerPlanCard() : ""}
+
     <!-- Referral rewards (existing feature, learners only) -->
     ${isLearner ? renderReferralCard() : ""}
 
@@ -6733,86 +6747,6 @@ function renderAccountTab() {
     ${state.tcModalOpen ? renderTcModal() : ""}
     ${state.privacyModalOpen ? renderPrivacyModal() : ""}
     ${renderDeleteAccountModal()}
-  `;
-}
-
-// ---------------------------------------------------------------------
-// UPGRADE MODAL (learner)
-// ---------------------------------------------------------------------
-
-// Renders the price block for a tier card, with referral discount markup
-// when the signed-in user has an active promo code.
-function renderTierPriceBlock(price) {
-  if (price === 0) return `<div class="tier-price">${t("free")}</div>`;
-  if (!isDiscountActive()) {
-    return `<div class="tier-price">R${price}<span>${t("perMonth")}</span></div>`;
-  }
-  const pct = state.promoCode?.discount_percent ?? 20;
-  const discounted = (Math.round(price * (1 - pct / 100) * 100) / 100).toFixed(2);
-  const expiryStr = (() => {
-    const started = state.profile?.discount_started_at ? new Date(state.profile.discount_started_at) : null;
-    if (!started) return "";
-    const months = state.promoCode?.discount_months ?? 3;
-    const exp = new Date(started);
-    exp.setMonth(exp.getMonth() + months);
-    return exp.toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" });
-  })();
-  return `
-    <div class="tier-price-block">
-      <div class="tier-price-row">
-        <span class="tier-price-original">R${price}</span>
-        <span class="tier-discount-badge">${pct}% OFF</span>
-      </div>
-      <div class="tier-price tier-price-discounted">R${discounted}<span>${t("perMonth")}</span></div>
-      <div class="tier-discount-expiry">Discount expires ${expiryStr} · renews at R${price}/mo</div>
-    </div>
-  `;
-}
-
-function renderUpgradeModal() {
-  const plans = [
-    {
-      id: "basic",
-      name: t("basic"),
-      price: TIER_PRICES.basic,
-      features: [t("featBasicUnlimited"), t("featBasic4Step"), t("featBasicAfrikaans")],
-    },
-    {
-      id: "premium",
-      name: t("premium"),
-      price: TIER_PRICES.premium,
-      features: [
-        t("featPremiumEverything"),
-        t("featPremiumStudyGuide"),
-        t("featPremiumMockExam"),
-        t("featPremiumRefresher"),
-      ],
-    },
-  ];
-
-  return `
-    <div class="modal-overlay">
-      <div class="modal-sheet">
-        <div class="modal-header">
-          <h3>${t("upgradeModalTitle")}</h3>
-          <button class="modal-close" data-action="close-upgrade-modal">✕</button>
-        </div>
-        <div class="modal-body">
-          <p class="muted">${t("upgradeModalIntro")}</p>
-          ${plans
-            .map(
-              (plan) => `
-            <div class="tier-card">
-              <div class="tier-name">${plan.name}</div>
-              ${renderTierPriceBlock(plan.price)}
-              <ul class="tier-features">${plan.features.map((f) => `<li>${f}</li>`).join("")}</ul>
-              <button class="btn btn-gold btn-block" data-action="subscribe" data-tier="${plan.id}">${t("btnSubscribe")}</button>
-            </div>`,
-            )
-            .join("")}
-        </div>
-      </div>
-    </div>
   `;
 }
 
@@ -7131,48 +7065,27 @@ function renderReferralCard() {
   `;
 }
 
-function renderTierCards(currentTier) {
-  const tiers = [
-    {
-      id: "free",
-      name: t("free"),
-      price: 0,
-      features: [t("feature3Sessions"), t("featureLearnOnly"), t("featureBilingual")],
-    },
-    {
-      id: "basic",
-      name: t("basic"),
-      price: TIER_PRICES.basic,
-      features: [t("featureUnlimitedLearn"), t("featureBilingual")],
-    },
-    {
-      id: "premium",
-      name: t("premium"),
-      price: TIER_PRICES.premium,
-      features: [t("featureFullAccess"), t("featureUnlimitedLearn"), t("featureBilingual")],
-    },
-  ];
-
+// Learner Account tab: shows the current plan and (for non-premium
+// learners) explains that subscriptions are managed from the PARENT's
+// account. This card is where every learner-facing "Upgrade to Premium"
+// CTA lands — the old renderTierCards()/renderUpgradeModal()/
+// handleUpgrade() flow was dead code (never rendered anywhere) and, had
+// it been wired up, was broken twice over: its Paystack reference
+// embedded the auth user id where the webhook expects learners.id, and
+// it charged a one-off amount with no plan (no subscription/renewals).
+// Removed in the July 2026 audit; billing is parent-side only.
+function renderLearnerPlanCard() {
+  const tier = getEffectiveLearnerTier();
+  const tierBadgeClass =
+    tier === "premium" ? "tier-badge-premium" : tier === "basic" ? "tier-badge-basic" : "tier-badge-free";
   return `
-    <div class="section-title">${t("currentPlan")}</div>
-    ${tiers
-      .map((tier) => {
-        const isCurrent = tier.id === currentTier;
-        return `
-        <div class="tier-card ${isCurrent ? "current" : ""}">
-          <div class="tier-name">${tier.name}</div>
-          ${renderTierPriceBlock(tier.price)}
-          <ul class="tier-features">${tier.features.map((f) => `<li>${f}</li>`).join("")}</ul>
-          ${
-            isCurrent
-              ? `<span class="badge badge-success">${t("yourCurrentPlan")}</span>`
-              : tier.id === "free"
-                ? ""
-                : `<button class="btn btn-gold btn-block" data-action="upgrade" data-tier="${tier.id}">${t("upgradeTo")} ${tier.name}</button>`
-          }
-        </div>`;
-      })
-      .join("")}
+    <div class="card">
+      <div class="account-section-row">
+        <span class="account-section-label">${t("currentPlan")}</span>
+        <span class="tier-badge ${tierBadgeClass}">${t(tier)}</span>
+      </div>
+      ${tier !== "premium" ? `<p class="muted" style="margin:10px 0 0;">${t("learnerUpgradeInfo")}</p>` : ""}
+    </div>
   `;
 }
 
@@ -7311,47 +7224,12 @@ function renderChildUpgradeModal() {
   `;
 }
 
-function handleUpgrade(tier) {
-  if (!PAYSTACK_KOBO[tier]) return;
-
-  if (!window.PaystackPop) {
-    showToast(t("errorGeneric"), "error");
-    console.error("handleUpgrade: PaystackPop not loaded");
-    return;
-  }
-
-  const fullKobo = PAYSTACK_KOBO[tier].full;
-  const pct = isDiscountActive() ? (state.promoCode?.discount_percent ?? 20) : 0;
-  const amountKobo = pct > 0 ? Math.round(fullKobo * (1 - pct / 100)) : fullKobo;
-  const reference = `LEURO-${state.user.id}-${Date.now()}`;
-
-  const handler = window.PaystackPop.setup({
-    key: PAYSTACK_CONFIG.publicKey,
-    email: state.profile.email,
-    amount: amountKobo,
-    currency: "ZAR",
-    ref: reference,
-    label: `Leuro ${capitalize(tier)} Monthly`,
-    metadata: {
-      tier,
-      user_id: state.user.id,
-      referral_code: state.profile.referral_code_used || "",
-    },
-    callback(response) {
-      console.log("Paystack success:", response.reference);
-      showToast(t("paymentSuccessMsg"), "success");
-      state.upgradeModalOpen = false;
-      render();
-    },
-    onClose() {
-      showToast(t("paymentCancelledMsg"), "info");
-    },
-  });
-  handler.openIframe();
-}
-
 // Per-child upgrade: reference encodes the learner's UUID (not the parent
 // user_id) so the webhook can update learners.subscription_tier directly.
+// This is the ONLY payment entry point — the old learner-side
+// handleUpgrade() was removed in the July 2026 audit (dead code that,
+// if wired up, embedded the wrong id in the reference and created no
+// Paystack subscription).
 function handleChildUpgrade(learnerId, tier) {
   if (!PAYSTACK_KOBO[tier]) return;
 
@@ -7534,14 +7412,6 @@ function attachGlobalListeners() {
       case "set-lang":
         setLanguage(target.dataset.lang);
         break;
-      case "account-upgrade":
-        state.upgradeModalOpen = true;
-        render();
-        break;
-      case "close-upgrade-modal":
-        state.upgradeModalOpen = false;
-        render();
-        break;
       case "open-child-upgrade-modal":
         state.childUpgradeModalOpen = true;
         state.upgradeTargetLearnerId = target.dataset.learnerId;
@@ -7621,10 +7491,6 @@ function attachGlobalListeners() {
       case "support-reset":
         state.supportForm.success = false;
         render();
-        break;
-      case "subscribe":
-        state.upgradeModalOpen = false;
-        handleUpgrade(target.dataset.tier);
         break;
       case "logout":
         handleLogout();
@@ -7791,9 +7657,6 @@ function attachGlobalListeners() {
         break;
       case "copy-referral":
         copyReferralCode();
-        break;
-      case "upgrade":
-        handleUpgrade(target.dataset.tier);
         break;
       case "select-child":
         state.selectedLearnerId = target.dataset.learnerId;

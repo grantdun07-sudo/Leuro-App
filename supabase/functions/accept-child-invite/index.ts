@@ -99,12 +99,16 @@ Deno.serve(async (req: Request) => {
   }
 
   const token = String(body.token ?? "").trim();
-  const password = String(body.password ?? "").trim();
+  // Do NOT trim the password itself — the client sends it exactly as typed
+  // and login compares it exactly as typed, so trimming here would set a
+  // silently different password than the child chose (edge-space passwords
+  // would never work at login). Trim only for the length check.
+  const password = String(body.password ?? "");
 
   if (!token) {
     return jsonErr("Invite token is required");
   }
-  if (password.length < 8) {
+  if (password.trim().length < 8) {
     return jsonErr("Password must be at least 8 characters");
   }
 

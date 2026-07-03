@@ -14,8 +14,8 @@
 // ("A"-"D") and a short explanation are returned to the client (this is a
 // low-stakes practice tool). The answer key is also stored server-side.
 //
-// Auth: caller must be the learner identified by learnerId. "low" difficulty
-// is available on all tiers; "medium"/"high" are Premium-only.
+// Auth: caller must be the learner identified by learnerId. Mock exams
+// (every difficulty) are Premium-only.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
@@ -25,8 +25,6 @@ import { langInstruction, JSON_KEYS_ENGLISH_NOTE } from "../_shared/prompts.ts";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-const TOTAL_MARKS = 30;
 
 // Rate limiting.
 const RATE_LIMIT_HOURLY_CAP = 10;
@@ -350,13 +348,19 @@ marks).${requestedTopics.length > 0 ? " Every question must relate directly to t
       return jsonResponse({ error: "Failed to generate a valid exam. Please try again." }, 500);
     }
 
+    // Total marks come from the questions that actually survived
+    // validation, not a hardcoded 30 — the .filter() above can drop a
+    // malformed question, and grading against a fixed 30 would mean the
+    // learner literally could not score 100%.
+    const totalMarks = questions.reduce((sum, q) => sum + q.marks, 0);
+
     const { data: exam, error: examErr } = await supabaseAdmin
       .from("mock_exams")
       .insert({
         learner_id: learner.id,
         subject_id: subjectId,
         difficulty,
-        total_marks: TOTAL_MARKS,
+        total_marks: totalMarks,
         started_at: new Date().toISOString(),
       })
       .select("id")
@@ -409,7 +413,7 @@ marks).${requestedTopics.length > 0 ? " Every question must relate directly to t
     return jsonResponse({
       examId: exam.id,
       questions: returnedQuestions,
-      totalMarks: TOTAL_MARKS,
+      totalMarks,
       difficulty,
     });
   } catch (err) {

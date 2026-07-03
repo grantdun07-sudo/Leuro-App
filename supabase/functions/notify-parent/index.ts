@@ -34,17 +34,29 @@
 // STANDALONE: no shared imports - everything is inlined so this file can
 // be pasted directly into the Supabase dashboard editor.
 //
-// Runs with the SERVICE ROLE key throughout (matches how this function was
-// actually deployed — no end-user JWT dependency). The parent_alerts
+// DB access runs with the SERVICE ROLE key (the caller's JWT is used for
+// authentication only — see the SECURITY FIX note below). The parent_alerts
 // insert and the email send are independent operations: each is attempted
 // and logged on its own, and a failure in one must never hide a failure
 // (or a success) in the other.
 //
-// NOTE (flagged, not fixed here — out of scope for this rebuild): this
-// function has no caller-authentication check at all — anyone who can
-// reach this URL can POST an arbitrary learnerId/flaggedText and trigger
-// a real "your child may be in crisis" email + in-app alert to a real
-// family. The deployed version had the same gap. Worth a follow-up.
+// *** SECURITY FIX (July 2026 audit) ***
+// This function used to have no caller-authentication at all — anyone who
+// could reach this URL could POST an arbitrary learnerId/flaggedText and
+// trigger a real "your child may be in crisis" email + in-app alert to a
+// real family. On top of that, flaggedText and the learner's name were
+// interpolated RAW into the email HTML, so the endpoint doubled as "send
+// arbitrary HTML from alerts@leuroai.co.za to this child's parents".
+// Now:
+//   1. A valid JWT is required, and the caller must BE the learner that
+//      learnerId refers to (learners.user_id = caller id). Every real
+//      caller already satisfies this: app.js's notifyParentOfFlag() sends
+//      the learner's own session token, and submit-support-message
+//      forwards the submitting learner's own JWT.
+//   2. flaggedText and learnerName are HTML-escaped before being placed
+//      in the email body, and flaggedText is capped in length.
+// The gateway may have Verify JWT ON or OFF — the in-function check is
+// authoritative either way.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -61,6 +73,19 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Keep the quoted excerpt in the email short — the parent needs the gist,
+// not a payload-sized blob.
+const FLAGGED_TEXT_MAX_LENGTH = 300;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -72,23 +97,59 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "learnerId and severity (1 or 2) are required" }, 400);
     }
 
+    // 0. Authenticate the caller — must be the learner learnerId refers to.
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (!jwt) {
+      console.warn("notify-parent: missing Authorization header");
+      return jsonResponse({ error: "Unauthorized" }, 401);
+    }
+
+    const userClient = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+      {
+        global: { headers: { Authorization: `Bearer ${jwt}` } },
+        auth: { persistSession: false, autoRefreshToken: false },
+      },
+    );
+
+    const { data: { user: caller }, error: jwtErr } = await userClient.auth.getUser();
+    if (jwtErr || !caller) {
+      console.warn("notify-parent: invalid JWT:", jwtErr?.message);
+      return jsonResponse({ error: "Unauthorized" }, 401);
+    }
+
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     );
 
-    // Learner's own name for the email body. learnerId is learners.id, NOT
-    // profiles.id — see bug #5 above for why the old lookup never matched.
+    // Learner's own name for the email body — and the ownership check.
+    // learnerId is learners.id, NOT profiles.id — see bug #5 above for why
+    // the old lookup never matched.
     const { data: learner, error: learnerErr } = await supabase
       .from("learners")
-      .select("id, full_name")
+      .select("id, user_id, full_name")
       .eq("id", learnerId)
       .maybeSingle();
 
     if (learnerErr) {
       console.error("notify-parent: learner lookup failed:", learnerErr.message, "learnerId:", learnerId);
     }
-    const learnerName = learner?.full_name ?? "A learner";
+    if (!learner) {
+      console.warn("notify-parent: learner not found:", learnerId);
+      return jsonResponse({ error: "Learner not found" }, 404);
+    }
+    if (learner.user_id !== caller.id) {
+      console.warn("notify-parent: caller", caller.id, "is not learner", learnerId, "— refusing");
+      return jsonResponse({ error: "Forbidden" }, 403);
+    }
+
+    // Raw name for the plain-text subject line; HTML-escaped for the body.
+    const learnerNameRaw = learner.full_name ?? "A learner";
+    const learnerName = escapeHtml(learnerNameRaw);
+    const flaggedExcerpt = escapeHtml(String(flaggedText ?? "").slice(0, FLAGGED_TEXT_MAX_LENGTH));
 
     // -------------------------------------------------------------------
     // 1. Resolve every parent linked to this learner — same pattern as
@@ -184,8 +245,8 @@ Deno.serve(async (req) => {
     } else {
       const isTier1 = severity === 1;
       const subject = isTier1
-        ? `⚠️ URGENT — Leuro™ Safety Alert for ${learnerName}`
-        : `Leuro™ Content Notice for ${learnerName}`;
+        ? `⚠️ URGENT — Leuro™ Safety Alert for ${learnerNameRaw}`
+        : `Leuro™ Content Notice for ${learnerNameRaw}`;
 
       const htmlBody = isTier1
         ? `
@@ -197,7 +258,7 @@ Deno.serve(async (req) => {
     <p>Dear Parent/Guardian,</p>
     <p>During a Leuro™ session on <strong>${new Date().toLocaleDateString("en-ZA")}</strong>, the following content was detected on <strong>${learnerName}</strong>'s account:</p>
     <div style="background:#fff3f3;border-left:4px solid #e53e3e;padding:12px 16px;margin:16px 0;border-radius:4px;">
-      <p style="margin:0;color:#c53030;font-style:italic;">"${flaggedText}"</p>
+      <p style="margin:0;color:#c53030;font-style:italic;">"${flaggedExcerpt}"</p>
     </div>
     <p>Your child's account has been <strong>temporarily paused</strong> as a precaution.</p>
     <p>Please speak with your child and ensure they are safe. The <strong>SADAG helpline</strong> is available 24 hours, free of charge: <strong>0800 21 22 23</strong>.</p>
@@ -214,7 +275,7 @@ Deno.serve(async (req) => {
     <p>Dear Parent/Guardian,</p>
     <p>Inappropriate language was detected on <strong>${learnerName}</strong>'s Leuro™ account on <strong>${new Date().toLocaleDateString("en-ZA")}</strong>.</p>
     <div style="background:#fffbea;border-left:4px solid #E6B347;padding:12px 16px;margin:16px 0;border-radius:4px;">
-      <p style="margin:0;color:#744210;font-style:italic;">"${flaggedText}"</p>
+      <p style="margin:0;color:#744210;font-style:italic;">"${flaggedExcerpt}"</p>
     </div>
     <p>Your child's account remains active. Three flags in 7 days will pause the account automatically.</p>
     <p>Log in to your Leuro™ account to review this alert.</p>

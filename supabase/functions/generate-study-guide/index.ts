@@ -727,7 +727,10 @@ Deno.serve(async (req: Request) => {
       );
 
       try {
-        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 512);
+        // 1024 tokens, not 512: a question + 4 plausible distractors + an
+        // explanation can exceed 512 (especially in Afrikaans, which runs
+        // long) - a truncated response fails JSON.parse and 500s the loop.
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 1024);
         const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
         const parsed = JSON.parse(cleaned);
 

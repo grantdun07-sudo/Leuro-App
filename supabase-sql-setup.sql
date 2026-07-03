@@ -816,6 +816,114 @@ drop policy if exists "Admins can read all study sessions" on public.study_sessi
 create policy "Admins can read all study sessions" on public.study_sessions for select using (public.is_admin());
 
 -- ---------------------------------------------------------------------
+-- SECURITY HARDENING MIGRATION (July 2026 security audit)
+-- ---------------------------------------------------------------------
+
+-- 1) Column-level UPDATE privileges.
+-- RLS's "Users can update own profile" (and the learners equivalent)
+-- restricts WHICH ROWS a user can update, but not WHICH COLUMNS.
+-- Supabase's default grants give the authenticated role UPDATE on every
+-- column, so any signed-in user could update their own row from the
+-- browser console and set:
+--   - profiles.role = 'admin'            -> full admin RPC access
+--   - profiles.subscription_tier = 'premium' -> free premium (this is the
+--     exact column every server-side premium gate checks)
+--   - profiles.account_frozen = false    -> a learner frozen for tier-1
+--     self-harm content could un-freeze themselves, bypassing the
+--     parent-acknowledgment review entirely
+-- Fix: revoke UPDATE at the table level, then re-grant column-by-column
+-- for only the fields the client (or a user-JWT edge-function path)
+-- legitimately writes. service_role keeps full access, so edge functions
+-- and the Paystack webhook are unaffected.
+
+revoke update on public.profiles from authenticated, anon;
+grant update (full_name, avatar_url, lang, monthly_recap_email, referral_code)
+  on public.profiles to authenticated;
+
+-- learners: the client writes diagnostic_level (diagnostic completion),
+-- and generate-study-guide writes the streak/session-counter fields with
+-- the CALLER's own JWT (not service role), so those need the grant too.
+-- Everything billing/invite related stays service-role-only.
+revoke update on public.learners from authenticated, anon;
+grant update (diagnostic_level, streak_days, streak_last_active_date,
+              sessions_completed, last_session)
+  on public.learners to authenticated;
+
+-- parents: linked_learners is the server-side ownership proof used by
+-- acknowledge-flag, delete-child, cancel-child-subscription and every
+-- parent-read RLS policy - yet "Parents can update own data" let a
+-- parent write ARBITRARY learner UUIDs into their own array from the
+-- console, i.e. claim (then read, un-freeze, or permanently delete) any
+-- learner whose id they obtained. The only legitimate writers are the
+-- SECURITY DEFINER link functions and service-role edge functions, so
+-- the authenticated role gets no UPDATE path at all.
+revoke update on public.parents from authenticated, anon;
+drop policy if exists "Parents can update own data" on public.parents;
+
+-- 2) Signup role whitelist.
+-- handle_new_user() takes role straight from client-supplied signup
+-- metadata, so a direct auth.signUp({data:{role:'admin'}}) call
+-- self-registered an admin account. Sanitise at the profiles INSERT
+-- level - this covers the trigger AND the client's own fallback INSERT
+-- policy. Admin accounts are created by an operator UPDATE in the SQL
+-- editor, which this trigger (INSERT-only) does not touch.
+create or replace function public.enforce_signup_role()
+returns trigger as $$
+begin
+  if new.role is distinct from 'learner' and new.role is distinct from 'parent' then
+    new.role := 'learner';
+  end if;
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists enforce_signup_role on public.profiles;
+create trigger enforce_signup_role
+  before insert on public.profiles
+  for each row execute function public.enforce_signup_role();
+
+-- 3) Admin freeze/unfreeze moves to a SECURITY DEFINER RPC.
+-- The admin dashboard's direct profiles UPDATE can no longer touch
+-- account_frozen now that the column grant is revoked (same pattern as
+-- admin_update_tier, and the same reason: loud failure instead of a
+-- silent 0-row update).
+create or replace function public.admin_set_account_frozen(p_user_id uuid, p_frozen boolean)
+returns void as $$
+begin
+  if not public.is_admin() then
+    raise exception 'not authorized';
+  end if;
+
+  update public.profiles
+  set account_frozen = p_frozen,
+      freeze_reason = case when p_frozen then coalesce(freeze_reason, 'Frozen by admin') else null end
+  where id = p_user_id;
+
+  if not found then
+    raise exception 'user not found: %', p_user_id;
+  end if;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+-- 4) study_sessions: drop DELETE/UPDATE from the learner policy.
+-- The old FOR ALL policy included DELETE, letting a free-tier learner
+-- delete today's phase='explain' rows from the console and reset the
+-- 3-sessions/day limit indefinitely. Learners only ever need SELECT
+-- (the app reads counts/history) and INSERT (generate-study-guide
+-- writes rows with the caller's own JWT).
+drop policy if exists "Learners manage own study sessions" on public.study_sessions;
+
+drop policy if exists "Learners read own study sessions" on public.study_sessions;
+create policy "Learners read own study sessions" on public.study_sessions for select using (
+  learner_id in (select id from public.learners where user_id = auth.uid())
+);
+
+drop policy if exists "Learners insert own study sessions" on public.study_sessions;
+create policy "Learners insert own study sessions" on public.study_sessions for insert with check (
+  learner_id in (select id from public.learners where user_id = auth.uid())
+);
+
+-- ---------------------------------------------------------------------
 -- SEED DATA: CAPS subjects, Grades 4-12
 -- ---------------------------------------------------------------------
 

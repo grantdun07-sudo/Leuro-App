@@ -1,5 +1,14 @@
 // Leuro service worker - app shell caching + offline fallback.
-const CACHE_NAME = "leuro-cache-v1";
+//
+// Strategy is NETWORK-FIRST (fall back to cache when offline), not
+// cache-first: the old cache-first version returned the cached app.js/
+// style.css immediately and only refreshed the cache in the background,
+// so after every deploy users ran the PREVIOUS build on first load and
+// needed a second reload to pick up the new one - a steady source of
+// "this worked before" confusion. Network-first trades a little load
+// speed for always-current code while keeping full offline support.
+// CACHE_NAME is versioned so the activate step drops stale caches.
+const CACHE_NAME = "leuro-cache-v2";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -37,18 +46,18 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const networkFetch = fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => cached || caches.match("/index.html"));
-
-      return cached || networkFetch;
-    }),
+    fetch(event.request)
+      .then((response) => {
+        if (response && response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() =>
+        caches
+          .match(event.request)
+          .then((cached) => cached || caches.match("/index.html")),
+      ),
   );
 });

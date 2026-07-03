@@ -37,21 +37,40 @@ function systemPrompt(lang: string): string {
   return base + afRule;
 }
 
+const ANTHROPIC_TIMEOUT_MS = 60000;
+
 async function callClaude(system: string, prompt: string, maxTokens: number): Promise<string> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": anthropicKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: "user", content: prompt }],
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // Without this check an Anthropic error response has no .content and the
+  // old `data.content[0].text` threw a bare TypeError.
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Anthropic API error (${res.status}): ${errText}`);
+  }
+
   const data = await res.json();
   return data.content[0].text;
 }
@@ -159,9 +178,16 @@ Deno.serve(async (req) => {
       .eq("id", subjectId)
       .single();
 
-    const subjectName = lang === "af" ? subject?.name_af : subject?.name;
+    // Fall back to the English name (then a generic label) so an Afrikaans
+    // learner on a subject with no name_af never gets "undefined" injected
+    // into the prompt.
+    const subjectName = (lang === "af" ? subject?.name_af || subject?.name : subject?.name) ?? "General";
 
-    const prompt = `Generate exactly ${cardCount} multiple-choice flashcards for Grade 7-12 CAPS curriculum learning.
+    // Clamp the requested count — the client offers 10/15/20, but the value
+    // arrives from the request body and must not steer the prompt unbounded.
+    const count = Math.min(30, Math.max(3, Number(cardCount) || 10));
+
+    const prompt = `Generate exactly ${count} multiple-choice flashcards for Grade 7-12 CAPS curriculum learning.
 Subject: ${subjectName}
 Topic: ${topicTitle}
 
@@ -176,14 +202,33 @@ Make distractors plausible. Vary the correct letter across cards.`;
 
     const response = await callClaude(systemPrompt(lang), prompt, 2048);
     const cleaned = response.replace(/```json|```/g, "").trim();
-    const cards = JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+
+    // Keep only structurally complete cards — the game renders
+    // options.A-D and card.correct directly.
+    const validLetters = new Set(["A", "B", "C", "D"]);
+    const cards = (Array.isArray(parsed) ? parsed : []).filter(
+      (c) =>
+        c && c.question && c.options &&
+        c.options.A && c.options.B && c.options.C && c.options.D &&
+        validLetters.has(String(c.correct ?? "").trim().toUpperCase()),
+    );
+
+    if (cards.length === 0) {
+      console.error("generate-flashcards: no valid cards in response");
+      return new Response(JSON.stringify({ error: "Failed to generate valid flashcards. Please try again." }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     return new Response(JSON.stringify({ cards }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
-    console.error(err);
-    return new Response(JSON.stringify({ error: err.message }), {
+    // Log the detail server-side; never return raw internals to the client.
+    console.error("generate-flashcards error:", err);
+    return new Response(JSON.stringify({ error: "Failed to generate flashcards. Please try again." }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
