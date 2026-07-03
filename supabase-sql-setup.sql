@@ -67,6 +67,29 @@ create table if not exists public.parents (
 -- constraint makes that assumption actually enforced, not just implicit.
 alter table public.parents add constraint parents_user_id_key unique (user_id);
 
+-- One-time data backfill for existing databases: handle_new_user() has
+-- never set profiles.full_name for any role (only id/email/role/
+-- subscription_tier). Parent accounts self-heal this via a client-side
+-- UPDATE in app.js's handleSignup(), but child accounts (created via
+-- create-child-auth) had no equivalent until that function was updated to
+-- also write profiles.full_name at creation time - so any learner account
+-- created BEFORE that fix has a permanently-null profiles.full_name,
+-- showing a blank name and a "?" avatar on their own Account tab even
+-- though learners.full_name (used by the parent's dashboard) is correct.
+-- Safe to re-run: only touches rows that are still null.
+--
+-- Check how many rows are affected before running the backfill:
+--   select count(*) from public.profiles p
+--   join public.learners l on l.user_id = p.id
+--   where p.role = 'learner' and p.full_name is null;
+update public.profiles p
+set full_name = l.full_name
+from public.learners l
+where l.user_id = p.id
+  and p.role = 'learner'
+  and p.full_name is null
+  and l.full_name is not null;
+
 create table if not exists public.subjects (
   id uuid primary key default gen_random_uuid(),
   name text not null,

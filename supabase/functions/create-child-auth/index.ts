@@ -15,9 +15,12 @@
 //
 // In both modes the child gets a real auth.users entry (email_confirm: true)
 // so they can log in after password setup. The live handle_new_user trigger
-// only creates a profiles row; this function inserts the learners row directly.
-// A pre-check guard handles the case where the trigger is later updated to
-// also create learners rows (upsert-safe).
+// only creates a profiles row (and even then, only id/email/role/
+// subscription_tier - never full_name); this function inserts the learners
+// row directly, and separately backfills profiles.full_name for the child
+// (see step 4b) since nothing else ever sets it. A pre-check guard handles
+// the case where the trigger is later updated to also create learners rows
+// (upsert-safe).
 //
 // DEPLOY:
 //   supabase functions deploy create-child-auth --no-verify-jwt
@@ -345,6 +348,39 @@ Deno.serve(async (req: Request) => {
       return jsonErr("Account created but setup failed. Please try again.", 500);
     }
     learnerId = insertedRow.id;
+  }
+
+  // -------------------------------------------------------------------------
+  // 4b. Backfill profiles.full_name for the child
+  //
+  //     The live handle_new_user trigger only sets id/email/role/
+  //     subscription_tier on profiles - it never sets full_name, for
+  //     either role. Parent signups compensate for this in app.js's
+  //     handleSignup(), which explicitly UPDATEs profiles.full_name right
+  //     after signUp(). Child accounts had no equivalent, so a child's own
+  //     Account tab (which reads profile.full_name, not learner.full_name)
+  //     has always shown a blank name and a "?" avatar. This applies to
+  //     both direct and invite mode identically, since fullName is known
+  //     up front in both - invite-mode children get this set at invite
+  //     creation time, not deferred to accept-child-invite (which never
+  //     touches profiles at all).
+  //
+  //     Non-fatal: full_name is cosmetic, so a failure here is logged
+  //     loudly but does not roll back account creation - the learners row
+  //     and auth user, already confirmed above, are what actually matter
+  //     functionally.
+  // -------------------------------------------------------------------------
+  const { error: profileNameErr } = await admin
+    .from("profiles")
+    .update({ full_name: fullName })
+    .eq("id", childAuthId);
+
+  if (profileNameErr) {
+    console.error(
+      "create-child-auth: failed to backfill profiles.full_name for child", childAuthId,
+      ":", profileNameErr.message,
+      "— child account created successfully, but their own Account tab will show a blank name until this is fixed.",
+    );
   }
 
   // -------------------------------------------------------------------------
