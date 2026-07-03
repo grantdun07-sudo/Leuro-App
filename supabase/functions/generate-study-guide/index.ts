@@ -1,8 +1,30 @@
 // Supabase Edge Function: generate-study-guide
 // POST { topicId, phase, learnerInput?, context? }
-//   phase: 'explain' | 'example' | 'attempt' | 'feedback' | 'chat' | 'studyguide'
+//   phase: 'explain' | 'example' | 'attempt' | 'complete' | 'chat' | 'studyguide'
 //          | 'refresher' | 'refresher-feedback'
-//   context: { explainText?, exampleText?, attemptQuestion?, history?, refresherQuestion? }
+//   context: { explainText?, exampleText?, history?, refresherQuestion?,
+//              retryCount?, previousQuestion?, previousExplanation? }
+//
+// 'explain'/'example' - unchanged free-text tutor steps. Auto-chained by the
+//                 client: explain -> example -> attempt.
+//                 Returns: { response: string, phase, tokensUsed }
+//
+// 'attempt'    - generates ONE multiple-choice practice question (mastery
+//                 loop). Grading is client-side (same pattern as
+//                 generate-mock-exam/generate-flashcards) - "correct" and
+//                 "explanation" are returned directly. Called again after a
+//                 wrong answer, with context.retryCount/previousQuestion so
+//                 Claude varies the question instead of repeating it.
+//                 Returns: { phase: 'attempt', question, options: {A,B,C,D},
+//                 correct: 'A'|'B'|'C'|'D', explanation, tokensUsed }
+//
+// 'complete'   - explicit "Finish topic" signal, sent once the learner
+//                 answers correctly and chooses not to try another
+//                 question. No Claude call - pure bookkeeping
+//                 (sessions_completed/times_studied increment here, and
+//                 only here now). Logs the sole study_sessions row for the
+//                 whole mastery loop.
+//                 Returns: { phase: 'complete' }
 //
 // 'chat'       - free-form follow-up question within an existing topic chat.
 //                 Requires topicId. context.history is the recent
@@ -26,11 +48,10 @@
 // 'refresher-feedback' - instant feedback on one Exam Refresher practice
 //                 question. Requires subjectId + topicTitle + learnerInput
 //                 (the learner's answer) + context.refresherQuestion (the
-//                 question text).
+//                 question text). Untouched by the mastery-loop rebuild -
+//                 fully separate free-text flow, no MC, no study_sessions row.
 //                 Returns: { feedback: { correct: boolean, feedback: string },
 //                 tokensUsed }
-//
-// All other phases return: { response: string, phase: string, tokensUsed: number }
 //
 // Auth: caller must be the learner who owns the topic (enforced via RLS
 // using the caller's JWT for all reads/writes). Subject, grade, diagnostic
@@ -93,7 +114,12 @@ Rules:
 - Adjust difficulty to the learner's diagnostic level (1 = needs lots of
   support and basics, 5 = ready for advanced, exam-style challenge).`;
 
-type Phase = "explain" | "example" | "attempt" | "feedback" | "chat" | "studyguide" | "refresher" | "refresher-feedback";
+// "feedback" is intentionally gone from the request-side phase list - the
+// mastery loop grades multiple-choice answers client-side (same pattern as
+// generate-mock-exam/generate-flashcards), so there is no server call for
+// it anymore. It's still a valid *stored* value in study_sessions.phase for
+// historical rows (see the DB migration), just never sent as a request.
+type Phase = "explain" | "example" | "attempt" | "complete" | "chat" | "studyguide" | "refresher" | "refresher-feedback";
 
 interface RequestBody {
   topicId?: string;
@@ -108,11 +134,18 @@ interface RequestBody {
   context?: {
     explainText?: string;
     exampleText?: string;
-    attemptQuestion?: string;
     history?: { role: "ai" | "learner"; text: string }[];
     refresherQuestion?: string;
+    // Retry context for the mastery loop - set only when regenerating an
+    // "attempt" question after a wrong answer, so Claude varies the
+    // question instead of repeating it.
+    retryCount?: number;
+    previousQuestion?: string;
+    previousExplanation?: string;
   };
 }
+
+const VALID_LETTERS = new Set(["A", "B", "C", "D"]);
 
 // South Africa Standard Time is a fixed UTC+2 offset with no DST - this app
 // only operates in SA, so a hardcoded offset is correct (no per-user
@@ -123,35 +156,6 @@ function sastDateString(instant: Date): string {
   return new Date(instant.getTime() + SAST_OFFSET_MS).toISOString().slice(0, 10);
 }
 
-// Plain heuristic (no AI call) that classifies a learner's practice-question
-// answer as "weak" (nothing substantive to evaluate) or "genuine" (a real
-// attempt, however short or wrong). Used so the feedback phase can scaffold
-// with a hint instead of revealing the answer when there's no real attempt.
-//
-// Errs toward "genuine": a short real answer ("42", "no", "yes") must NOT be
-// classified weak just for being short - only a single character, a
-// repeated-character/keyboard mash ("aaaa", "kkkkkk"), or punctuation/
-// whitespace with no letters or digits at all counts as weak. Note: this
-// uses a length-2 (not length-3) floor specifically so "no"/"42" (both 2
-// characters) still count as genuine, matching the intent that short real
-// answers are never penalised - only true single-character non-attempts are.
-function classifyAttempt(answer: string): "weak" | "genuine" {
-  const trimmed = answer.trim();
-
-  // A single character is never a genuine attempt (e.g. "a", ".", "9").
-  if (trimmed.length < 2) return "weak";
-
-  // Repeated-character / keyboard-mash: fewer than 2 distinct characters
-  // once whitespace is ignored, e.g. "aaaa", "kkkkkk", "!!!!".
-  const distinctChars = new Set(trimmed.toLowerCase().replace(/\s+/g, "")).size;
-  if (distinctChars < 2) return "weak";
-
-  // Only punctuation/whitespace - no letters or digits anywhere.
-  if (!/[a-zA-Z0-9]/.test(trimmed)) return "weak";
-
-  return "genuine";
-}
-
 function buildUserPrompt(
   body: RequestBody,
   topicTitle: string,
@@ -159,7 +163,6 @@ function buildUserPrompt(
   grade: number,
   level: number,
   lang: string,
-  wasWeakAttempt = false,
 ): string {
   const levelText = level > 0 ? `${level}/5` : "1/5 (not yet diagnosed, assume a beginner)";
   const header = `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | Learner level: ${levelText}\n${langInstruction(lang)}\n\n`;
@@ -184,51 +187,6 @@ function buildUserPrompt(
         `answer, showing each step of the method clearly so the learner can ` +
         `follow along. Use a realistic South African context where possible.`
       );
-    case "attempt":
-      return (
-        header +
-        (body.context?.exampleText
-          ? `You previously gave this worked example: """${body.context.exampleText}"""\n\n`
-          : "") +
-        `Now write ONE new, original practice question on this topic (Bloom's: ` +
-        `Apply + Analyze) for the learner to attempt themselves. Make it about ` +
-        `50% harder than the worked example - similar style but with different ` +
-        `numbers/details. Include a mark allocation if applicable (e.g. "(4 marks)") ` +
-        `and give clear instructions for how the learner should respond. Output ` +
-        `ONLY the question text - do not include the answer or any hints.`
-      );
-    case "feedback": {
-      const question = body.context?.attemptQuestion ?? "(question not available)";
-      const answer = body.learnerInput ?? "(no answer provided)";
-
-      if (wasWeakAttempt) {
-        return (
-          header +
-          `The practice question was: """${question}"""\n` +
-          `The learner's response was: """${answer}"""\n\n` +
-          `The learner's response doesn't show a genuine attempt yet (Bloom's: ` +
-          `Understand + Apply - they need help getting started, not evaluation ` +
-          `of a full answer). Do NOT reveal the correct answer or full solution, ` +
-          `and do NOT give evaluative feedback since there is nothing substantive ` +
-          `to evaluate. Instead, warmly acknowledge that they seem stuck, offer ` +
-          `ONE small hint or a simpler guiding sub-question related to the ` +
-          `practice question to help them get started, and encourage them to give ` +
-          `it a real try. Keep the tone warm and encouraging, never scolding.`
-        );
-      }
-
-      return (
-        header +
-        `The practice question was: """${question}"""\n` +
-        `The learner's answer was: """${answer}"""\n\n` +
-        `Evaluate the learner's answer (Bloom's: Analyze + Evaluate, applying ` +
-        `Barrett's critical-thinking taxonomy to their reasoning, not just the ` +
-        `final answer). Identify what they did well and any gaps or ` +
-        `misconceptions, provide constructive corrections (show the correct ` +
-        `approach/answer if needed), and suggest a next step. Keep the tone ` +
-        `encouraging throughout.`
-      );
-    }
     case "chat": {
       const history = body.context?.history ?? [];
       const historyText = history
@@ -246,6 +204,58 @@ function buildUserPrompt(
     default:
       return header;
   }
+}
+
+// Multiple-choice practice question for the Learn tab's mastery loop.
+// retryContext is present only when regenerating the question after a wrong
+// answer - it tells Claude to vary the question (not repeat it) and, after
+// several misses, ease the difficulty. previousExplanation isn't referenced
+// in the prompt text itself but is accepted for symmetry with what the
+// client sends; the retry signal that actually matters to Claude is
+// previousQuestion + retryCount.
+function buildAttemptPrompt(
+  topicTitle: string,
+  subjectName: string,
+  grade: number,
+  level: number,
+  lang: string,
+  context?: {
+    exampleText?: string;
+    retryCount?: number;
+    previousQuestion?: string;
+    previousExplanation?: string;
+  },
+): string {
+  const levelText = level > 0 ? `${level}/5` : "1/5 (not yet diagnosed, assume a beginner)";
+  const header = `Subject: ${subjectName} | Grade: ${grade} | Topic: "${topicTitle}" | Learner level: ${levelText}\n${langInstruction(lang)}\n${JSON_KEYS_ENGLISH_NOTE}\n\n`;
+
+  // Retry (after a wrong answer) takes priority over the first-call
+  // grounding below - a retry is never the first question of the topic.
+  const retryNote = context?.previousQuestion
+    ? `The learner previously answered this question incorrectly: """${context.previousQuestion}"""\n` +
+      `Generate a NEW, DIFFERENT question testing the SAME underlying concept - vary the wording, ` +
+      `numbers, or context. Do not repeat the same question.` +
+      ((context.retryCount ?? 0) >= 3
+        ? ` The learner has struggled across multiple attempts on this concept - use a simpler framing ` +
+          `to help them succeed this time.\n\n`
+        : `\n\n`)
+    : context?.exampleText
+      ? `You previously gave this worked example: """${context.exampleText}"""\n\n`
+      : "";
+
+  return (
+    header +
+    retryNote +
+    `Generate ONE original multiple-choice practice question on this topic (Bloom's: Apply + Analyze), ` +
+    `appropriate for the learner's level. Exactly 4 options, exactly 1 correct answer. Distractors must ` +
+    `be plausible, built on common misconceptions - never obviously wrong or filler. Never reproduce ` +
+    `copyrighted exam content - create an original question only.\n\n` +
+    `Respond with ONLY a raw JSON object (no markdown, no code fences, no extra text) with exactly ` +
+    `these keys:\n` +
+    `{"question": string, "options": {"A": string, "B": string, "C": string, "D": string}, ` +
+    `"correct": "A" | "B" | "C" | "D", "explanation": string (brief explanation of why the correct ` +
+    `answer is right - this is shown to the learner as a hint if they answer incorrectly)}`
+  );
 }
 
 function buildStudyGuidePrompt(
@@ -367,7 +377,7 @@ Deno.serve(async (req: Request) => {
     if (!body.phase) {
       return jsonResponse({ error: "phase is required" }, 400);
     }
-    if (!["explain", "example", "attempt", "feedback", "chat", "studyguide", "refresher", "refresher-feedback"].includes(body.phase)) {
+    if (!["explain", "example", "attempt", "complete", "chat", "studyguide", "refresher", "refresher-feedback"].includes(body.phase)) {
       return jsonResponse({ error: "invalid phase" }, 400);
     }
     if (!["studyguide", "refresher", "refresher-feedback"].includes(body.phase) && !body.topicId) {
@@ -694,11 +704,111 @@ Deno.serve(async (req: Request) => {
     }
     // --- End streak counter ---
 
-    // Child-safety screen on learner-submitted text (attempt answers / feedback / chat)
-    if (
-      (body.phase === "feedback" || body.phase === "attempt" || body.phase === "chat") &&
-      containsCrisisLanguage(body.learnerInput)
-    ) {
+    // Multiple-choice practice question (Learn tab mastery loop). Returns
+    // structured {question, options, correct, explanation} - not free text -
+    // so it gets its own dedicated block, like studyguide/refresher, rather
+    // than the generic buildUserPrompt()/plain-text path below (which still
+    // handles explain/example/chat only). Grading is client-side (same
+    // pattern as generate-mock-exam/generate-flashcards - "correct" and
+    // "explanation" are returned directly since this is a low-stakes
+    // practice tool), so there is no server-side "feedback" phase anymore -
+    // retiring it removes an entire AI round-trip per question. No
+    // study_sessions row is logged here either - only "complete" logs one,
+    // to keep the parent-facing session history to one entry per finished
+    // topic rather than one per attempt/retry.
+    if (body.phase === "attempt") {
+      const userPrompt = buildAttemptPrompt(
+        topic.title,
+        subject?.name ?? "General",
+        learner.grade,
+        learner.diagnostic_level ?? 0,
+        lang,
+        body.context,
+      );
+
+      try {
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 512);
+        const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+        const parsed = JSON.parse(cleaned);
+
+        const options = parsed.options ?? {};
+        const correct = String(parsed.correct ?? "").trim().toUpperCase();
+        if (!parsed.question || !options.A || !options.B || !options.C || !options.D || !VALID_LETTERS.has(correct)) {
+          throw new Error("Response missing required MC fields");
+        }
+
+        return jsonResponse({
+          phase: "attempt",
+          question: String(parsed.question),
+          options: { A: String(options.A), B: String(options.B), C: String(options.C), D: String(options.D) },
+          correct,
+          explanation: parsed.explanation ? String(parsed.explanation) : "",
+          tokensUsed: result.tokensUsed,
+        });
+      } catch (err) {
+        if (err instanceof ClaudeTimeoutError) {
+          console.error("Anthropic request timed out:", err);
+          return jsonResponse({ error: "AI generation timed out. Please try again." }, 500);
+        }
+        console.error("generate-study-guide (attempt) error:", err);
+        return jsonResponse({ error: "Failed to generate practice question" }, 500);
+      }
+    }
+
+    // Explicit topic-completion signal (learner chose "Finish" after a
+    // correct MC answer, whether on the first try or the Nth retry). No
+    // Claude call - pure bookkeeping. sessions_completed/times_studied
+    // increment here, and ONLY here, now - moved off the old "feedback"
+    // phase, which fired (and incremented) on every submission, including
+    // retries, before this rebuild.
+    if (body.phase === "complete") {
+      const { data: topicRow } = await supabase
+        .from("topics")
+        .select("times_studied")
+        .eq("id", topic.id)
+        .single();
+      await supabase
+        .from("topics")
+        .update({
+          times_studied: (topicRow?.times_studied ?? 0) + 1,
+          last_studied: new Date().toISOString(),
+        })
+        .eq("id", topic.id);
+
+      const { data: learnerRow } = await supabase
+        .from("learners")
+        .select("sessions_completed")
+        .eq("id", learner.id)
+        .single();
+      await supabase
+        .from("learners")
+        .update({
+          sessions_completed: (learnerRow?.sessions_completed ?? 0) + 1,
+          last_session: new Date().toISOString(),
+        })
+        .eq("id", learner.id);
+
+      // One warm, human-readable summary row - not per-question noise. This
+      // is what the parent dashboard's "recent activity" reads (phase =
+      // "complete" now, not the old "feedback").
+      await supabase.from("study_sessions").insert({
+        learner_id: learner.id,
+        topic_id: topic.id,
+        phase: "complete",
+        learner_input: null,
+        ai_response: "Practiced until they got it right.",
+        completed_at: new Date().toISOString(),
+      });
+
+      return jsonResponse({ phase: "complete" });
+    }
+
+    // Child-safety screen on learner-submitted free text. Only "chat" still
+    // carries free-form learner text in this file - the mastery loop is
+    // pure multiple-choice now, so "attempt"/"feedback" never have learner-
+    // authored text to screen (refresher-feedback has its own separate
+    // check above, untouched).
+    if (body.phase === "chat" && containsCrisisLanguage(body.learnerInput)) {
       const safeResponse = SADAG_CRISIS_MESSAGE[lang as "en" | "af"] ?? SADAG_CRISIS_MESSAGE.en;
 
       await supabase.from("study_sessions").insert({
@@ -721,10 +831,6 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ response: safeResponse, phase: body.phase, tokensUsed: 0, safety_flag: true });
     }
 
-    // Only meaningful for phase "feedback" - classifies the learner's answer
-    // to decide whether to scaffold with a hint instead of full evaluation.
-    const wasWeakAttempt = body.phase === "feedback" && classifyAttempt(body.learnerInput ?? "") === "weak";
-
     const userPrompt = buildUserPrompt(
       body,
       topic.title,
@@ -732,7 +838,6 @@ Deno.serve(async (req: Request) => {
       learner.grade,
       learner.diagnostic_level ?? 0,
       lang,
-      wasWeakAttempt,
     );
 
     let responseText: string;
@@ -759,39 +864,7 @@ Deno.serve(async (req: Request) => {
       completed_at: new Date().toISOString(),
     });
 
-    // Skip the completion counters on a weak-attempt (scaffolded) response -
-    // the client keeps the session open for a retry rather than finalizing
-    // it, so counting it here would double-count once the learner eventually
-    // gives a genuine answer for the same question.
-    if (body.phase === "feedback" && !wasWeakAttempt) {
-      const { data: topicRow } = await supabase
-        .from("topics")
-        .select("times_studied")
-        .eq("id", topic.id)
-        .single();
-      await supabase
-        .from("topics")
-        .update({
-          times_studied: (topicRow?.times_studied ?? 0) + 1,
-          last_studied: new Date().toISOString(),
-        })
-        .eq("id", topic.id);
-
-      const { data: learnerRow } = await supabase
-        .from("learners")
-        .select("sessions_completed")
-        .eq("id", learner.id)
-        .single();
-      await supabase
-        .from("learners")
-        .update({
-          sessions_completed: (learnerRow?.sessions_completed ?? 0) + 1,
-          last_session: new Date().toISOString(),
-        })
-        .eq("id", learner.id);
-    }
-
-    return jsonResponse({ response: responseText, phase: body.phase, tokensUsed, wasWeakAttempt });
+    return jsonResponse({ response: responseText, phase: body.phase, tokensUsed });
   } catch (err) {
     console.error("generate-study-guide error:", err);
     return jsonResponse({ error: "Internal server error" }, 500);

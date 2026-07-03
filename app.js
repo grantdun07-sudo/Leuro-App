@@ -151,6 +151,11 @@ const translations = {
     yourAnswerLabel: "Type your answer here",
     enterAnswer: "Please enter an answer",
     btnSubmitAnswer: "Submit Answer",
+    mcCorrectMsg: "Correct! 🎉",
+    mcIncorrectMsg: "Not quite — here's a hint:",
+    btnTryAnotherQuestion: "Try Another Question",
+    btnFinishTopic: "Finish Topic",
+    topicCompleteMsg: "🎉 Great job! You've mastered this topic.",
     supportResources: "Support Resources",
     errorRetryContent: "Unable to generate content. Please try again in 30 seconds.",
     btnRetry: "Retry",
@@ -333,6 +338,7 @@ const translations = {
     phaseAttempt: "Practice",
     phaseFeedback: "Feedback",
     phaseChat: "Chat",
+    phaseComplete: "Completed",
 
     goalsHeading: "Goals",
     weeklySessionTargetLabel: "Weekly session target",
@@ -571,6 +577,11 @@ const translations = {
     yourAnswerLabel: "Tik jou antwoord hier",
     enterAnswer: "Voer asseblief 'n antwoord in",
     btnSubmitAnswer: "Dien Antwoord In",
+    mcCorrectMsg: "Korrek! 🎉",
+    mcIncorrectMsg: "Nie heeltemal nie — hier's 'n wenk:",
+    btnTryAnotherQuestion: "Probeer Nog 'n Vraag",
+    btnFinishTopic: "Voltooi Onderwerp",
+    topicCompleteMsg: "🎉 Goed gedoen! Jy het hierdie onderwerp bemeester.",
     supportResources: "Ondersteuningshulpbronne",
     errorRetryContent: "Kon nie inhoud genereer nie. Probeer asseblief weer oor 30 sekondes.",
     btnRetry: "Probeer Weer",
@@ -753,6 +764,7 @@ const translations = {
     phaseAttempt: "Oefening",
     phaseFeedback: "Terugvoer",
     phaseChat: "Klets",
+    phaseComplete: "Voltooi",
 
     goalsHeading: "Doelwitte",
     weeklySessionTargetLabel: "Weeklikse sessiedoelwit",
@@ -1840,7 +1852,7 @@ async function loadParentData() {
           .from("study_sessions")
           .select("id, phase, created_at, completed_at, topics(title)")
           .eq("learner_id", learner.id)
-          .eq("phase", "feedback")
+          .eq("phase", "complete")
           .order("created_at", { ascending: false })
           .limit(5),
         sbClient
@@ -4236,7 +4248,7 @@ async function openTopicSession(topicId) {
     chatLoading: false,
     explainText: null,
     exampleText: null,
-    attemptQuestion: null,
+    mcRetryCount: 0,
     safetyFlag: false,
     error: null,
     retry: null,
@@ -4271,21 +4283,24 @@ function scrollChatToBottom() {
   });
 }
 
+// Handles the free-text tutor phases only (explain/example/chat). The
+// mastery-loop's MC question generation is a structurally different
+// response shape ({question, options, correct, explanation}, not
+// {response}), so it's handled separately by runAttemptPhase() below rather
+// than folded into this generic text-response flow.
 async function runSessionPhase(phase, learnerInput, context) {
   const s = state.activeSession;
   s.loading = true;
   s.error = null;
-  s.retry = { phase, learnerInput, context };
+  s.retry = { kind: "phase", phase, learnerInput, context };
   render();
   scrollChatToBottom();
-
-  let wasWeakAttempt = false;
 
   try {
     const data = await callStudyGuide(phase, learnerInput, context);
     if (data.safety_flag) {
       s.safetyFlag = true;
-      s.messages.push({ role: "ai", phase: "feedback", text: data.response, safety: true });
+      s.messages.push({ role: "ai", phase, text: data.response, safety: true });
     } else {
       let text = data.response;
       if (phase === "explain") {
@@ -4293,15 +4308,8 @@ async function runSessionPhase(phase, learnerInput, context) {
         text = `${t("chatGreeting").replace("{topic}", s.topicTitle)}\n\n${data.response}`;
       } else if (phase === "example") {
         s.exampleText = data.response;
-      } else if (phase === "attempt") {
-        s.attemptQuestion = data.response;
-      } else if (phase === "feedback") {
-        wasWeakAttempt = !!data.wasWeakAttempt;
       }
-      // A weak attempt re-shows the answer box on this same feedback/hint
-      // message, reusing the existing answerBox/answered fields so the
-      // learner can retry the same question right where the hint appears.
-      s.messages.push({ role: "ai", phase, text, answerBox: phase === "attempt" || wasWeakAttempt });
+      s.messages.push({ role: "ai", phase, text });
     }
 
     if (phase === "explain") incrementLocalSessionCount();
@@ -4318,35 +4326,128 @@ async function runSessionPhase(phase, learnerInput, context) {
     if (phase === "explain") {
       await runSessionPhase("example", null, { explainText: s.explainText });
     } else if (phase === "example") {
-      await runSessionPhase("attempt", null, { exampleText: s.exampleText });
-    } else if (phase === "feedback" && !wasWeakAttempt) {
-      await finalizeStructuredSession();
+      await runAttemptPhase();
     }
+  }
+}
+
+// Fetches one MC practice question for the current topic - called once
+// after "example" (fresh topic, no retryContext) and again after every
+// incorrect answer (retryContext describes the previous wrong question so
+// Claude varies it rather than repeating it). The question is rendered
+// inline on the pushed message (msg.mc) with four option buttons, same
+// interaction pattern as the flashcard game.
+async function runAttemptPhase(retryContext) {
+  const s = state.activeSession;
+  s.loading = true;
+  s.error = null;
+  s.retry = { kind: "attempt", retryContext };
+  render();
+  scrollChatToBottom();
+
+  try {
+    const data = await callStudyGuideApi({
+      topicId: s.topicId,
+      phase: "attempt",
+      context: retryContext || { explainText: s.explainText, exampleText: s.exampleText },
+    });
+    s.messages.push({
+      role: "ai",
+      phase: "attempt",
+      text: data.question,
+      mc: { options: data.options, correct: data.correct, explanation: data.explanation },
+      mcAnswered: false,
+    });
+  } catch (err) {
+    s.error = err && err.name === "AbortError" ? t("errorRetryContent") : (err && err.message) || t("errorRetryContent");
+    console.error("Study Guide API error", s.error);
+  } finally {
+    s.loading = false;
+    render();
+    scrollChatToBottom();
   }
 }
 
 function sessionRetry() {
   const s = state.activeSession;
   if (!s || !s.retry) return;
-  runSessionPhase(s.retry.phase, s.retry.learnerInput, s.retry.context);
+  if (s.retry.kind === "attempt") {
+    runAttemptPhase(s.retry.retryContext);
+  } else {
+    runSessionPhase(s.retry.phase, s.retry.learnerInput, s.retry.context);
+  }
 }
 
-async function sessionSubmitAnswer(index) {
+// Grading is entirely client-side (same pattern as generate-mock-exam /
+// generate-flashcards) - the "attempt" response already included `correct`
+// and `explanation`, so there is no server round-trip for feedback at all.
+// No checkContent() screen here either - the learner is picking one of 4
+// options, not typing free text, so there's nothing to screen.
+function handleSessionMcAnswer(index, answer) {
   const s = state.activeSession;
-  const textarea = document.getElementById(`session-answer-${index}`);
-  const answer = textarea ? textarea.value.trim() : "";
-  if (!answer) {
-    showToast(t("enterAnswer"), "error");
+  const msg = s.messages[index];
+  if (!msg || !msg.mc || msg.mcAnswered) return;
+
+  const isCorrect = answer === msg.mc.correct;
+  msg.mcSelected = answer;
+  msg.mcAnswered = true;
+
+  if (isCorrect) {
+    s.mcRetryCount = 0;
+    s.messages.push({ role: "ai", phase: "attempt", text: t("mcCorrectMsg"), completionChoice: true });
+    render();
+    scrollChatToBottom();
     return;
   }
 
-  const safe = await checkContent(answer, "learn-attempt", state.learner?.id);
-  if (!safe) return;
+  s.mcRetryCount = (s.mcRetryCount || 0) + 1;
+  s.messages.push({ role: "ai", phase: "attempt", text: `${t("mcIncorrectMsg")} ${msg.mc.explanation}` });
+  render();
+  scrollChatToBottom();
 
-  s.messages[index].answerBox = false;
-  s.messages[index].answered = true;
-  s.messages.push({ role: "learner", phase: "attempt-answer", text: answer });
-  runSessionPhase("feedback", answer, { attemptQuestion: s.attemptQuestion });
+  // Hint reuses the explanation already generated with the original
+  // question - no extra AI call for that. Only the next question itself
+  // needs a fresh call, carrying enough context for Claude to vary it.
+  runAttemptPhase({
+    retryCount: s.mcRetryCount,
+    previousQuestion: msg.text,
+    previousExplanation: msg.mc.explanation,
+  });
+}
+
+// "Try another question" - voluntary continuation after a correct answer.
+// No sessions_completed increment here; that only happens on Finish.
+function sessionContinueTopic(index) {
+  const s = state.activeSession;
+  const msg = s.messages[index];
+  if (!msg || msg.completionChosen) return;
+  msg.completionChosen = true;
+  render();
+  runAttemptPhase({ explainText: s.explainText, exampleText: s.exampleText });
+}
+
+// "Finish topic" - the one and only place sessions_completed/times_studied
+// increment, regardless of how many questions/retries it took to get here.
+async function sessionFinishTopic(index) {
+  const s = state.activeSession;
+  const msg = s.messages[index];
+  if (!msg || msg.completionChosen) return;
+  msg.completionChosen = true;
+  s.loading = true;
+  render();
+
+  try {
+    await callStudyGuideApi({ topicId: s.topicId, phase: "complete" });
+    s.messages.push({ role: "ai", phase: "complete", text: t("topicCompleteMsg") });
+    await finalizeStructuredSession();
+  } catch (err) {
+    s.error = (err && err.message) || t("errorRetryContent");
+    console.error("Study Guide API error", s.error);
+  } finally {
+    s.loading = false;
+    render();
+    scrollChatToBottom();
+  }
 }
 
 async function sessionSendChat(form) {
@@ -4367,7 +4468,7 @@ async function sessionSendChat(form) {
   scrollChatToBottom();
 
   const history = s.messages
-    .filter((m) => !(m.role === "ai" && m.answerBox && !m.answered))
+    .filter((m) => !(m.role === "ai" && m.mc && !m.mcAnswered))
     .slice(-8)
     .map((m) => ({ role: m.role === "learner" ? "learner" : "ai", text: m.text }));
 
@@ -4494,11 +4595,35 @@ function renderChatMessage(msg, index) {
       <div class="chat-bubble ${bubbleClass}">${safetyPrefix}${escapeHtml(msg.text)}</div>
     </div>`;
 
-  if (msg.answerBox && !msg.answered) {
+  // Multiple-choice practice question - same option-button pattern as the
+  // flashcard game (renderFlashcardGame), rendered inline in the chat flow.
+  // Kept visible (disabled, correct/wrong/dim styling) after answering so
+  // the learner can see what they picked, same as flashcards.
+  if (msg.mc) {
+    html += `
+      <div class="flashcard-options chat-mc-options">
+        ${["A", "B", "C", "D"].map((key) => {
+          let cls = "flashcard-option-btn";
+          if (msg.mcAnswered) {
+            if (key === msg.mc.correct) cls += " option-correct";
+            else if (key === msg.mcSelected) cls += " option-wrong";
+            else cls += " option-dim";
+          }
+          return `<button class="${cls}" data-action="session-mc-answer" data-index="${index}" data-answer="${key}" ${msg.mcAnswered ? "disabled" : ""}>
+            <span class="flashcard-option-key">${key}</span>
+            <span class="flashcard-option-text">${escapeHtml(msg.mc.options[key])}</span>
+          </button>`;
+        }).join("")}
+      </div>`;
+  }
+
+  // "Try another question" / "Finish topic" choice shown after a correct
+  // answer - disappears once acted on (a new message always follows).
+  if (msg.completionChoice && !msg.completionChosen) {
     html += `
       <div class="chat-answer-box">
-        <textarea id="session-answer-${index}" rows="3" placeholder="${t("yourAnswerLabel")}"></textarea>
-        <button class="btn btn-primary btn-block" data-action="session-submit-answer" data-index="${index}">${t("btnSubmitAnswer")}</button>
+        <button class="btn btn-outline btn-block" data-action="session-continue-topic" data-index="${index}">${t("btnTryAnotherQuestion")}</button>
+        <button class="btn btn-primary btn-block" style="margin-top:8px;" data-action="session-finish-topic" data-index="${index}">${t("btnFinishTopic")}</button>
       </div>`;
   }
 
@@ -7554,8 +7679,14 @@ function attachGlobalListeners() {
       case "session-close":
         sessionClose();
         break;
-      case "session-submit-answer":
-        sessionSubmitAnswer(parseInt(target.dataset.index, 10));
+      case "session-mc-answer":
+        handleSessionMcAnswer(parseInt(target.dataset.index, 10), target.dataset.answer);
+        break;
+      case "session-continue-topic":
+        sessionContinueTopic(parseInt(target.dataset.index, 10));
+        break;
+      case "session-finish-topic":
+        sessionFinishTopic(parseInt(target.dataset.index, 10));
         break;
       case "session-retry":
         sessionRetry();

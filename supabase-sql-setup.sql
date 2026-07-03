@@ -201,6 +201,17 @@ alter table public.study_sessions drop constraint if exists study_sessions_phase
 alter table public.study_sessions add constraint study_sessions_phase_check
   check (phase in ('explain', 'example', 'attempt', 'feedback', 'chat'));
 
+-- Migration: Learn tab mastery-loop rebuild (multiple-choice attempt/feedback
+-- instead of free-text). Adds 'complete' for the explicit topic-finish
+-- signal, which is now the only place that logs a study_sessions row for
+-- the attempt/feedback loop (one per finished topic, not one per
+-- attempt/retry). 'feedback' is kept in the allowed list even though
+-- nothing writes it anymore - existing rows already have that value, and
+-- the constraint must still validate them.
+alter table public.study_sessions drop constraint if exists study_sessions_phase_check;
+alter table public.study_sessions add constraint study_sessions_phase_check
+  check (phase in ('explain', 'example', 'attempt', 'feedback', 'chat', 'complete'));
+
 create table if not exists public.mock_exam_responses (
   id uuid primary key default gen_random_uuid(),
   question_id uuid not null references public.mock_exam_questions(id) on delete cascade,
