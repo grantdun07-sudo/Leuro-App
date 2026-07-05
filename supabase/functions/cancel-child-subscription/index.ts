@@ -180,7 +180,7 @@ Deno.serve(async (req: Request) => {
     // 4. Fetch the learner's stored subscription anchor.
     const { data: learner, error: learnerErr } = await admin
       .from("learners")
-      .select("id, subscription_status, paystack_customer_code, subscription_tier, subscription_code")
+      .select("id, subscription_status, paystack_customer_code, subscription_tier, subscription_code, next_payment_date")
       .eq("id", learnerId)
       .single();
 
@@ -322,11 +322,21 @@ Deno.serve(async (req: Request) => {
         "cancel-child-subscription: disabled subscription", subscriptionCode, "for learner", learnerId,
         "| path:", pathUsed,
       );
-      return jsonRes({
-        success: true,
-        message: "Subscription cancelled — access continues until the current billing period ends.",
-        path: pathUsed,
-      }, 200);
+
+      // Softened deliberately: subscription.disable (the webhook event that
+      // actually revokes access at period end) has no confirmed-from-logs
+      // evidence yet of firing reliably or at the right time, so this avoids
+      // promising an unconditional guarantee the backend can't yet prove.
+      const formattedDate = learner.next_payment_date
+        ? new Date(learner.next_payment_date).toLocaleDateString("en-ZA", {
+            day: "numeric", month: "long", year: "numeric",
+          })
+        : null;
+      const message = formattedDate
+        ? `Your subscription will not renew. Access should continue until ${formattedDate} — please contact support if you notice otherwise.`
+        : "Your subscription will not renew. Access should continue until the end of your current billing period — please contact support if you notice otherwise.";
+
+      return jsonRes({ success: true, message, path: pathUsed }, 200);
     }
 
     console.error(
