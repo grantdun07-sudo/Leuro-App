@@ -75,8 +75,8 @@ const supabase = createClient(
 // Paystack plan_code → our internal tier name. Plans have fixed prices now,
 // so tier is derived from plan_code, never from the charged amount.
 const PLAN_TIER_MAP: Record<string, "basic" | "premium"> = {
-  PLN_x2bz5sdsky99bk5: "basic",
-  PLN_gmx6yhgo5ikqg64: "premium",
+  PLN_xfo9bqka3n6ljqr: "basic",
+  PLN_y97xmqrdr92v95g: "premium",
 };
 
 function tierFromPlanCode(planCode: string | null): "basic" | "premium" | null {

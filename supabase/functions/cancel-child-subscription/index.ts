@@ -75,8 +75,8 @@ type LearnerClaim = { id: string; subscription_code: string | null };
 // path, to filter the shared customer's subscription list down to the plan
 // matching this learner's current tier.
 const TIER_PLAN_MAP: Record<string, string> = {
-  basic: "PLN_x2bz5sdsky99bk5",
-  premium: "PLN_gmx6yhgo5ikqg64",
+  basic: "PLN_xfo9bqka3n6ljqr",
+  premium: "PLN_y97xmqrdr92v95g",
 };
 
 // Returns every learner claiming any of these subscription_codes — used to

@@ -7147,8 +7147,8 @@ const PAYSTACK_KOBO = {
 };
 
 const PAYSTACK_PLANS = {
-  basic: "PLN_x2bz5sdsky99bk5",
-  premium: "PLN_gmx6yhgo5ikqg64",
+  basic: "PLN_xfo9bqka3n6ljqr",
+  premium: "PLN_y97xmqrdr92v95g",
 };
 
 // Returns true when the parent has an active promo code AND is still within

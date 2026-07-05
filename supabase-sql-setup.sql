@@ -248,6 +248,18 @@ create table if not exists public.subscription_history (
   created_at timestamp default now()
 );
 
+-- Migration: allow 'paystack' as a subscription_history.source value
+-- (pre-launch Paystack live-mode audit). Both paystack-webhook and
+-- verify-and-store-payment insert source: "paystack" on every real charge/
+-- renewal, but the original CHECK constraint never included it - every one
+-- of those inserts has been silently failing (logged, non-fatal, so tier
+-- activation itself still worked, but the audit trail row was never
+-- written). Found while reviewing the live-mode plan code/key swap, not
+-- part of that swap itself.
+alter table public.subscription_history drop constraint if exists subscription_history_source_check;
+alter table public.subscription_history add constraint subscription_history_source_check
+  check (source in ('payfast', 'referral', 'admin', 'paystack'));
+
 create table if not exists public.parent_alerts (
   id uuid primary key default gen_random_uuid(),
   parent_id uuid not null references public.parents(id),
