@@ -1793,22 +1793,6 @@ async function loadParentData() {
       .limit(20),
     sbClient.from("subjects").select("id, name, name_af, grade, curriculum"),
   ]);
-
-  // ==========================================================================
-  // TEMPORARY TEST HOOK (M6 verification) - DELETE THIS BLOCK ONCE M6 TESTING
-  // IS DONE. Forces the parent_alerts query to be treated as failed, with no
-  // network tampering needed:
-  //   window.__debugForceParentAlertsFailure = true    // next dashboard load fails this query
-  //   window.__debugForceParentAlertsFailure = false   // back to normal
-  // parent_alerts is the exact query whose silent failure caused the
-  // original false "All looking good" bug - forcing it here reproduces
-  // that scenario on demand so the parentDataError warning can be verified.
-  // ==========================================================================
-  if (window.__debugForceParentAlertsFailure) {
-    alertsRes.error = new Error("Debug: forced parent_alerts failure for M6 testing");
-    alertsRes.data = null;
-  }
-
   recordLoadError("learners", learnersRes.error);
   recordLoadError("profiles", profilesRes.error);
   recordLoadError("parent_alerts", alertsRes.error);
