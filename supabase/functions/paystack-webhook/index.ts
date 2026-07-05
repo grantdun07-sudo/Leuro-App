@@ -45,8 +45,22 @@
 // documented shape — flagged so the first real occurrence can correct it):
 //   - invoice.payment_failed's exact field path for customer_code.
 //   - subscription.disable / subscription.not_renew's exact payload shape.
-//   Both paths log the full raw event JSON on first arrival and fail safe
+//   - refund.processed's exact payload shape (Paystack's docs site could not
+//     be fetched to confirm the exact JSON - only the event names and
+//     lifecycle were verified via search). Tries several reasonable field
+//     paths for the refunded transaction's reference/customer_code.
+//   All three log the full raw event JSON on first arrival and fail safe
 //   (log + return 200) rather than throwing if the assumed shape is wrong.
+//
+// Refunds — confirmed event lifecycle: refund.pending → refund.processing →
+// refund.processed (success) OR refund.failed. We deliberately act ONLY on
+// refund.processed: per Paystack's own docs, a pending/processing refund can
+// still fail, in which case the refunded transaction reverts to its
+// original "success" status — reacting on .pending would risk prematurely
+// downgrading a learner whose refund then doesn't go through. .pending/
+// .processing/.failed are explicitly logged as intentional no-ops (not
+// silently dropped into "unhandled event type") so this reads as a decision,
+// not a gap.
 //
 // Referral codes / subscription_discounts: the old discount-validation block
 // is removed. Paystack Plans have fixed prices, so mid-charge discounting no
@@ -61,6 +75,9 @@
 //        invoice.payment_failed    → mark past_due
 //        subscription.disable      → mark cancelled, tier → free
 //        subscription.not_renew    → mark cancelled, tier → free
+//        refund.processed          → mark cancelled, tier → free, audit trail
+//        refund.pending/processing → log only, intentionally no-op (see above)
+//        refund.failed             → log only, intentionally no-op (see above)
 //        anything else             → log + ignore
 //   3. Always return 200 OK except on bad signature (Paystack retries on
 //      non-2xx, so a processing error must never cause a retry storm).
@@ -673,6 +690,123 @@ async function handleSubscriptionCancelled(data: Record<string, unknown>, event:
   console.log(`paystack-webhook: ${eventType} — cancelled learner`, learner.id, `(matched via ${pathUsed})`);
 }
 
+// ---------------------------------------------------------------------------
+// refund.processed — payload shape NOT yet confirmed from real logs (see
+// header comment). Lookup priority, most-precise first:
+//   1. A LEURO- reference on the refunded transaction, if present - maps
+//      straight to a single learner_id, same as an initial charge.
+//   2. subscription_code, then customer_code - same fallback chain as
+//      charge.success's renewal branch, INCLUDING its ambiguity refusal
+//      (a customer_code match against more than one learner is refused, not
+//      guessed). This is stricter than handleSubscriptionCancelled's own
+//      customer_code lookup just above (which doesn't check for ambiguity) -
+//      deliberately so, since a refund reverses real paid access and a wrong
+//      guess here is exactly as costly as a wrong guess activating premium.
+// Only refund.processed calls this - refund.pending/processing/failed are
+// intentional no-ops, handled in the dispatcher below.
+// ---------------------------------------------------------------------------
+async function handleRefundProcessed(data: Record<string, unknown>, event: unknown): Promise<void> {
+  console.log("paystack-webhook: refund.processed RAW:", JSON.stringify(event));
+
+  // Paystack's Refund API object nests the original transaction under
+  // data.transaction in its REST responses - tried first, with a couple of
+  // reasonable fallbacks in case the webhook payload shape differs.
+  const transaction = data.transaction as Record<string, unknown> | undefined;
+  const reference =
+    (transaction?.reference as string) ??
+    (data.reference as string) ??
+    (data.transaction_reference as string) ??
+    null;
+
+  const transactionCustomer = transaction?.customer as Record<string, unknown> | undefined;
+  const directCustomer = data.customer as Record<string, unknown> | undefined;
+  const customerCode =
+    (transactionCustomer?.customer_code as string) ??
+    (directCustomer?.customer_code as string) ??
+    null;
+  const subscriptionCode = (data.subscription_code as string) ?? null;
+
+  const refundAmountRand = Number(data.amount ?? transaction?.amount ?? 0) / 100;
+
+  let learner: Learner | null = null;
+  let pathUsed = "none";
+
+  const learnerIdFromRef = reference ? parseLeuroReference(reference) : null;
+  if (learnerIdFromRef) {
+    const { data: learnerRow, error } = await supabase
+      .from("learners")
+      .select("id, user_id, subscription_tier, full_name")
+      .eq("id", learnerIdFromRef)
+      .maybeSingle();
+    if (!error && learnerRow) {
+      learner = learnerRow as Learner;
+      pathUsed = "reference";
+    } else {
+      console.error(
+        "paystack-webhook: refund.processed — reference parsed but learner not found:",
+        learnerIdFromRef, error?.message,
+      );
+    }
+  }
+
+  if (!learner && subscriptionCode) {
+    learner = await findLearnerBySubscriptionCode(subscriptionCode);
+    if (learner) pathUsed = "subscription_code";
+  }
+
+  if (!learner && customerCode) {
+    const matches = await findLearnersByCustomerCode(customerCode);
+    if (matches.length === 1) {
+      learner = matches[0];
+      pathUsed = "paystack_customer_code (single match)";
+    } else if (matches.length > 1) {
+      console.error(
+        "paystack-webhook: refund.processed — AMBIGUOUS: customer_code", customerCode,
+        "matches", matches.length, "learners (ids:", matches.map((m) => m.id).join(", "),
+        ") and no reference/subscription_code to disambiguate. Refusing to guess — no write performed. Raw event:",
+        JSON.stringify(event),
+      );
+      return;
+    }
+  }
+
+  if (!learner) {
+    console.error(
+      "paystack-webhook: refund.processed — could not resolve a learner via reference, subscription_code, or customer_code. Raw event:",
+      JSON.stringify(event),
+    );
+    return;
+  }
+
+  console.log("paystack-webhook: refund.processed — resolved via:", pathUsed, "| learner:", learner.id);
+
+  const tierFrom = learner.subscription_tier;
+
+  await updateLearner(learner.id, { subscription_status: "cancelled", subscription_tier: "free" });
+
+  // Recorded as a NEGATIVE amount so a scan of subscription_history can tell
+  // a refund reversal apart from a real charge at a glance. source stays
+  // 'paystack' - this is a real Paystack-originated event, not a different
+  // billing provider.
+  await insertSubscriptionHistory({
+    userId: learner.user_id,
+    learnerId: learner.id,
+    tierFrom,
+    tierTo: "free",
+    amountPaid: -Math.abs(refundAmountRand),
+    paymentRef: reference,
+  });
+
+  const learnerName = learner.full_name || "your child";
+  await notifyParentsDirectly(
+    learner.id,
+    "payment_refunded",
+    `A payment for ${learnerName} was refunded, and their plan has been reverted to Free.`,
+  );
+
+  console.log(`paystack-webhook: refund.processed — reverted learner ${learner.id} to free (matched via ${pathUsed})`);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -710,6 +844,20 @@ Deno.serve(async (req: Request) => {
       case "subscription.disable":
       case "subscription.not_renew":
         await handleSubscriptionCancelled(data, event, eventType);
+        break;
+      case "refund.processed":
+        await handleRefundProcessed(data, event);
+        break;
+      case "refund.pending":
+      case "refund.processing":
+        console.log(
+          `paystack-webhook: ${eventType} — intentional no-op (refund not yet finalized, could still fail and revert)`,
+        );
+        break;
+      case "refund.failed":
+        console.log(
+          "paystack-webhook: refund.failed — intentional no-op (refund did not go through; the original charge stands, and we never acted on refund.pending, so there is nothing to reverse)",
+        );
         break;
       default:
         console.log("paystack-webhook: unhandled event type:", eventType);
