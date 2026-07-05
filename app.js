@@ -4243,19 +4243,7 @@ async function openTopicSession(topicId) {
   await runSessionPhase("explain");
 }
 
-// ============================================================================
-// TEMPORARY TEST HOOK (M2 verification) - DELETE THIS BLOCK ONCE M2 TESTING
-// IS DONE. Lets "complete" phase calls be forced to fail on demand from the
-// browser console, with no network tampering needed:
-//   window.__debugForceCompleteFailure = true    // next Finish Topic call fails
-//   window.__debugForceCompleteFailure = false   // back to normal, Retry succeeds
-// Only affects the "complete" phase - every other call (explain/example/
-// attempt/chat/studyguide/refresher) is untouched regardless of the flag.
-// ============================================================================
 async function callStudyGuideApi(payload) {
-  if (window.__debugForceCompleteFailure && payload.phase === "complete") {
-    throw new Error("Debug: forced complete-phase failure for M2 testing");
-  }
   const res = await fetchWithTimeout(`${FN_URL}/generate-study-guide`, {
     method: "POST",
     headers: {
