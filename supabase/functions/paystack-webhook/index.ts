@@ -52,6 +52,15 @@
 //   All three log the full raw event JSON on first arrival and fail safe
 //   (log + return 200) rather than throwing if the assumed shape is wrong.
 //
+// subscription.not_renew vs subscription.disable — these are NOT the same
+// thing and must not be handled identically. not_renew means the learner
+// cancelled future billing but has ALREADY PAID for the current period —
+// cancel-child-subscription promises the parent "access continues until the
+// current billing period ends," so this must NOT touch tier/status (only
+// logs + an optional zero-change subscription_history row as a paper
+// trail). disable means paid access has actually ended — that is the one
+// that downgrades tier → free.
+//
 // Refunds — confirmed event lifecycle: refund.pending → refund.processing →
 // refund.processed (success) OR refund.failed. We deliberately act ONLY on
 // refund.processed: per Paystack's own docs, a pending/processing refund can
@@ -74,7 +83,8 @@
 //        subscription.create       → log + best-effort enrichment (no-op safe)
 //        invoice.payment_failed    → mark past_due
 //        subscription.disable      → mark cancelled, tier → free
-//        subscription.not_renew    → mark cancelled, tier → free
+//        subscription.not_renew    → log only, NOT a downgrade (access
+//                                    continues until next_payment_date)
 //        refund.processed          → mark cancelled, tier → free, audit trail
 //        refund.pending/processing → log only, intentionally no-op (see above)
 //        refund.failed             → log only, intentionally no-op (see above)
@@ -632,18 +642,19 @@ async function handleInvoicePaymentFailed(data: Record<string, unknown>, event: 
 }
 
 // ---------------------------------------------------------------------------
-// subscription.disable / subscription.not_renew — payload shape NOT yet
-// confirmed from real logs. Looks up primarily via paystack_customer_code
-// (the field proven reliably present on every event so far), falling back
-// to subscription_code only if that lookup finds nothing — subscription_code
-// is usually null on our learner rows since subscription.create (the only
-// event that backfills it) doesn't reliably arrive. Relying on
-// subscription_code as the primary key would silently fail to cancel a real
-// subscription, leaving the learner marked as a paid tier indefinitely.
+// Shared lookup for subscription.not_renew / subscription.disable — payload
+// shape NOT yet confirmed from real logs. Looks up primarily via
+// paystack_customer_code (the field proven reliably present on every event
+// so far), falling back to subscription_code only if that lookup finds
+// nothing — subscription_code is usually null on our learner rows since
+// subscription.create (the only event that backfills it) doesn't reliably
+// arrive. Relying on subscription_code as the primary key would silently
+// fail to resolve a real subscription, leaving the event unactionable.
 // ---------------------------------------------------------------------------
-async function handleSubscriptionCancelled(data: Record<string, unknown>, event: unknown, eventType: string): Promise<void> {
-  console.log(`paystack-webhook: ${eventType} event:`, JSON.stringify(event));
-
+async function resolveLearnerForSubscriptionEvent(
+  data: Record<string, unknown>,
+  eventType: string,
+): Promise<{ learner: Learner | null; pathUsed: string; subscriptionCode: string | null }> {
   const customer = data.customer as Record<string, unknown> | undefined;
   const customerCode = (customer?.customer_code as string) ?? null;
   const subscriptionCode = (data.subscription_code as string) ?? null;
@@ -666,9 +677,58 @@ async function handleSubscriptionCancelled(data: Record<string, unknown>, event:
     "| customer_code:", customerCode, "| subscription_code:", subscriptionCode,
   );
 
+  return { learner, pathUsed, subscriptionCode };
+}
+
+// ---------------------------------------------------------------------------
+// subscription.not_renew — the learner cancelled future billing but has
+// ALREADY PAID for the current period. cancel-child-subscription's own
+// success message promises the parent "access continues until the current
+// billing period ends" — so this must NOT touch subscription_status /
+// subscription_tier. Records a zero-change subscription_history row
+// (tier_from === tier_to, amount_paid 0) purely as a paper trail that
+// non-renewal was requested, without representing any actual downgrade.
+// ---------------------------------------------------------------------------
+async function handleSubscriptionNotRenew(data: Record<string, unknown>, event: unknown): Promise<void> {
+  console.log("paystack-webhook: subscription.not_renew event:", JSON.stringify(event));
+
+  const { learner, pathUsed } = await resolveLearnerForSubscriptionEvent(data, "subscription.not_renew");
+
   if (!learner) {
     console.error(
-      `paystack-webhook: ${eventType} — no learner found via customer_code or subscription_code. Raw event:`,
+      "paystack-webhook: subscription.not_renew — no learner found via customer_code or subscription_code. Raw event:",
+      JSON.stringify(event),
+    );
+    return;
+  }
+
+  console.log(
+    `paystack-webhook: subscription.not_renew — learner ${learner.id} will not renew; tier/status left untouched, access continues until next_payment_date (matched via ${pathUsed})`,
+  );
+
+  await insertSubscriptionHistory({
+    userId: learner.user_id,
+    learnerId: learner.id,
+    tierFrom: learner.subscription_tier,
+    tierTo: learner.subscription_tier,
+    amountPaid: 0,
+    paymentRef: null,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// subscription.disable — the actual end of paid access (final, no further
+// grace period). This is the only one of the pair that downgrades the
+// learner: subscription_status → cancelled, subscription_tier → free.
+// ---------------------------------------------------------------------------
+async function handleSubscriptionDisable(data: Record<string, unknown>, event: unknown): Promise<void> {
+  console.log("paystack-webhook: subscription.disable event:", JSON.stringify(event));
+
+  const { learner, pathUsed } = await resolveLearnerForSubscriptionEvent(data, "subscription.disable");
+
+  if (!learner) {
+    console.error(
+      "paystack-webhook: subscription.disable — no learner found via customer_code or subscription_code. Raw event:",
       JSON.stringify(event),
     );
     return;
@@ -687,7 +747,7 @@ async function handleSubscriptionCancelled(data: Record<string, unknown>, event:
     paymentRef: null,
   });
 
-  console.log(`paystack-webhook: ${eventType} — cancelled learner`, learner.id, `(matched via ${pathUsed})`);
+  console.log(`paystack-webhook: subscription.disable — cancelled learner`, learner.id, `(matched via ${pathUsed})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -698,8 +758,8 @@ async function handleSubscriptionCancelled(data: Record<string, unknown>, event:
 //   2. subscription_code, then customer_code - same fallback chain as
 //      charge.success's renewal branch, INCLUDING its ambiguity refusal
 //      (a customer_code match against more than one learner is refused, not
-//      guessed). This is stricter than handleSubscriptionCancelled's own
-//      customer_code lookup just above (which doesn't check for ambiguity) -
+//      guessed). This is stricter than resolveLearnerForSubscriptionEvent's
+//      own customer_code lookup just above (which doesn't check for ambiguity) -
 //      deliberately so, since a refund reverses real paid access and a wrong
 //      guess here is exactly as costly as a wrong guess activating premium.
 // Only refund.processed calls this - refund.pending/processing/failed are
@@ -842,8 +902,10 @@ Deno.serve(async (req: Request) => {
         await handleInvoicePaymentFailed(data, event);
         break;
       case "subscription.disable":
+        await handleSubscriptionDisable(data, event);
+        break;
       case "subscription.not_renew":
-        await handleSubscriptionCancelled(data, event, eventType);
+        await handleSubscriptionNotRenew(data, event);
         break;
       case "refund.processed":
         await handleRefundProcessed(data, event);
