@@ -13,7 +13,7 @@ const FN_URL = `${SUPABASE_URL}/functions/v1`;
 // Paystack — public key is safe to expose in the browser.
 // The secret key is stored in Supabase secrets as PAYSTACK_TEST_SECRET (never in client code).
 const PAYSTACK_CONFIG = {
-  publicKey: "pk_test_243ec9c224153ee5679f251dba0f8459772525a1",
+  publicKey: "pk_live_622e3ec771442b42b243b187be1b0e6da9528260",
 };
 
 const TIER_PRICES = { basic: 99, premium: 199 };
