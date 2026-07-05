@@ -499,7 +499,7 @@ Deno.serve(async (req: Request) => {
       );
 
       try {
-        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 1024);
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 1024, "generate-study-guide");
         const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
         const studyGuide = JSON.parse(cleaned);
         return jsonResponse({ studyGuide, tokensUsed: result.tokensUsed });
@@ -554,7 +554,7 @@ Deno.serve(async (req: Request) => {
       const maxTokens = Math.min(8192, 1024 + topicTitles.length * 1200);
 
       try {
-        const result = await callClaude(SYSTEM_PROMPT, userPrompt, maxTokens);
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, maxTokens, "generate-study-guide");
         const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
         const refresher = JSON.parse(cleaned);
         return jsonResponse({ refresher, tokensUsed: result.tokensUsed });
@@ -612,7 +612,7 @@ Deno.serve(async (req: Request) => {
       );
 
       try {
-        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 512);
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 512, "generate-study-guide");
         const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
         const feedback = JSON.parse(cleaned);
         return jsonResponse({ feedback, tokensUsed: result.tokensUsed });
@@ -730,7 +730,7 @@ Deno.serve(async (req: Request) => {
         // 1024 tokens, not 512: a question + 4 plausible distractors + an
         // explanation can exceed 512 (especially in Afrikaans, which runs
         // long) - a truncated response fails JSON.parse and 500s the loop.
-        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 1024);
+        const result = await callClaude(SYSTEM_PROMPT, userPrompt, 1024, "generate-study-guide");
         const cleaned = result.text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
         const parsed = JSON.parse(cleaned);
 
@@ -846,7 +846,7 @@ Deno.serve(async (req: Request) => {
     let responseText: string;
     let tokensUsed: number;
     try {
-      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 1024);
+      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 1024, "generate-study-guide");
       responseText = result.text;
       tokensUsed = result.tokensUsed;
     } catch (err) {

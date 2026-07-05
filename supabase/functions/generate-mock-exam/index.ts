@@ -301,7 +301,7 @@ marks).${requestedTopics.length > 0 ? " Every question must relate directly to t
 
     let responseText: string;
     try {
-      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 4096);
+      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 4096, "generate-mock-exam");
       responseText = result.text;
     } catch (err) {
       if (err instanceof ClaudeTimeoutError) {

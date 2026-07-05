@@ -176,7 +176,7 @@ The "correct_answer" value must be exactly one of "A", "B", "C" or "D".`;
 
     let responseText: string;
     try {
-      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 3072);
+      const result = await callClaude(SYSTEM_PROMPT, userPrompt, 3072, "run-diagnostic");
       responseText = result.text;
     } catch (err) {
       if (err instanceof ClaudeTimeoutError) {
