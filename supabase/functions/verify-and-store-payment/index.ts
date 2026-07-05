@@ -136,8 +136,29 @@ Deno.serve(async (req: Request) => {
     }
 
     if (learner.user_id !== callerId) {
-      console.warn("verify-and-store-payment: caller", callerId, "does not own learner", learnerId);
-      return jsonRes({ success: false, reason: "learner_not_found" }, 403);
+      // Not the learner's own account - check whether the caller is a
+      // PARENT linked to this learner instead. The only real caller of
+      // this function today is handleChildUpgrade() (parent dashboard,
+      // paying for a linked child) - the original "caller IS the learner"
+      // check alone matched the now-removed learner-self-purchase flow and
+      // would 403 every real call from the current app. Same ownership
+      // pattern as delete-child / cancel-child-subscription / acknowledge-flag.
+      const { data: parentRecord, error: parentErr } = await admin
+        .from("parents")
+        .select("linked_learners")
+        .eq("user_id", callerId)
+        .maybeSingle();
+
+      const linkedLearners: string[] = parentRecord?.linked_learners ?? [];
+      const isLinkedParent = !parentErr && linkedLearners.includes(learnerId);
+
+      if (!isLinkedParent) {
+        console.warn(
+          "verify-and-store-payment: caller", callerId, "does not own learner", learnerId,
+          "(not the learner, not a linked parent)",
+        );
+        return jsonRes({ success: false, reason: "learner_not_found" }, 403);
+      }
     }
 
     const tierFrom = learner.subscription_tier ?? null;

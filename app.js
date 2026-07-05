@@ -386,7 +386,8 @@ const translations = {
     featPremiumRefresher: "Exam Refresher",
     paymentSuccessMsg: "Payment successful! Your plan is being activated.",
     paymentCancelledMsg: "Payment cancelled.",
-    paymentVerifyingMsg: "Confirming payment…",
+    paymentVerifyingMsg: "Payment received — confirming activation...",
+    paymentVerifyFailedMsg: "Your payment went through, but we couldn't confirm activation automatically. Please contact hello@leuroai.co.za with this reference so we can activate it manually:",
     upgradeChildModalTitle: "Upgrade {name}'s Plan",
     upgradeChildIntro: "Choose a plan for {name}.",
     btnUpgrade: "Upgrade",
@@ -815,7 +816,8 @@ const translations = {
     featPremiumRefresher: "Eksamenopfrisser",
     paymentSuccessMsg: "Betaling suksesvol! Jou plan word geaktiveer.",
     paymentCancelledMsg: "Betaling gekanselleer.",
-    paymentVerifyingMsg: "Bevestig Betaling",
+    paymentVerifyingMsg: "Betaling ontvang — aktivering word bevestig...",
+    paymentVerifyFailedMsg: "Jou betaling het deurgegaan, maar ons kon nie aktivering outomaties bevestig nie. Kontak asseblief hello@leuroai.co.za met hierdie verwysing sodat ons dit self kan aktiveer:",
     upgradeChildModalTitle: "Gradeer {name} se Plan op",
     upgradeChildIntro: "Kies 'n plan vir {name}.",
     btnUpgrade: "Gradeer op",
@@ -7255,12 +7257,54 @@ function handleChildUpgrade(learnerId, tier) {
       user_id: state.user.id,
       referral_code: state.profile.referral_code_used || "",
     },
-    callback(response) {
+    // Paystack's own client-side "success" only confirms the CARD was
+    // charged - it does NOT mean our backend has recorded anything.
+    // verify-and-store-payment independently re-verifies the transaction
+    // with Paystack server-side and is the ONLY thing that actually writes
+    // learners.subscription_tier for this flow - this must be awaited
+    // before telling the parent anything is done. Showing "success" here
+    // without that call was the exact bug that let a real R199 payment go
+    // through on Paystack's side while the app kept showing Free tier
+    // indefinitely (paystack-webhook is the second, independent path -
+    // this is not meant to replace it, only to stop depending on it alone).
+    async callback(response) {
       console.log("[SUBSCRIBE] popup succeeded, ref:", response?.reference);
-      showToast(t("paymentSuccessMsg"), "success");
       state.childUpgradeModalOpen = false;
       state.upgradeTargetLearnerId = null;
+      showToast(t("paymentVerifyingMsg"), "info");
       render();
+
+      try {
+        const { data: sess } = await sbClient.auth.getSession();
+        const token = sess?.session?.access_token;
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/verify-and-store-payment`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            apikey: SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ reference: response.reference }),
+        });
+        const result = await res.json();
+
+        if (result.success) {
+          showToast(t("paymentSuccessMsg"), "success");
+          await loadParentData();
+          render();
+        } else {
+          // The card WAS charged (Paystack's own popup just confirmed it) -
+          // this is never a "payment failed, please retry" case. Surface a
+          // distinct message with the reference so support can reconcile
+          // it manually, and never silently claim success when the backend
+          // didn't confirm it.
+          console.error("handleChildUpgrade: verify-and-store-payment did not succeed:", result);
+          showToast(`${t("paymentVerifyFailedMsg")} ${response.reference}`, "error");
+        }
+      } catch (e) {
+        console.error("handleChildUpgrade: verify-and-store-payment call threw:", e);
+        showToast(`${t("paymentVerifyFailedMsg")} ${response.reference}`, "error");
+      }
     },
     onClose() {
       showToast(t("paymentCancelledMsg"), "info");
