@@ -339,6 +339,18 @@ create index if not exists idx_content_flags_learner_id on public.content_flags(
 create index if not exists idx_content_flags_user_id on public.content_flags(user_id);
 create index if not exists idx_content_flags_created_at on public.content_flags(created_at);
 
+-- Migration: index on content_flags.flagged_at (pre-launch capacity audit).
+-- Two real query sites order by flagged_at with NO matching index today:
+--   1. acknowledge-flag (parent's "reactivate a frozen account" action) -
+--      safety-critical, parent-facing.
+--   2. admin_get_all_flags() (admin dashboard Flags tab).
+-- Only created_at was ever indexed - a different column - so both queries
+-- fall back to a sequential scan + in-memory sort. See the code-evidence
+-- note below on why flagged_at/created_at appear to be redundant duplicate
+-- columns, kept as-is here (index added, schema NOT changed, per explicit
+-- instruction not to touch the columns themselves).
+create index if not exists idx_content_flags_flagged_at on public.content_flags(flagged_at desc);
+
 -- ---------------------------------------------------------------------
 -- FUNCTIONS & TRIGGERS
 -- ---------------------------------------------------------------------

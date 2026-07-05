@@ -55,7 +55,20 @@ async function callClaude(system: string, prompt: string, maxTokens: number): Pr
       body: JSON.stringify({
         model: MODEL,
         max_tokens: maxTokens,
-        system,
+        // Cache the system prompt (ephemeral, ~5min TTL) - brings this
+        // function's own local callClaude() in line with the shared
+        // _shared/anthropic.ts helper used by generate-study-guide/
+        // generate-mock-exam/run-diagnostic, which already do this. system
+        // must be an array of content blocks (not a bare string) for
+        // cache_control to apply - a plain string field is silently ignored
+        // by the API (no error, just no caching).
+        system: [
+          {
+            type: "text",
+            text: system,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
         messages: [{ role: "user", content: prompt }],
       }),
       signal: controller.signal,
@@ -72,6 +85,13 @@ async function callClaude(system: string, prompt: string, maxTokens: number): Pr
   }
 
   const data = await res.json();
+  // Logged so cache behaviour can be verified from real Supabase Edge
+  // Function logs after deploy: cache_creation_input_tokens > 0 on the
+  // FIRST call (writing the cache), cache_read_input_tokens > 0 on
+  // subsequent calls within the ~5min TTL (reading it back). Both fields
+  // are 0/absent if caching isn't actually being applied - this is the
+  // real evidence, not a code-review assumption.
+  console.log("generate-flashcards: Anthropic usage:", JSON.stringify(data.usage));
   return data.content[0].text;
 }
 
