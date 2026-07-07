@@ -137,6 +137,8 @@ const translations = {
     gradeLabel: "Grade",
     levelLabel: "Level",
     sessionsToday: "Sessions today",
+    sessionsThisWeek: "Sessions this week",
+    focusThisWeekHeading: "Suggested focus this week",
     unlimitedSessions: "Unlimited sessions",
     addTopicPlaceholder: "Add a topic you want to study...",
     btnAdd: "Add",
@@ -567,6 +569,8 @@ const translations = {
     gradeLabel: "Graad",
     levelLabel: "Vlak",
     sessionsToday: "Sessies vandag",
+    sessionsThisWeek: "Sessies hierdie week",
+    focusThisWeekHeading: "Voorgestelde fokus hierdie week",
     unlimitedSessions: "Onbeperkte sessies",
     addTopicPlaceholder: "Voeg 'n onderwerp by om te bestudeer...",
     btnAdd: "Voeg by",
@@ -953,6 +957,7 @@ const state = {
   exams: [],
   savedGuides: [],
   sessionsToday: 0,
+  sessionsThisWeek: 0,
   currentTab: "home",
   lang: "en",
   loading: true,
@@ -1673,7 +1678,7 @@ async function loadUserData() {
     state.learner = learner;
     if (!["home", "learn", "study", "account"].includes(state.currentTab)) state.currentTab = "home";
 
-    await Promise.all([loadSubjects(), loadTopics(), loadExams(), loadSessionsToday(), loadSavedGuides(), loadLearnerSubjects()]);
+    await Promise.all([loadSubjects(), loadTopics(), loadExams(), loadSessionsToday(), loadSessionsThisWeek(), loadSavedGuides(), loadLearnerSubjects()]);
   } else if (profile.role === "parent") {
     if (!["home", "activity", "goals", "account"].includes(state.currentTab)) state.currentTab = "home";
     await loadParentData();
@@ -1750,6 +1755,28 @@ async function loadSessionsToday() {
     .gte("created_at", startOfDay.toISOString());
   if (error) throw error;
   state.sessionsToday = count || 0;
+}
+
+// Weekly goal progress for the learner home ring, counted against the
+// parent-set weekly_session_target. Separate from loadSessionsToday (which
+// still drives the free-tier daily cap) — this is a goal counter, not a
+// throttle. Week starts Monday 00:00 local, matching the "this week" framing
+// of the parent Goals tab.
+async function loadSessionsThisWeek() {
+  if (!state.learner) return;
+  const startOfWeek = new Date();
+  startOfWeek.setHours(0, 0, 0, 0);
+  // getDay(): 0=Sun..6=Sat. Shift back to the most recent Monday.
+  const daysSinceMonday = (startOfWeek.getDay() + 6) % 7;
+  startOfWeek.setDate(startOfWeek.getDate() - daysSinceMonday);
+  const { count, error } = await sbClient
+    .from("study_sessions")
+    .select("id", { count: "exact", head: true })
+    .eq("learner_id", state.learner.id)
+    .eq("phase", "explain")
+    .gte("created_at", startOfWeek.toISOString());
+  if (error) throw error;
+  state.sessionsThisWeek = count || 0;
 }
 
 async function loadParentData() {
@@ -4019,10 +4046,23 @@ function renderHomeTab() {
   const greetingKey = hour < 12 ? "greetingMorning" : hour < 18 ? "greetingAfternoon" : "greetingEvening";
 
   const streakDays = learner.streak_days || 0;
-  const sessionsToday = state.sessionsToday || 0;
-  const sessionsPct = Math.min(100, Math.round((sessionsToday / 3) * 100));
+
+  // Weekly goal ring — counts against the parent-set weekly_session_target
+  // (Parent Dashboard > Goals). Falls back to 3 when unset, matching the
+  // column's own default. This is the learner-facing reflection of the
+  // parent's "sessions per week" goal; the free-tier daily cap is a separate
+  // counter (state.sessionsToday) and is unaffected.
+  const weeklyTarget = learner.weekly_session_target || 3;
+  const sessionsThisWeek = state.sessionsThisWeek || 0;
+  const weeklyPct = Math.min(100, Math.round((sessionsThisWeek / weeklyTarget) * 100));
 
   const subjectMap = Object.fromEntries(state.subjects.map((s) => [s.id, subjectLabel(s)]));
+
+  // Parent-suggested focus subjects (Parent Dashboard > Goals). Mapped to
+  // display names and filtered to subjects that still exist in state.subjects.
+  const focusSubjectNames = (learner.focus_subjects || [])
+    .map((id) => subjectMap[id])
+    .filter(Boolean);
   const studiedTopics = state.topics.filter((tp) => tp.last_studied);
   const continueTopic = studiedTopics.length
     ? studiedTopics.reduce((a, b) => (new Date(a.last_studied) > new Date(b.last_studied) ? a : b))
@@ -4043,11 +4083,22 @@ function renderHomeTab() {
 
     <div class="card">
       <div class="sessions-today-row">
-        <span>${t("sessionsToday")}</span>
-        <span class="sessions-today-count">${sessionsToday}/3</span>
+        <span>${t("sessionsThisWeek")}</span>
+        <span class="sessions-today-count">${sessionsThisWeek}/${weeklyTarget}</span>
       </div>
-      <div class="progress-bar"><div class="progress-bar-fill progress-bar-fill-purple" style="width:${sessionsPct}%"></div></div>
+      <div class="progress-bar"><div class="progress-bar-fill progress-bar-fill-purple" style="width:${weeklyPct}%"></div></div>
     </div>
+
+    ${
+      focusSubjectNames.length
+        ? `<div class="card">
+             <div class="section-title" style="margin-top:0;">🎯 ${t("focusThisWeekHeading")}</div>
+             <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
+               ${focusSubjectNames.map((n) => `<span class="topic-chip selected">${escapeHtml(n)}</span>`).join("")}
+             </div>
+           </div>`
+        : ""
+    }
 
     <div class="quick-actions">
       <button class="quick-action-card" data-action="switch-tab" data-tab="learn">
@@ -4496,7 +4547,7 @@ async function finalizeStructuredSession() {
   const previousSessionsCompleted = state.learner.sessions_completed || 0;
 
   try {
-    await Promise.all([loadTopics(), loadSessionsToday(), reloadLearner()]);
+    await Promise.all([loadTopics(), loadSessionsToday(), loadSessionsThisWeek(), reloadLearner()]);
   } catch (err) {
     console.error("Failed to refresh data after session", err);
     showToast(t("errorGeneric"), "error");
@@ -4524,7 +4575,7 @@ async function finalizeStructuredSession() {
 async function sessionClose() {
   state.activeSession = null;
   try {
-    await loadSessionsToday();
+    await Promise.all([loadSessionsToday(), loadSessionsThisWeek()]);
   } catch (err) {
     console.error("Failed to refresh session count", err);
     showToast(t("errorGeneric"), "error");
