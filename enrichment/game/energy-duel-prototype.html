@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Energy Duel — Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --dark:#180F2A;
+    --purple:#5A3E76;
+    --gold:#E6B347;
+    --off:#F9F9F7;
+    --energy:#37E8C9;
+    --danger:#E6748A;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--dark);
+    font-family:'Outfit',system-ui,sans-serif;
+    overflow:hidden;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #game-root{
+    position:relative;
+    width:100%;
+    height:100vh;
+    max-width:520px;
+    margin:0 auto;
+    background:var(--dark);
+  }
+  #stage{ display:block; width:100%; height:100%; }
+
+  .hud{
+    position:absolute; top:0; left:0; right:0;
+    padding:14px 16px 10px;
+    display:flex; align-items:center; justify-content:space-between;
+    z-index:10; pointer-events:none;
+  }
+  .hud-title{
+    font-family:'Cormorant Garamond',serif; font-weight:700;
+    font-size:15px; letter-spacing:0.08em; text-transform:uppercase;
+    color:var(--off); opacity:0.85;
+  }
+  .hud-title small{
+    display:block; font-family:'Outfit',sans-serif; font-weight:500;
+    font-size:11px; letter-spacing:0.04em; text-transform:none;
+    color:var(--gold); margin-top:2px;
+  }
+  .exit-btn{
+    pointer-events:auto;
+    background:rgba(249,249,247,0.08);
+    border:1px solid rgba(249,249,247,0.18);
+    color:var(--off); font-family:'Outfit',sans-serif; font-size:11px; font-weight:600;
+    letter-spacing:0.04em; padding:7px 12px; border-radius:999px; cursor:pointer;
+  }
+
+  .healthwrap{ position:absolute; top:62px; left:16px; right:16px; z-index:10; }
+  .healthlabel{
+    display:flex; justify-content:space-between; font-size:10px;
+    letter-spacing:0.08em; text-transform:uppercase; color:rgba(249,249,247,0.55);
+    margin-bottom:5px; font-weight:600;
+  }
+  .healthbar-outer{
+    height:14px; background:rgba(0,0,0,0.35); border-radius:7px; padding:2px;
+    display:flex; gap:2px; border:1px solid rgba(249,249,247,0.12);
+  }
+  .tick{ flex:1; border-radius:3px; background:rgba(249,249,247,0.08); transition:background 0.25s ease; }
+  .tick.on{ background: linear-gradient(180deg, #F0C670, var(--gold)); }
+
+  .qcard{
+    position:absolute; left:0; right:0; bottom:0;
+    padding:16px 16px 22px;
+    background:linear-gradient(180deg, rgba(24,15,42,0) 0%, rgba(24,15,42,0.92) 22%, var(--dark) 55%);
+    z-index:10; transition:transform 0.35s ease, opacity 0.35s ease;
+  }
+  .qcard.hidden{ transform:translateY(30px); opacity:0; pointer-events:none; }
+
+  .qmeta{ font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--gold); font-weight:600; margin-bottom:8px; }
+  .qtext{ font-family:'Cormorant Garamond',serif; font-weight:600; font-size:22px; line-height:1.25; color:var(--off); margin-bottom:14px; }
+  .options{ display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+  .opt{
+    background:rgba(249,249,247,0.06); border:1px solid rgba(249,249,247,0.18);
+    color:var(--off); font-family:'Outfit',sans-serif; font-weight:600; font-size:14px;
+    padding:14px 10px; border-radius:12px; cursor:pointer; text-align:center;
+    transition:background 0.15s ease, transform 0.1s ease, border-color 0.15s ease;
+  }
+  .opt:active{ transform:scale(0.97); }
+  .opt.disabled{ pointer-events:none; opacity:0.5; }
+  .opt.chosen{ background:rgba(55,232,201,0.16); border-color:var(--energy); }
+
+  .overlay{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:32px; z-index:20;
+    background:radial-gradient(ellipse at 50% 30%, rgba(90,62,118,0.55), var(--dark) 70%);
+    opacity:0; pointer-events:none; transition:opacity 0.4s ease;
+  }
+  .overlay.show{ opacity:1; pointer-events:auto; }
+
+  .eyebrow{ font-size:11px; letter-spacing:0.12em; text-transform:uppercase; color:var(--gold); font-weight:700; margin-bottom:10px; }
+  .headline{ font-family:'Cormorant Garamond',serif; font-weight:700; font-size:34px; color:var(--off); margin:0 0 8px; line-height:1.1; }
+  .sub{ font-size:14px; color:rgba(249,249,247,0.7); margin-bottom:26px; max-width:320px; line-height:1.5; }
+  .scorepill{ font-family:'Cormorant Garamond',serif; font-weight:700; font-size:44px; color:var(--energy); margin-bottom:4px; }
+  .scorepill.fail{ color:var(--danger); }
+  .scoresub{ font-size:12px; color:rgba(249,249,247,0.55); margin-bottom:26px; letter-spacing:0.03em; }
+  .btn{
+    font-family:'Outfit',sans-serif; font-weight:700; font-size:14px; letter-spacing:0.02em;
+    padding:15px 34px; border-radius:999px; border:none; cursor:pointer;
+    background:var(--gold); color:var(--dark); margin-bottom:10px; width:100%; max-width:260px;
+  }
+  .btn.secondary{ background:transparent; color:var(--off); border:1px solid rgba(249,249,247,0.3); }
+
+  .mapwrap{ display:flex; flex-direction:column; gap:8px; width:100%; max-width:280px; margin-bottom:24px; }
+  .mapnode{ display:flex; align-items:center; gap:12px; background:rgba(249,249,247,0.05); border:1px solid rgba(249,249,247,0.1); border-radius:12px; padding:10px 14px; text-align:left; }
+  .mapnode.done{ border-color:var(--energy); background:rgba(55,232,201,0.08); }
+  .mapnode.current{ border-color:var(--gold); background:rgba(230,179,71,0.1); }
+  .mapdot{ width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; background:rgba(249,249,247,0.1); color:rgba(249,249,247,0.5); flex-shrink:0; }
+  .mapnode.done .mapdot{ background:var(--energy); color:var(--dark); }
+  .mapnode.current .mapdot{ background:var(--gold); color:var(--dark); }
+  .maplabel{ font-size:13px; font-weight:600; color:var(--off); }
+  .maplabel small{ display:block; font-size:10px; font-weight:500; color:rgba(249,249,247,0.45); margin-top:1px; }
+
+  .noscript-fallback{
+    position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    color:var(--off); text-align:center; padding:40px; font-size:14px;
+  }
+</style>
+</head>
+<body>
+
+<div id="game-root">
+  <canvas id="stage"></canvas>
+
+  <div class="hud">
+    <div class="hud-title">Length<small id="hud-sub">Sub-level 1.1</small></div>
+    <button class="exit-btn" id="exit-btn">Exit</button>
+  </div>
+
+  <div class="healthwrap">
+    <div class="healthlabel"><span>Guardian</span><span id="health-pct">100%</span></div>
+    <div class="healthbar-outer" id="healthbar"></div>
+  </div>
+
+  <div class="qcard hidden" id="qcard">
+    <div class="qmeta" id="qmeta">Question 1 of 5</div>
+    <div class="qtext" id="qtext">Loading…</div>
+    <div class="options" id="options"></div>
+  </div>
+
+  <div class="overlay show" id="overlay-start">
+    <div class="eyebrow">Maths · Length</div>
+    <h1 class="headline">The Guardian<br>Awaits</h1>
+    <p class="sub">Answer 10 questions. Score 75% or higher to make the Guardian step aside.</p>
+    <button class="btn" id="start-btn">Enter the Duel</button>
+  </div>
+
+  <div class="overlay" id="overlay-win">
+    <div class="eyebrow">Guardian Bows</div>
+    <div class="scorepill" id="win-score">80%</div>
+    <div class="scoresub">Level 1.1 complete</div>
+    <div class="mapwrap" id="mapwrap"></div>
+    <button class="btn" id="continue-btn">Continue to 1.2</button>
+    <button class="btn secondary" id="exit-btn-2">Exit</button>
+  </div>
+
+  <div class="overlay" id="overlay-lose">
+    <div class="eyebrow">Guardian Blocks the Way</div>
+    <div class="scorepill fail" id="lose-score">60%</div>
+    <div class="scoresub">You needed 75% to pass</div>
+    <button class="btn" id="retry-btn">Try Again</button>
+    <button class="btn secondary" id="exit-btn-3">Exit</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- Dummy question pool (Length, placeholder content — 30 questions to match locked pool size) ----------
+  var POOL = [
+    { q: "Which unit would you use to measure the length of a classroom?", opts: ["Millimetres","Metres","Kilometres","Litres"], correct: 1 },
+    { q: "Convert 4500 m to km.", opts: ["4.5 km","45 km","0.45 km","450 km"], correct: 0 },
+    { q: "Which instrument best measures a long distance across a field?", opts: ["Ruler","Tape measure","Trundle wheel","Metre stick"], correct: 2 },
+    { q: "How many millimetres are in 1 centimetre?", opts: ["10","100","1","1000"], correct: 0 },
+    { q: "A pencil is about 15 what?", opts: ["Metres","Kilometres","Centimetres","Millilitres"], correct: 2 },
+    { q: "Convert 2.5 km to metres.", opts: ["25 m","250 m","2500 m","25000 m"], correct: 2 },
+    { q: "Which is the shortest length?", opts: ["1 m","10 cm","100 mm","1 km"], correct: 1 },
+    { q: "You measure a desk with a metre stick and get 1.2 m. What is this in cm?", opts: ["12 cm","120 cm","1200 cm","1.2 cm"], correct: 1 },
+    { q: "Which instrument would you use to measure the length of your finger?", opts: ["Trundle wheel","Tape measure","Ruler","Metre stick"], correct: 2 },
+    { q: "Convert 350 cm to metres.", opts: ["0.35 m","3.5 m","35 m","3500 m"], correct: 1 },
+    { q: "How many centimetres are in 1 metre?", opts: ["10","100","1000","10000"], correct: 1 },
+    { q: "Which is the longest distance?", opts: ["500 m","5 km","5000 mm","50 m"], correct: 1 },
+    { q: "A soccer field is about 100 what?", opts: ["Centimetres","Millimetres","Metres","Kilometres"], correct: 2 },
+    { q: "Convert 8 km to metres.", opts: ["80 m","800 m","8000 m","80000 m"], correct: 2 },
+    { q: "Which unit is best for measuring the distance between two cities?", opts: ["Millimetres","Centimetres","Metres","Kilometres"], correct: 3 },
+    { q: "Round 3.68 m to the nearest whole metre.", opts: ["3 m","4 m","3.5 m","3.7 m"], correct: 1 },
+    { q: "Convert 90 mm to cm.", opts: ["0.9 cm","9 cm","900 cm","9000 cm"], correct: 1 },
+    { q: "Which instrument measures length using a rolling wheel?", opts: ["Ruler","Tape measure","Trundle wheel","Metre stick"], correct: 2 },
+    { q: "A book is about 25 what?", opts: ["Millimetres","Centimetres","Metres","Kilometres"], correct: 1 },
+    { q: "Convert 6.2 km to metres.", opts: ["62 m","620 m","6200 m","62000 m"], correct: 2 },
+    { q: "Two walls measure 240 cm and 3.1 m. Which is longer?", opts: ["240 cm","3.1 m","They are equal","Cannot tell"], correct: 1 },
+    { q: "How many metres are in 1 kilometre?", opts: ["10","100","1000","10000"], correct: 2 },
+    { q: "Which is the best estimate for the height of a door?", opts: ["2 m","2 cm","2 km","20 mm"], correct: 0 },
+    { q: "Convert 1.75 m to cm.", opts: ["17.5 cm","175 cm","1750 cm","0.175 cm"], correct: 1 },
+    { q: "A stapler is about 12 what?", opts: ["Metres","Kilometres","Centimetres","Millimetres"], correct: 2 },
+    { q: "Which unit would you use to measure the thickness of a coin?", opts: ["Millimetres","Centimetres","Metres","Kilometres"], correct: 0 },
+    { q: "Convert 12500 m to km.", opts: ["1.25 km","12.5 km","125 km","1250 km"], correct: 1 },
+    { q: "A rope is 4.5 m long. How many centimetres is that?", opts: ["45 cm","450 cm","4500 cm","0.45 cm"], correct: 1 },
+    { q: "Which of these lengths is the same as 500 cm?", opts: ["0.5 m","5 m","50 m","5000 m"], correct: 1 },
+    { q: "You walk 1.3 km to school. How many metres is that?", opts: ["13 m","130 m","1300 m","13000 m"], correct: 2 }
+  ];
+
+  var ROUND_SIZE = 10;
+  var PASS_THRESHOLD = 75;
+  var DAMAGE_CORRECT = 10;
+  var DAMAGE_WRONG = 2;
+  var HEALTH_SEGMENTS = 20;
+
+  var roundQuestions = [], qIndex = 0, correctCount = 0, guardianHP = 100;
+
+  function $(id){ return document.getElementById(id); }
+  var healthbar = $('healthbar'), healthPct = $('health-pct');
+  var qcard = $('qcard'), qmeta = $('qmeta'), qtext = $('qtext'), optionsEl = $('options');
+  var overlayStart = $('overlay-start'), overlayWin = $('overlay-win'), overlayLose = $('overlay-lose');
+
+  for (var i=0;i<HEALTH_SEGMENTS;i++){
+    var t = document.createElement('div');
+    t.className = 'tick on';
+    healthbar.appendChild(t);
+  }
+
+  function setHealth(pct){
+    guardianHP = Math.max(0, pct);
+    healthPct.textContent = Math.round(guardianHP) + '%';
+    var onCount = Math.round((guardianHP/100) * HEALTH_SEGMENTS);
+    var ticks = healthbar.children;
+    for (var i=0;i<ticks.length;i++){
+      ticks[i].classList.toggle('on', i < onCount);
+    }
+  }
+
+  function shuffle(arr){
+    var a = arr.slice();
+    for (var i=a.length-1;i>0;i--){
+      var j = Math.floor(Math.random()*(i+1));
+      var tmp=a[i]; a[i]=a[j]; a[j]=tmp;
+    }
+    return a;
+  }
+
+  function startRound(){
+    roundQuestions = shuffle(POOL).slice(0, ROUND_SIZE);
+    qIndex = 0; correctCount = 0;
+    setHealth(100);
+    overlayStart.classList.remove('show');
+    overlayWin.classList.remove('show');
+    overlayLose.classList.remove('show');
+    qcard.classList.remove('hidden');
+    showQuestion();
+    resetPositions();
+  }
+
+  function showQuestion(){
+    var item = roundQuestions[qIndex];
+    qmeta.textContent = 'Question ' + (qIndex+1) + ' of ' + ROUND_SIZE;
+    qtext.textContent = item.q;
+    optionsEl.innerHTML = '';
+    item.opts.forEach(function(opt, i){
+      var b = document.createElement('div');
+      b.className = 'opt';
+      b.textContent = opt;
+      b.onclick = function(){ selectAnswer(i); };
+      optionsEl.appendChild(b);
+    });
+  }
+
+  function selectAnswer(i){
+    var item = roundQuestions[qIndex];
+    var isCorrect = i === item.correct;
+    if (isCorrect) correctCount++;
+
+    var children = optionsEl.children;
+    for (var k=0;k<children.length;k++){ children[k].classList.add('disabled'); }
+    children[i].classList.add('chosen');
+
+    fireBlast(isCorrect);
+
+    var dmg = isCorrect ? DAMAGE_CORRECT : DAMAGE_WRONG;
+    setTimeout(function(){ setHealth(guardianHP - dmg); }, 350);
+
+    setTimeout(function(){
+      qIndex++;
+      if (qIndex < ROUND_SIZE){ showQuestion(); }
+      else { endRound(); }
+    }, 900);
+  }
+
+  function endRound(){
+    var pct = Math.round((correctCount/ROUND_SIZE)*100);
+    qcard.classList.add('hidden');
+    var passed = pct >= PASS_THRESHOLD;
+
+    setTimeout(function(){
+      resolveGuardian(passed);
+      setTimeout(function(){
+        if (passed){
+          $('win-score').textContent = pct + '%';
+          buildMap();
+          overlayWin.classList.add('show');
+        } else {
+          $('lose-score').textContent = pct + '%';
+          overlayLose.classList.add('show');
+        }
+      }, 700);
+    }, 300);
+  }
+
+  function buildMap(){
+    var nodes = ['1.1','1.2','1.3','1.4','1.5','1.6','Boss'];
+    var wrap = $('mapwrap');
+    wrap.innerHTML = '';
+    nodes.forEach(function(n, i){
+      var div = document.createElement('div');
+      var cls = 'mapnode', label = 'Locked';
+      if (i === 0){ cls += ' done'; label = 'Complete'; }
+      else if (i === 1){ cls += ' current'; label = 'Unlocked — play next'; }
+      div.className = cls;
+      div.innerHTML = '<div class="mapdot">' + (i===0?'✓':(n==='Boss'?'⚑':(i+1))) + '</div>' +
+        '<div class="maplabel">' + (n==='Boss' ? 'Topic Boss' : 'Sub-level ' + n) + '<small>' + label + '</small></div>';
+      wrap.appendChild(div);
+    });
+  }
+
+  $('start-btn').onclick = startRound;
+  $('retry-btn').onclick = startRound;
+  $('continue-btn').onclick = startRound; // prototype: loops back to 1.1 for repeat testing
+  [$('exit-btn'), $('exit-btn-2'), $('exit-btn-3')].forEach(function(b){
+    b.onclick = function(){
+      overlayWin.classList.remove('show');
+      overlayLose.classList.remove('show');
+      qcard.classList.add('hidden');
+      resetPositions();
+      setHealth(100);
+      overlayStart.classList.add('show');
+    };
+  });
+
+  // ---------- Canvas scene: avatar, guardian, blast effect ----------
+  var canvas = $('stage'), ctx = canvas.getContext('2d');
+  var W = 0, H = 0, DPR = Math.max(1, window.devicePixelRatio || 1);
+  var centerY = 0, avatarX = 0, guardianX = 0;
+  var t0 = performance.now();
+
+  var guardianState = { angle:0, scale:1, alpha:1, xOffset:0, targetXOffset:0 };
+  var blasts = []; // {x, fromX, toX, correct, startT, dur, phase:'travel'|'impact', impactStart}
+  var impacts = []; // {x, y, r0, alpha, correct}
+
+  function resize(){
+    var root = document.getElementById('game-root');
+    W = root.clientWidth; H = root.clientHeight;
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    centerY = H * 0.42;
+    avatarX = W * 0.24;
+    guardianX = W * 0.76;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function resetPositions(){
+    guardianState.angle = 0;
+    guardianState.scale = 1;
+    guardianState.alpha = 1;
+    guardianState.xOffset = 0;
+    guardianState.targetXOffset = 0;
+    blasts = [];
+    impacts = [];
+  }
+
+  function fireBlast(isCorrect){
+    var y = centerY + 20;
+    blasts.push({
+      startT: performance.now(),
+      dur: 320,
+      fromX: avatarX + 24,
+      toX: guardianX - 20,
+      y: y,
+      correct: isCorrect,
+      done: false
+    });
+  }
+
+  function resolveGuardian(passed){
+    if (passed){
+      guardianState._animStart = performance.now();
+      guardianState._anim = 'bow';
+    } else {
+      guardianState._animStart = performance.now();
+      guardianState._anim = 'flinch';
+    }
+  }
+
+  function easeOutCubic(x){ return 1 - Math.pow(1-x, 3); }
+  function easeInCubic(x){ return x*x*x; }
+
+  function drawGuardian(now){
+    var gy = centerY + Math.sin(now/1700) * 6;
+    var gx = guardianX + guardianState.xOffset;
+    var angle = guardianState.angle;
+    var scale = guardianState.scale;
+    var alpha = guardianState.alpha;
+
+    if (guardianState._anim === 'bow'){
+      var t = Math.min(1, (now - guardianState._animStart) / 600);
+      var e = easeOutCubic(t);
+      angle = 25 * e;
+      alpha = 1 - 0.85*e;
+    } else if (guardianState._anim === 'flinch'){
+      var t2 = (now - guardianState._animStart) / 180;
+      if (t2 < 2){
+        scale = 1 + 0.12 * Math.sin(Math.min(t2,1) * Math.PI);
+      }
+    }
+
+    // gate
+    ctx.save();
+    ctx.globalAlpha = guardianState._anim === 'bow' ? Math.max(0.05, 0.25*(1-Math.min(1,(now-guardianState._animStart)/600))) : 0.25;
+    ctx.fillStyle = '#F9F9F7';
+    ctx.fillRect(guardianX + 42, centerY - 45, 8, 90);
+    ctx.restore();
+
+    // glow
+    ctx.save();
+    ctx.globalAlpha = 0.15 * alpha;
+    ctx.fillStyle = '#E6B347';
+    ctx.beginPath();
+    ctx.arc(gx, gy, 44, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    // diamond body
+    ctx.save();
+    ctx.translate(gx, gy);
+    ctx.rotate(angle * Math.PI/180);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(0,-32); ctx.lineTo(26,0); ctx.lineTo(0,32); ctx.lineTo(-26,0);
+    ctx.closePath();
+    ctx.fillStyle = '#E6B347';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(249,249,247,0.85)';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawAvatar(now){
+    var ay = centerY + 20 + Math.sin(now/1400) * 8;
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = '#37E8C9';
+    ctx.beginPath(); ctx.arc(avatarX, ay, 34, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(avatarX, ay, 20, 0, Math.PI*2);
+    ctx.fillStyle = '#37E8C9';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(249,249,247,0.9)';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawBlasts(now){
+    for (var i=blasts.length-1; i>=0; i--){
+      var b = blasts[i];
+      var t = (now - b.startT) / b.dur;
+      if (t >= 1){
+        impacts.push({ x: b.toX, y: b.y, startT: now, correct: b.correct });
+        blasts.splice(i,1);
+        continue;
+      }
+      var e = easeInCubic(t);
+      var x = b.fromX + (b.toX - b.fromX) * e;
+      var r = b.correct ? 9 : 5;
+      ctx.save();
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = b.correct ? '#37E8C9' : '#E6748A';
+      ctx.beginPath(); ctx.arc(x, b.y, r, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function drawImpacts(now){
+    for (var i=impacts.length-1; i>=0; i--){
+      var im = impacts[i];
+      var t = (now - im.startT) / 250;
+      if (t >= 1){ impacts.splice(i,1); continue; }
+      var r = (im.correct ? 30 : 16) * (1 + 0.6*t);
+      ctx.save();
+      ctx.globalAlpha = 0.5 * (1-t);
+      ctx.fillStyle = im.correct ? '#37E8C9' : '#E6748A';
+      ctx.beginPath(); ctx.arc(im.x, im.y, r, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function loop(now){
+    ctx.clearRect(0,0,W,H);
+
+    // ambient backdrop glow
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = '#5A3E76';
+    ctx.beginPath();
+    ctx.arc(W/2, centerY, Math.min(W,H)*0.42, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    // ground line
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = '#F9F9F7';
+    ctx.fillRect(W*0.1, centerY+89, W*0.8, 2);
+    ctx.restore();
+
+    drawGuardian(now);
+    drawAvatar(now);
+    drawBlasts(now);
+    drawImpacts(now);
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // hook fireBlast/resolveGuardian/resetPositions into the game logic above
+  window.__duel_fireBlast = fireBlast;
+  window.__duel_resolveGuardian = resolveGuardian;
+  window.__duel_resetPositions = resetPositions;
+})();
+</script>
+</body>
+</html>
