@@ -234,6 +234,17 @@
         });
       }
       return res.json();
+    }).catch(function(err){
+      // No response at all surfaces as a bare "Failed to fetch" — name the
+      // likely causes instead, since opening this file straight from disk is
+      // the usual culprit.
+      if (err instanceof TypeError){
+        throw new Error('Could not reach the database at ' + SUPABASE_URL +
+          '. Check you are online. If you opened this file directly from your ' +
+          'downloads, try serving it over http://localhost instead — some ' +
+          'browsers block database calls from file:// pages.');
+      }
+      throw err;
     });
   }
 
