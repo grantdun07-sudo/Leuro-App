@@ -112,7 +112,18 @@
   }
   .btn.secondary{ background:transparent; color:var(--off); border:1px solid rgba(249,249,247,0.3); }
 
+  .field{
+    width:100%; max-width:280px; margin-bottom:10px;
+    background:rgba(249,249,247,0.06); border:1px solid rgba(249,249,247,0.22);
+    color:var(--off); font-family:'Outfit',sans-serif; font-size:14px;
+    padding:14px 16px; border-radius:12px;
+  }
+  .field::placeholder{ color:rgba(249,249,247,0.4); }
+  .formmsg{ font-size:12px; color:var(--danger); min-height:16px; margin-bottom:10px; max-width:280px; }
+
   .mapwrap{ display:flex; flex-direction:column; gap:8px; width:100%; max-width:280px; margin-bottom:24px; }
+  .mapnode.playable{ cursor:pointer; }
+  .mapnode.playable:active{ transform:scale(0.98); }
   .mapnode{ display:flex; align-items:center; gap:12px; background:rgba(249,249,247,0.05); border:1px solid rgba(249,249,247,0.1); border-radius:12px; padding:10px 14px; text-align:left; }
   .mapnode.done{ border-color:var(--energy); background:rgba(55,232,201,0.08); }
   .mapnode.current{ border-color:var(--gold); background:rgba(230,179,71,0.1); }
@@ -149,11 +160,22 @@
     <div class="options" id="options"></div>
   </div>
 
-  <div class="overlay show" id="overlay-start">
+  <div class="overlay show" id="overlay-signin">
+    <div class="eyebrow">Maths · Length</div>
+    <h1 class="headline">Who's<br>Playing?</h1>
+    <p class="sub">Sign in so your progress is saved to your own account.</p>
+    <input class="field" id="signin-email" type="email" autocomplete="username" placeholder="Email">
+    <input class="field" id="signin-password" type="password" autocomplete="current-password" placeholder="Password">
+    <div class="formmsg" id="signin-msg"></div>
+    <button class="btn" id="signin-btn">Sign In</button>
+  </div>
+
+  <div class="overlay" id="overlay-start">
     <div class="eyebrow" id="start-eyebrow">Maths · Length</div>
     <h1 class="headline">The Guardian<br>Awaits</h1>
     <p class="sub">Answer 10 questions. Score 75% or higher to make the Guardian step aside.</p>
-    <button class="btn" id="start-btn" disabled>Loading…</button>
+    <div class="mapwrap" id="start-map"></div>
+    <button class="btn" id="start-btn">Enter the Duel</button>
   </div>
 
   <div class="overlay" id="overlay-error">
@@ -175,7 +197,7 @@
   <div class="overlay" id="overlay-lose">
     <div class="eyebrow">Guardian Blocks the Way</div>
     <div class="scorepill fail" id="lose-score">60%</div>
-    <div class="scoresub">You needed 75% to pass</div>
+    <div class="scoresub" id="lose-sub">You needed 75% to pass</div>
     <button class="btn" id="retry-btn">Try Again</button>
     <button class="btn secondary" id="exit-btn-3">Exit</button>
   </div>
@@ -186,10 +208,9 @@
   "use strict";
 
   // ---------- Supabase connection ----------
-  // Publishable (anon) key — designed for client-side use, guarded by RLS.
-  // Plain fetch against PostgREST is used rather than the supabase-js CDN build:
-  // this keeps the game self-contained, which is what made the Canvas prototype
-  // load reliably in the mobile file preview where the CDN version did not.
+  // Publishable (anon) key. It can no longer reach the question bank: RLS
+  // keeps `questions` server-only (see rls-content.sql), and the answer key
+  // never leaves the edge functions.
   var SUPABASE_URL = 'https://akbexsybmaefuidmdksm.supabase.co';
   var SUPABASE_KEY = 'sb_publishable_ed9V4sTYIS85oIKPRWBwTQ_h-52RbTt';
 
@@ -198,116 +219,101 @@
   var TOPIC_GRADE = 6;
   var TOPIC_TERM  = 3;
 
-  // ---------- Locked mechanic constants (validated in playtest — do not change) ----------
-  var ROUND_SIZE = 10;
-  var PASS_THRESHOLD = 75;
-  var DAMAGE_CORRECT = 10;
-  var DAMAGE_WRONG = 2;
+  // ---------- Mechanic constants ----------
+  var PASS_THRESHOLD = 75;   // enforced server-side; shown on the fail screen
   var HEALTH_SEGMENTS = 20;
 
-  // ---------- Content state (loaded from Supabase) ----------
-  var sublevels = [];       // ordered sub-levels for the topic
-  var sublevelIndex = 0;    // which sub-level is currently being played
-  var poolCache = {};       // sublevel_id -> question pool, so a retry doesn't refetch
+  // Damage no longer varies with correctness. The client is never told which
+  // answers were right, so it cannot leak them through the health bar either.
+  // Each shot takes a random bite in this band, draining the bar over a
+  // 10-question round at about the old pace while reading as pure theatre.
+  var DAMAGE_MIN = 6, DAMAGE_MAX = 12;
 
-  var roundQuestions = [], qIndex = 0, correctCount = 0, guardianHP = 100;
+  // ---------- Session / content state ----------
+  var accessToken = null;
+  var sublevels = [];      // [{id, code, is_boss, sort_order, unlocked}]
+  var sublevelIndex = 0;
+  var attemptId = null;
+  var answers = [];        // [{question_id, chosen_index}] for the current round
+
+  // Note: there is deliberately no correctCount here. The client cannot score
+  // a round — submit-attempt does, against the stored key.
+  var roundQuestions = [], qIndex = 0, guardianHP = 100;
 
   function $(id){ return document.getElementById(id); }
   var healthbar = $('healthbar'), healthPct = $('health-pct');
   var qcard = $('qcard'), qmeta = $('qmeta'), qtext = $('qtext'), optionsEl = $('options');
   var overlayStart = $('overlay-start'), overlayWin = $('overlay-win'), overlayLose = $('overlay-lose');
-  var overlayError = $('overlay-error');
+  var overlayError = $('overlay-error'), overlaySignin = $('overlay-signin');
 
-  // ---------- Supabase REST helpers ----------
-
-  function sbFetch(path){
-    return fetch(SUPABASE_URL + '/rest/v1/' + path, {
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_KEY,
-        'Accept': 'application/json'
-      }
-    }).then(function(res){
-      if (!res.ok){
-        return res.text().then(function(body){
-          throw new Error('Supabase ' + res.status + ' — ' + body.slice(0, 180));
-        });
-      }
-      return res.json();
-    }).catch(function(err){
-      // No response at all surfaces as a bare "Failed to fetch" — name the
-      // likely causes instead, since opening this file straight from disk is
-      // the usual culprit.
-      if (err instanceof TypeError){
-        throw new Error('Could not reach the database at ' + SUPABASE_URL +
-          '. Check you are online. If you opened this file directly from your ' +
-          'downloads, try serving it over http://localhost instead — some ' +
-          'browsers block database calls from file:// pages.');
-      }
-      throw err;
-    });
+  function hideOverlays(){
+    [overlayStart, overlayWin, overlayLose, overlayError, overlaySignin]
+      .forEach(function(o){ o.classList.remove('show'); });
   }
 
   function showError(msg){
     $('error-msg').textContent = msg;
-    overlayStart.classList.remove('show');
-    overlayWin.classList.remove('show');
-    overlayLose.classList.remove('show');
+    hideOverlays();
     qcard.classList.add('hidden');
     overlayError.classList.add('show');
   }
 
-  // Load the topic and its ordered sub-levels. Runs once on boot.
-  function loadTopic(){
-    overlayError.classList.remove('show');
-    overlayStart.classList.add('show');
-    $('start-btn').disabled = true;
-    $('start-btn').textContent = 'Loading…';
+  function networkMessage(){
+    return 'Could not reach the server at ' + SUPABASE_URL +
+      '. Check you are online. If you opened this file directly from your ' +
+      'downloads, try serving it over http://localhost instead — some ' +
+      'browsers block these calls from file:// pages.';
+  }
 
-    var q = 'topics?select=id,name,sublevels(id,code,is_boss,sort_order)' +
-            '&name=eq.' + encodeURIComponent(TOPIC_NAME) +
-            '&grade=eq.' + TOPIC_GRADE +
-            '&term=eq.' + TOPIC_TERM;
-
-    return sbFetch(q).then(function(rows){
-      if (!rows.length){
-        throw new Error('Topic "' + TOPIC_NAME + '" (Grade ' + TOPIC_GRADE +
-                        ', Term ' + TOPIC_TERM + ') not found in the database.');
-      }
-      sublevels = (rows[0].sublevels || []).slice().sort(function(a,b){
-        return a.sort_order - b.sort_order;
+  // ---------- Edge function calls ----------
+  // Every call carries the learner's JWT. The server derives who they are
+  // from that token — nothing the client sends decides identity, score or
+  // unlock state.
+  function callFn(name, payload){
+    return fetch(SUPABASE_URL + '/functions/v1/' + name, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + (accessToken || SUPABASE_KEY),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload || {})
+    }).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(data){
+        if (!res.ok){
+          var e = new Error(data.error || ('Request failed (' + res.status + ')'));
+          e.status = res.status;
+          e.locked = !!data.locked;
+          throw e;
+        }
+        return data;
       });
-      if (!sublevels.length){
-        throw new Error('Topic "' + TOPIC_NAME + '" has no sub-levels yet.');
-      }
-      sublevelIndex = 0;
-      updateHud();
-      $('start-btn').disabled = false;
-      $('start-btn').textContent = 'Enter the Duel';
     }).catch(function(err){
-      showError(err.message);
+      if (err instanceof TypeError) throw new Error(networkMessage());
+      throw err;
     });
   }
 
-  // Fetch (and cache) the question pool for a sub-level.
-  function loadPool(sublevel){
-    if (poolCache[sublevel.id]) return Promise.resolve(poolCache[sublevel.id]);
-
-    var q = 'questions?select=id,question_text,options,correct_index' +
-            '&sublevel_id=eq.' + sublevel.id +
-            '&active=is.true';
-
-    return sbFetch(q).then(function(rows){
-      // Normalise DB rows into the shape the validated game loop already uses,
-      // so the loop itself stays byte-for-byte the mechanic that was playtested.
-      var pool = rows.map(function(r){
-        return { q: r.question_text, opts: r.options, correct: r.correct_index };
+  // ---------- Sign in ----------
+  // Placeholder for Leuro's existing child-auth pattern — the point here is
+  // that progress and grading are per-learner and server-verified.
+  function signIn(email, password){
+    return fetch(SUPABASE_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email, password: password })
+    }).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(data){
+        if (!res.ok || !data.access_token){
+          throw new Error(data.error_description || data.msg || 'Sign in failed');
+        }
+        accessToken = data.access_token;
+        try { sessionStorage.setItem('leuro_token', accessToken); } catch(e){}
+        return accessToken;
       });
-      if (!pool.length){
-        throw new Error('No active questions found for sub-level ' + sublevel.code + '.');
-      }
-      poolCache[sublevel.id] = pool;
-      return pool;
+    }).catch(function(err){
+      if (err instanceof TypeError) throw new Error(networkMessage());
+      throw err;
     });
   }
 
@@ -320,6 +326,35 @@
   function updateHud(){
     var sl = currentSublevel();
     if (sl) $('hud-sub').textContent = sublevelLabel(sl);
+  }
+
+  // Recompute lock flags from the server's furthest-unlocked id. The client
+  // never decides this on its own — start-attempt re-checks it anyway.
+  function applyUnlock(furthestId){
+    var furthestOrder = -Infinity;
+    sublevels.forEach(function(s){
+      if (s.id === furthestId) furthestOrder = s.sort_order;
+    });
+    if (furthestOrder === -Infinity) return;
+    sublevels.forEach(function(s){ s.unlocked = s.sort_order <= furthestOrder; });
+  }
+
+  function furthestUnlockedIndex(){
+    var idx = 0;
+    sublevels.forEach(function(s, i){ if (s.unlocked) idx = i; });
+    return idx;
+  }
+
+  // Loads the topic map plus this learner's unlock state.
+  function loadTopicState(){
+    return callFn('get-topic-state', {
+      topic_name: TOPIC_NAME, grade: TOPIC_GRADE, term: TOPIC_TERM
+    }).then(function(state){
+      sublevels = state.sublevels || [];
+      if (!sublevels.length) throw new Error('This topic has no sub-levels yet.');
+      sublevelIndex = furthestUnlockedIndex();
+      updateHud();
+    });
   }
 
   for (var i=0;i<HEALTH_SEGMENTS;i++){
@@ -338,34 +373,42 @@
     }
   }
 
-  function shuffle(arr){
-    var a = arr.slice();
-    for (var i=a.length-1;i>0;i--){
-      var j = Math.floor(Math.random()*(i+1));
-      var tmp=a[i]; a[i]=a[j]; a[j]=tmp;
-    }
-    return a;
-  }
-
-  // Pulls a fresh random subset from the sub-level's pool — including on retry,
-  // per the locked "random pull per attempt" rule.
-  function startRound(){
+  // Opens a server-side attempt and plays it. The unlock rule is enforced by
+  // start-attempt; the check here only avoids a pointless request for a level
+  // the map already shows as locked.
+  function startRound(index){
+    if (typeof index === 'number') sublevelIndex = index;
     var sl = currentSublevel();
     if (!sl){ showError('No sub-level selected.'); return; }
+    if (!sl.unlocked) return;
 
-    loadPool(sl).then(function(pool){
-      roundQuestions = shuffle(pool).slice(0, ROUND_SIZE);
-      qIndex = 0; correctCount = 0;
+    setBusy(true);
+    callFn('start-attempt', { sublevel_id: sl.id }).then(function(data){
+      attemptId = data.attempt_id;
+      roundQuestions = data.questions || [];
+      if (!roundQuestions.length){
+        throw new Error('No questions came back for ' + sublevelLabel(sl) + '.');
+      }
+      answers = [];
+      qIndex = 0;
       setHealth(100);
       updateHud();
-      overlayStart.classList.remove('show');
-      overlayWin.classList.remove('show');
-      overlayLose.classList.remove('show');
-      overlayError.classList.remove('show');
+      hideOverlays();
       qcard.classList.remove('hidden');
       showQuestion();
       resetPositions();
+      setBusy(false);
     }).catch(function(err){
+      setBusy(false);
+      if (err.locked){
+        // The server refused a level the map thought was open — resync.
+        loadTopicState().then(function(){
+          renderMap($('start-map'), true);
+          hideOverlays();
+          overlayStart.classList.add('show');
+        }).catch(function(e){ showError(e.message); });
+        return;
+      }
       showError(err.message);
     });
   }
@@ -373,9 +416,9 @@
   function showQuestion(){
     var item = roundQuestions[qIndex];
     qmeta.textContent = 'Question ' + (qIndex+1) + ' of ' + roundQuestions.length;
-    qtext.textContent = item.q;
+    qtext.textContent = item.question_text;
     optionsEl.innerHTML = '';
-    item.opts.forEach(function(opt, i){
+    item.options.forEach(function(opt, i){
       var b = document.createElement('div');
       b.className = 'opt';
       b.textContent = opt;
@@ -386,16 +429,16 @@
 
   function selectAnswer(i){
     var item = roundQuestions[qIndex];
-    var isCorrect = i === item.correct;
-    if (isCorrect) correctCount++;
+    answers.push({ question_id: item.id, chosen_index: i });
 
     var children = optionsEl.children;
     for (var k=0;k<children.length;k++){ children[k].classList.add('disabled'); }
     children[i].classList.add('chosen');
 
-    fireBlast(isCorrect);
+    // Every shot looks the same — correctness is not known on this side.
+    fireBlast(true);
 
-    var dmg = isCorrect ? DAMAGE_CORRECT : DAMAGE_WRONG;
+    var dmg = DAMAGE_MIN + Math.random() * (DAMAGE_MAX - DAMAGE_MIN);
     setTimeout(function(){ setHealth(guardianHP - dmg); }, 350);
 
     setTimeout(function(){
@@ -405,48 +448,62 @@
     }, 900);
   }
 
+  // The round is graded by the server. The same beat sequence as the
+  // playtested build runs once the result lands.
   function endRound(){
-    var pct = Math.round((correctCount/roundQuestions.length)*100);
     qcard.classList.add('hidden');
-    var passed = pct >= PASS_THRESHOLD;
-
-    setTimeout(function(){
-      resolveGuardian(passed);
-      setTimeout(function(){
-        if (passed){
-          $('win-score').textContent = pct + '%';
-          $('win-sub').textContent = sublevelLabel(currentSublevel()) + ' complete';
-          buildMap();
-          overlayWin.classList.add('show');
-        } else {
-          $('lose-score').textContent = pct + '%';
-          overlayLose.classList.add('show');
-        }
-      }, 700);
-    }, 300);
+    callFn('submit-attempt', { attempt_id: attemptId, answers: answers })
+      .then(function(result){
+        applyUnlock(result.furthest_unlocked_sublevel_id);
+        var pct = Math.round(Number(result.score_pct));
+        setTimeout(function(){
+          resolveGuardian(result.passed);
+          setTimeout(function(){
+            if (result.passed){
+              $('win-score').textContent = pct + '%';
+              $('win-sub').textContent = sublevelLabel(currentSublevel()) + ' complete';
+              renderMap($('mapwrap'), false);
+              updateContinue();
+              overlayWin.classList.add('show');
+            } else {
+              $('lose-score').textContent = pct + '%';
+              $('lose-sub').textContent = 'You needed ' + PASS_THRESHOLD + '% to pass';
+              overlayLose.classList.add('show');
+            }
+          }, 700);
+        }, 300);
+      })
+      .catch(function(err){ showError(err.message); });
   }
 
-  // Map is drawn from the real sub-level rows. Progress shown is session-only —
-  // sequential unlock against learner_progress is still a later build step.
-  function buildMap(){
-    var wrap = $('mapwrap');
+  // Shared by the level-select map and the post-win map. Locked nodes are
+  // inert; unlocked ones start that sub-level when the map is interactive.
+  function renderMap(wrap, clickable){
     wrap.innerHTML = '';
     sublevels.forEach(function(sl, i){
       var div = document.createElement('div');
       var cls = 'mapnode', label = 'Locked', dot = String(i+1);
-      if (i <= sublevelIndex){ cls += ' done'; label = 'Complete'; dot = '✓'; }
-      else if (i === sublevelIndex + 1){ cls += ' current'; label = 'Unlocked — play next'; }
-      if (sl.is_boss && i > sublevelIndex) dot = '⚑';
+      if (sl.unlocked){
+        if (i === furthestUnlockedIndex()){ cls += ' current'; label = 'Unlocked — play next'; }
+        else { cls += ' done'; label = 'Complete'; dot = '✓'; }
+      } else if (sl.is_boss){
+        dot = '⚑';
+      }
       div.className = cls;
       div.innerHTML = '<div class="mapdot">' + dot + '</div>' +
         '<div class="maplabel">' + sublevelLabel(sl) + '<small>' + label + '</small></div>';
+      if (clickable && sl.unlocked){
+        div.classList.add('playable');
+        div.onclick = function(){ startRound(i); };
+      }
       wrap.appendChild(div);
     });
+  }
 
-    // Point the continue button at the next sub-level in the sequence.
+  function updateContinue(){
     var next = sublevels[sublevelIndex + 1];
     var btn = $('continue-btn');
-    if (next){
+    if (next && next.unlocked){
       btn.style.display = '';
       btn.textContent = next.is_boss ? 'Face the Boss' : 'Continue to ' + next.code;
     } else {
@@ -454,34 +511,68 @@
     }
   }
 
+  function setBusy(on){
+    ['start-btn','retry-btn','continue-btn','signin-btn'].forEach(function(id){
+      var b = $(id);
+      if (b) b.disabled = !!on;
+    });
+  }
+
   function goToStart(){
-    overlayWin.classList.remove('show');
-    overlayLose.classList.remove('show');
-    overlayError.classList.remove('show');
+    hideOverlays();
     qcard.classList.add('hidden');
     resetPositions();
     setHealth(100);
+    sublevelIndex = furthestUnlockedIndex();
     updateHud();
+    renderMap($('start-map'), true);
+    $('start-btn').textContent = 'Enter the Duel';
     overlayStart.classList.add('show');
   }
 
-  $('start-btn').onclick = startRound;
-  $('retry-btn').onclick = startRound;   // fresh random pull from the same pool
+  // ---------- Boot ----------
+  function enterGame(){
+    setBusy(true);
+    loadTopicState().then(function(){
+      setBusy(false);
+      goToStart();
+    }).catch(function(err){
+      setBusy(false);
+      showError(err.message);
+    });
+  }
+
+  $('signin-btn').onclick = function(){
+    var email = $('signin-email').value.trim();
+    var pw = $('signin-password').value;
+    if (!email || !pw){ $('signin-msg').textContent = 'Enter an email and password.'; return; }
+    $('signin-msg').textContent = '';
+    setBusy(true);
+    signIn(email, pw).then(function(){
+      setBusy(false);
+      enterGame();
+    }).catch(function(err){
+      setBusy(false);
+      $('signin-msg').textContent = err.message;
+    });
+  };
+
+  $('start-btn').onclick = function(){ startRound(furthestUnlockedIndex()); };
+  $('retry-btn').onclick = function(){ startRound(); };   // fresh draw, same sub-level
   $('continue-btn').onclick = function(){
-    if (sublevelIndex + 1 < sublevels.length){
-      sublevelIndex++;
-      startRound();
-    }
+    if (sublevelIndex + 1 < sublevels.length) startRound(sublevelIndex + 1);
   };
   $('error-retry-btn').onclick = function(){
-    overlayError.classList.remove('show');
-    if (sublevels.length) startRound(); else loadTopic();
+    hideOverlays();
+    if (accessToken) enterGame(); else overlaySignin.classList.add('show');
   };
   [$('exit-btn'), $('exit-btn-2'), $('exit-btn-3')].forEach(function(b){
     b.onclick = goToStart;
   });
 
-  loadTopic();
+  // Resume a session token if one is already held, otherwise ask to sign in.
+  try { accessToken = sessionStorage.getItem('leuro_token'); } catch(e){}
+  if (accessToken) enterGame(); else overlaySignin.classList.add('show');
 
   // ---------- Canvas scene: avatar, guardian, blast effect ----------
   var canvas = $('stage'), ctx = canvas.getContext('2d');

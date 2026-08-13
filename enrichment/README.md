@@ -8,24 +8,36 @@ This folder is the starting point for building the real version of the Grade 6 M
 - `game/energy-duel-prototype.html` — the core Maths mechanic (self-contained HTML/Canvas, no external dependencies). The loop, pacing (10 questions/round), and feel have already been playtested and approved. **Now pulls its questions from Supabase** instead of a hardcoded array — the validated loop, damage values, timings and thresholds are unchanged.
 - `supabase/schema.sql` — starter database schema covering: subjects/topics/sublevels, question bank, learners/houses, attempt tracking, house points, admin boost windows. Needs RLS policies tightened to match Leuro's existing child-auth pattern before any real learner data touches it.
 - `supabase/seed-length.sql` — creates the Length topic structure (sub-levels 1.1–1.6 + boss, with the taxonomy scaffold applied across the sequence) and loads the **placeholder** question pool into 1.1 so the wiring can be played end-to-end. Safe to re-run.
+- `supabase/rls-content.sql` — locks the question bank to the server. Without it the publishable key can read `correct_index` straight off the REST API, so this is required, not optional.
+- `supabase/seed-test-learner.sql` — links an auth account to a `learners` row so progress has an owner.
+- `supabase/functions/` — the three edge functions the game talks to. Deployed by dashboard paste like the rest of Leuro's functions; each is self-contained.
+- `supabase/tests/unlock-logic-test.sql` — runs the unlock and grading rules against a real database and prints PASS/FAIL per rule. Rolls back; leaves nothing behind.
+
+## How grading and unlocking work
+
+The browser never sees a correct answer. `start-attempt` draws the round and returns question text and options only; the learner's choices go back to `submit-attempt`, which grades them against the stored key and returns just a score and a pass flag. The sequential-unlock rule is enforced in `start-attempt` — a learner who forges a later sub-level id gets a 403, not a round.
+
+Because grading happens once per round, the game cannot know mid-round which answers were right. Guardian damage is therefore uniform and slightly randomised, which is what the spec asks for anyway ("not clearly readable as wrong"). The prototype's teal/pink blast split did reveal it, and is gone.
 
 ## Running it
 
 1. Run `supabase/schema.sql` against the enrichment Supabase project.
 2. Run `supabase/seed-length.sql`.
-3. Open `game/energy-duel-prototype.html`. It reads the project URL and publishable key from the top of the script block.
+3. Run `supabase/rls-content.sql`.
+4. Deploy the three functions in `supabase/functions/` by pasting each into the dashboard.
+5. Create a user under Authentication → Users (tick Auto Confirm), put that email into `supabase/seed-test-learner.sql`, and run it.
+6. Open `game/energy-duel-prototype.html` and sign in with that account.
 
-If content is missing the game says so on-screen rather than failing silently — it will name the missing topic, sub-level, or table.
+If something is missing the game says so on-screen rather than failing silently — it will name the missing topic, sub-level, table or connection.
 
 ## What's NOT here yet (next build steps)
 
 1. **Real Length question content** — only placeholder questions exist, and only for sub-level 1.1. Sub-levels 1.2–1.6 and the boss have empty pools. Use `AI-Prompt-Length-Question-Generation.md` (provided separately) to generate real CAPS-aligned content, then import into the `questions` table.
-2. **RLS on the content tables** — `subjects`, `topics`, `sublevels` and `questions` have no RLS enabled, so the publishable key (which ships in the game's client-side JS) currently allows anyone to *write* to the question bank, not just read it. Lock these to read-only for anon before this is in front of learners.
-3. **Server-side grading** — the client currently receives `correct_index` for every question it pulls, so answers are readable in devtools. The no-per-question-feedback and chip-damage rules stop casual reverse-engineering, but not this. Moving grading behind an RPC/edge function that takes answers and returns only a score would close it.
-4. **Attempt persistence** — nothing is written back yet; `attempts`, `learner_progress` and `house_points_log` are untouched by the game.
-5. **Sequential unlock logic** — the map screen renders real sub-levels and "Continue" advances through them, but progress is session-only; real unlock/lock enforcement against `learner_progress` isn't built yet.
-6. **Admin dashboard** — not started. See spec Section 3 for structure (overview → house → class → learner drilldown).
-7. **House leaderboard (kid-facing)** — not started. See spec Section 3.
+2. **Real child auth** — the game currently signs in with a plain email/password form, which is a placeholder. Swap it for Leuro's existing child-auth pattern; the edge functions already derive the learner from the JWT, so only the sign-in step changes.
+3. **House points** — `house_points_log` is still untouched. Passing a sub-level should award weighted points (core subjects higher), which is the input the kid-facing leaderboard needs.
+4. **Abandoned attempts** — `start-attempt` opens a row with `correct_count = 0`, so a learner who quits mid-round leaves what looks like a 0% attempt. Filter on `completed_at is not null` in any admin query until this is tidied up.
+5. **Admin dashboard** — not started. See spec Section 3 for structure (overview → house → class → learner drilldown).
+6. **House leaderboard (kid-facing)** — not started. See spec Section 3.
 
 ## Working rules (carried over from existing Leuro conventions)
 
